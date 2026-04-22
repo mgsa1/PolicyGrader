@@ -1,4 +1,6 @@
+anthropic>=0.96
 pydantic>=2,<3
+pillow
 mujoco>=3
 robosuite>=1.5
 robomimic==0.3.0
