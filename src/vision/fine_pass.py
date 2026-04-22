@@ -21,6 +21,7 @@ from typing import Any, cast
 from anthropic import Anthropic
 
 from src.constants import OPUS_MODEL_ID
+from src.costing import CostTracker
 from src.schemas import Pass2Annotation
 from src.sim.scripted import FailureMode
 from src.vision.frames import encode_png_b64, read_frames, resize_long_edge, sample_indices
@@ -168,12 +169,16 @@ def fine_pass(
     *,
     coarse_total: int,
     client: Anthropic | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> Pass2Annotation:
     """Run the Pass-2 fine vision judge on a recorded rollout mp4.
 
     `coarse_range` is the (start, end) tuple Pass 1 returned, in coarse-sample
     indices. `coarse_total` is the number of frames Pass 1 sampled (so we can
     map back to original-mp4 frame indices for windowing).
+
+    `cost_tracker`, if provided, accumulates this call's token usage into the
+    session-wide ledger that Phase 4 reports against the manual-review baseline.
     """
     if client is None:
         client = Anthropic()
@@ -186,6 +191,9 @@ def fine_pass(
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": cast(Any, image_blocks)}],
     )
+
+    if cost_tracker is not None:
+        cost_tracker.add_usage(response.usage)
 
     raw = "".join(block.text for block in response.content if block.type == "text")
     return _parse_annotation(raw)

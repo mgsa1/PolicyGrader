@@ -21,6 +21,7 @@ from typing import Any
 
 from anthropic import Anthropic
 
+from src.costing import CostTracker
 from src.memory_layout import AGENT_MEMORY_ROOT, ROLLOUTS_DIR
 from src.schemas import RolloutConfig
 from src.sim.adapter import run_rollout
@@ -246,9 +247,14 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
     }
 
 
-def _dispatch_coarse(args: dict[str, Any], mirror_root: Path, client: Anthropic) -> dict[str, Any]:
+def _dispatch_coarse(
+    args: dict[str, Any],
+    mirror_root: Path,
+    client: Anthropic,
+    cost_tracker: CostTracker | None,
+) -> dict[str, Any]:
     video_path = _resolve_video_path(args["video_path"], mirror_root)
-    verdict = coarse_pass(video_path, client=client)
+    verdict = coarse_pass(video_path, client=client, cost_tracker=cost_tracker)
     return {
         "rollout_id": args["rollout_id"],
         "verdict": verdict.verdict,
@@ -259,7 +265,12 @@ def _dispatch_coarse(args: dict[str, Any], mirror_root: Path, client: Anthropic)
     }
 
 
-def _dispatch_fine(args: dict[str, Any], mirror_root: Path, client: Anthropic) -> dict[str, Any]:
+def _dispatch_fine(
+    args: dict[str, Any],
+    mirror_root: Path,
+    client: Anthropic,
+    cost_tracker: CostTracker | None,
+) -> dict[str, Any]:
     video_path = _resolve_video_path(args["video_path"], mirror_root)
     raw_range = args.get("failure_frame_range")
     coarse_range: tuple[int, int] | None = (
@@ -270,6 +281,7 @@ def _dispatch_fine(args: dict[str, Any], mirror_root: Path, client: Anthropic) -
         coarse_range,
         coarse_total=int(args["coarse_total_frames"]),
         client=client,
+        cost_tracker=cost_tracker,
     )
     return {
         "rollout_id": args["rollout_id"],
@@ -285,18 +297,21 @@ def dispatch(
     *,
     mirror_root: Path,
     client: Anthropic,
+    cost_tracker: CostTracker | None = None,
 ) -> str:
     """Execute one custom-tool call and return its JSON-serialized result.
 
     Returning a string lets the caller stuff it directly into a
-    `user.custom_tool_result` event content block.
+    `user.custom_tool_result` event content block. `cost_tracker`, if provided,
+    is forwarded to the vision passes so their token usage is summed into the
+    session-wide ledger.
     """
     if tool_name == ROLLOUT_TOOL_NAME:
         result = _dispatch_rollout(tool_input, mirror_root)
     elif tool_name == COARSE_TOOL_NAME:
-        result = _dispatch_coarse(tool_input, mirror_root, client)
+        result = _dispatch_coarse(tool_input, mirror_root, client, cost_tracker)
     elif tool_name == FINE_TOOL_NAME:
-        result = _dispatch_fine(tool_input, mirror_root, client)
+        result = _dispatch_fine(tool_input, mirror_root, client, cost_tracker)
     else:
         raise ValueError(f"unknown custom tool: {tool_name}")
     return json.dumps(result)

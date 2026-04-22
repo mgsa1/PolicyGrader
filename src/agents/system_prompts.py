@@ -178,17 +178,26 @@ Stop after every rollout has a corresponding line in findings.jsonl.
 PHASE 4 — REPORT
 
 Read /memories/test_matrix.csv (now you may use the expected_label column),
-/memories/rollouts/results.jsonl, and /memories/findings.jsonl. The
-orchestrator has separately written /memories/metrics.json with overall
-precision/recall vs ground truth — read that too.
+/memories/rollouts/results.jsonl, and /memories/findings.jsonl. The REPORT
+phase marker message includes runtime numbers (cost, wall time, scenario
+count, manual-review baseline) measured by the orchestrator — use those
+EXACTLY, do not invent or estimate. Compute precision/recall yourself from
+test_matrix + findings; the orchestrator does not write metrics.json.
 
 Write /memories/report.md with this structure:
   # Evaluation Report
   ## Summary
     one-paragraph headline including: scenarios run, success rate of policy
-    under test, judge precision and recall against ground truth, total cost
-    and wall time (orchestrator will fill the cost/time placeholders if
-    omitted).
+    under test, judge precision and recall against ground truth.
+    Then a markdown table comparing this pipeline against the manual-review
+    baseline using the orchestrator's measured numbers:
+      | Metric | This pipeline | Manual review baseline |
+      | Cost | $X.XX | $Y.YY |
+      | Wall time | Mm Ss | Mm Ss |
+      | Cost ratio (pipeline / baseline) | Z.ZZx |
+      | Time ratio (pipeline / baseline) | Z.ZZx |
+    This comparison is the demo's headline — it MUST appear in the Summary,
+    not buried in methodology.
   ## Failure Cluster Analysis
     With the full findings list in your context window (this is what the 1M
     context buys us — no separate clustering pass), identify 3–6 thematic
@@ -196,8 +205,12 @@ Write /memories/report.md with this structure:
     one-sentence pattern description.
   ## Per-Label Confusion
     A small table: rows=expected_label, columns=judged_label, values=count.
+    For pretrained rows with empty expected_label, exclude from this table
+    (no ground truth) but include in the binary detection numbers in Summary.
   ## Methodology Notes
     A short paragraph on what the eval covered and what it does NOT cover.
+    Include the token breakdown the orchestrator provided (input/output/
+    cache_read/cache_creation) so cost is auditable.
 
 Stop after report.md is written.
 """

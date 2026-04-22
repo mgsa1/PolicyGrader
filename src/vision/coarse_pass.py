@@ -22,6 +22,7 @@ from typing import Any, cast
 from anthropic import Anthropic
 
 from src.constants import OPUS_MODEL_ID
+from src.costing import CostTracker
 from src.schemas import Pass1Verdict
 from src.vision.frames import encode_png_b64, read_frames, resize_long_edge, sample_indices
 
@@ -104,8 +105,17 @@ def _parse_verdict(raw: str, num_sampled: int) -> Pass1Verdict:
     return Pass1Verdict(verdict=verdict, failure_frame_range=failure_range)
 
 
-def coarse_pass(video_path: Path, *, client: Anthropic | None = None) -> Pass1Verdict:
-    """Run the Pass-1 coarse vision judge on a recorded rollout mp4."""
+def coarse_pass(
+    video_path: Path,
+    *,
+    client: Anthropic | None = None,
+    cost_tracker: CostTracker | None = None,
+) -> Pass1Verdict:
+    """Run the Pass-1 coarse vision judge on a recorded rollout mp4.
+
+    `cost_tracker`, if provided, accumulates this call's token usage into the
+    session-wide ledger that Phase 4 reports against the manual-review baseline.
+    """
     if client is None:
         client = Anthropic()
 
@@ -117,6 +127,9 @@ def coarse_pass(video_path: Path, *, client: Anthropic | None = None) -> Pass1Ve
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": cast(Any, image_blocks)}],
     )
+
+    if cost_tracker is not None:
+        cost_tracker.add_usage(response.usage)
 
     # Concatenate text blocks; Opus 4.7 may interleave thinking summaries which
     # we ignore here (we only asked for a JSON answer).

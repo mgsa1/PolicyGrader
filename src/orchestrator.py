@@ -22,6 +22,7 @@ in order to see the run) without needing four separate sessions.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,15 @@ from src.agents.system_prompts import (
 from src.agents.tools import dispatch as dispatch_custom_tool
 from src.agents.tools import tool_params
 from src.constants import MANAGED_AGENTS_BETA_HEADER, OPUS_MODEL_ID
+from src.costing import (
+    BASELINE_HOURLY_RATE_USD,
+    BASELINE_SECONDS_PER_ROLLOUT,
+    CostTracker,
+    baseline_cost_for,
+    baseline_seconds_for,
+    format_cost,
+    format_duration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +184,7 @@ def _run_one_turn(
     *,
     mirror_root: Path,
     messages_client: Anthropic,
+    cost_tracker: CostTracker,
 ) -> str:
     """Drive one phase of the session to completion. Returns the terminal stop_reason.
 
@@ -181,7 +192,8 @@ def _run_one_turn(
     which we already sent inline when the `agent.custom_tool_use` event
     arrived. We reopen the stream and let the agent continue. Only
     `end_turn` / `retries_exhausted` (or `session.error`) actually stops a
-    phase.
+    phase. Token usage on every event with a `usage` field is summed into
+    `cost_tracker` for the Phase 4 baseline comparison.
     """
     while True:
         terminal: str | None = None
@@ -190,6 +202,12 @@ def _run_one_turn(
         for event in _stream_events(client, session_id):
             ev_type = getattr(event, "type", None)
             logger.debug("event %s", ev_type)
+
+            # Some session events carry a usage field (esp. agent.message and
+            # session.status_idle); accumulate defensively whenever present.
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                cost_tracker.add_usage(usage)
 
             if ev_type == "agent.message":
                 text = "".join(
@@ -213,6 +231,7 @@ def _run_one_turn(
                         dict(tool_input),
                         mirror_root=mirror_root,
                         client=messages_client,
+                        cost_tracker=cost_tracker,
                     )
                     _send_tool_result(client, session_id, event.id, payload)
                 except Exception as exc:  # noqa: BLE001 — must report back to the agent
@@ -258,6 +277,50 @@ PHASE_MARKERS = (
 )
 
 
+@dataclass(frozen=True)
+class SessionResult:
+    """End-of-run summary the caller (e.g. scripts/smoke_agent.py) consumes."""
+
+    stops: list[str]
+    cost_tracker: CostTracker
+    elapsed_seconds: float
+    n_rollouts: int
+
+
+def _build_report_marker(n_rollouts: int, elapsed_seconds: float, cost_tracker: CostTracker) -> str:
+    """Compose the REPORT phase marker with runtime numbers inlined.
+
+    The agent uses these exact numbers in the report rather than fabricating
+    its own — without this the cost/time/baseline columns would be either
+    invented or left as placeholders.
+    """
+    pipeline_cost = cost_tracker.total_cost_usd
+    baseline_cost = baseline_cost_for(n_rollouts)
+    baseline_time_s = baseline_seconds_for(n_rollouts)
+    return f"""{PHASE_MARKER_REPORT}
+
+Runtime numbers from the orchestrator (use these EXACTLY — do not invent or
+estimate cost/time figures, do not round more than necessary):
+
+- Total cost (this pipeline): {format_cost(pipeline_cost)}
+- Wall time (this pipeline): {format_duration(elapsed_seconds)}
+- Scenarios run: {n_rollouts}
+- Baseline cost (manual reviewer at ${BASELINE_HOURLY_RATE_USD:.0f}/hr × \
+{BASELINE_SECONDS_PER_ROLLOUT // 60} min/rollout): {format_cost(baseline_cost)}
+- Baseline wall time (one reviewer working sequentially): {format_duration(baseline_time_s)}
+
+Token breakdown (for the methodology section):
+- input_tokens: {cost_tracker.input_tokens}
+- output_tokens: {cost_tracker.output_tokens}
+- cache_read_tokens: {cost_tracker.cache_read_tokens}
+- cache_creation_tokens: {cost_tracker.cache_creation_tokens}
+
+The Summary section MUST include a side-by-side comparison row putting our
+pipeline against the manual-review baseline (cost ratio and time ratio),
+because that comparison is the demo's headline number.
+"""
+
+
 def run_all_phases(
     client: Anthropic,
     handle: SessionHandle,
@@ -265,20 +328,34 @@ def run_all_phases(
     user_goal: str,
     mirror_root: Path,
     messages_client: Anthropic | None = None,
-) -> list[str]:
-    """Drive all four phases in order. Returns the stop_reason for each phase.
+    cost_tracker: CostTracker | None = None,
+) -> SessionResult:
+    """Drive all four phases in order. Returns stops + cost + time + scenario count.
 
     The user_goal is sent together with the PLANNER marker so the agent has
-    a one-line objective for the test matrix.
+    a one-line objective for the test matrix. The REPORT marker is enriched
+    with measured runtime numbers so the agent doesn't fabricate them.
     """
     if messages_client is None:
         messages_client = client
+    if cost_tracker is None:
+        cost_tracker = CostTracker()
 
     mirror_root.mkdir(parents=True, exist_ok=True)
+    rollouts_dir = mirror_root / "rollouts"
+
+    start_time = time.time()
     stops: list[str] = []
     for marker in PHASE_MARKERS:
         if marker == PHASE_MARKER_PLANNER:
             payload = f"{marker}\n\nEvaluation goal: {user_goal}"
+        elif marker == PHASE_MARKER_REPORT:
+            n_rollouts = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0
+            payload = _build_report_marker(
+                n_rollouts=n_rollouts,
+                elapsed_seconds=time.time() - start_time,
+                cost_tracker=cost_tracker,
+            )
         else:
             payload = marker
         _send_user_message(client, handle.session_id, payload)
@@ -287,9 +364,17 @@ def run_all_phases(
             handle.session_id,
             mirror_root=mirror_root,
             messages_client=messages_client,
+            cost_tracker=cost_tracker,
         )
         stops.append(stop)
         if stop != "end_turn":
             logger.warning("phase %s ended with %s — stopping orchestrator", marker, stop)
             break
-    return stops
+
+    n_rollouts_final = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0
+    return SessionResult(
+        stops=stops,
+        cost_tracker=cost_tracker,
+        elapsed_seconds=time.time() - start_time,
+        n_rollouts=n_rollouts_final,
+    )

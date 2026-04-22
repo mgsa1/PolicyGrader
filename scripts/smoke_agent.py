@@ -24,6 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from anthropic import Anthropic  # noqa: E402
 
+from src.costing import (  # noqa: E402
+    baseline_cost_for,
+    baseline_seconds_for,
+    format_cost,
+    format_duration,
+)
 from src.orchestrator import run_all_phases, setup  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,7 +64,7 @@ def main() -> int:
         flush=True,
     )
 
-    stops = run_all_phases(
+    result = run_all_phases(
         client,
         handle,
         user_goal=args.goal,
@@ -68,13 +74,24 @@ def main() -> int:
     print("\n=== Phase stop reasons ===", flush=True)
     for marker, stop in zip(
         ("PLANNER", "ROLLOUT", "JUDGE", "REPORT"),
-        stops,
+        result.stops,
         strict=False,
     ):
         print(f"  {marker:8s}  {stop}")
 
+    pipeline_cost = result.cost_tracker.total_cost_usd
+    base_cost = baseline_cost_for(result.n_rollouts)
+    base_time = baseline_seconds_for(result.n_rollouts)
+    print("\n=== Cost & time vs manual-review baseline ===", flush=True)
+    print(f"  scenarios:        {result.n_rollouts}")
+    print(f"  pipeline cost:    {format_cost(pipeline_cost)}")
+    baseline_note = "(manual reviewer @ $50/hr × 3min/rollout)"
+    print(f"  baseline cost:    {format_cost(base_cost)}  {baseline_note}")
+    print(f"  pipeline time:    {format_duration(result.elapsed_seconds)}")
+    print(f"  baseline time:    {format_duration(base_time)}  (sequential reviewer)")
+
     print(f"\nArtifacts mirrored under: {args.mirror_root}", flush=True)
-    return 0 if all(s == "end_turn" for s in stops) else 1
+    return 0 if all(s == "end_turn" for s in result.stops) else 1
 
 
 if __name__ == "__main__":
