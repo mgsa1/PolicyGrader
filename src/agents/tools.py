@@ -82,7 +82,6 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["rollout_id", "policy_kind", "env_name", "seed", "max_steps"],
-    "additionalProperties": False,
 }
 
 _COARSE_INPUT_SCHEMA: dict[str, Any] = {
@@ -97,7 +96,6 @@ _COARSE_INPUT_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["rollout_id", "video_path"],
-    "additionalProperties": False,
 }
 
 _FINE_INPUT_SCHEMA: dict[str, Any] = {
@@ -120,7 +118,6 @@ _FINE_INPUT_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["rollout_id", "video_path", "coarse_total_frames"],
-    "additionalProperties": False,
 }
 
 
