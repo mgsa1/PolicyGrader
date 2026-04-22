@@ -147,22 +147,28 @@ class ScriptedLiftPolicy(Policy):
         s = self._state
         approach_xy = self._approach_xy_offset()
 
+        # The xy offset persists through DESCEND/GRASP — the policy thinks the
+        # cube is at cube+offset and never corrects. Without this, an
+        # approach_angle_offset would be cosmetic (DESCEND would re-target
+        # cube center and the gripper would still grasp).
+        xy_off = np.array([approach_xy[0], approach_xy[1]])
+
         if s.phase == _Phase.APPROACH:
-            target = cube + np.array([approach_xy[0], approach_xy[1], APPROACH_HEIGHT_M])
+            target = cube + np.array([xy_off[0], xy_off[1], APPROACH_HEIGHT_M])
             grip = GRIP_CLOSE if self._failures.gripper_close_prematurely else GRIP_OPEN
             if np.linalg.norm(target - eef) < POS_TOLERANCE_M:
                 s.phase = _Phase.DESCEND
             return target, grip
 
         if s.phase == _Phase.DESCEND:
-            target = cube + np.array([0.0, 0.0, GRASP_HEIGHT_OFFSET_M])
+            target = cube + np.array([xy_off[0], xy_off[1], GRASP_HEIGHT_OFFSET_M])
             grip = GRIP_CLOSE if self._failures.gripper_close_prematurely else GRIP_OPEN
             if eef[2] - cube[2] < 0.02:
                 s.phase = _Phase.GRASP
             return target, grip
 
         if s.phase == _Phase.GRASP:
-            target = cube + np.array([0.0, 0.0, GRASP_HEIGHT_OFFSET_M])
+            target = cube + np.array([xy_off[0], xy_off[1], GRASP_HEIGHT_OFFSET_M])
             s.grasp_step_counter += 1
             if s.grasp_step_counter >= GRASP_HOLD_STEPS:
                 s.phase = _Phase.LIFT
@@ -170,14 +176,15 @@ class ScriptedLiftPolicy(Policy):
 
         # LIFT or DONE
         assert s.initial_cube_pos is not None
-        target = s.initial_cube_pos + np.array([0.0, 0.0, LIFT_HEIGHT_M])
+        target = s.initial_cube_pos + np.array([xy_off[0], xy_off[1], LIFT_HEIGHT_M])
         return target, GRIP_CLOSE
 
     def _approach_xy_offset(self) -> tuple[float, float]:
         if self._failures.approach_angle_offset_deg == 0.0:
             return 0.0, 0.0
-        # Rotate a fixed 4cm radial offset by the requested angle: lands the
-        # arm next to the cube instead of above it.
-        radius = 0.04
+        # Fixed 6 cm radial offset rotated by the requested angle. 6 cm is wider
+        # than the Lift cube (4 cm) plus half the open gripper aperture, so the
+        # gripper tips clear the cube entirely and the grasp closes on air.
+        radius = 0.06
         theta = radians(self._failures.approach_angle_offset_deg)
         return radius * cos(theta), radius * sin(theta)
