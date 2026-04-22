@@ -91,6 +91,12 @@ class TestScriptedLiftIntegration:
 
     @staticmethod
     def _run(env, policy, max_steps: int = 200) -> bool:  # type: ignore[no-untyped-def]
+        # Robosuite samples cube placement from np.random globally and exposes
+        # no reset(seed=) — pin it here so test outcomes don't depend on
+        # execution order or what other tests ran first.
+        import numpy as np
+
+        np.random.seed(0)
         obs = env.reset()
         policy.reset()
         for _ in range(max_steps):
@@ -111,4 +117,25 @@ class TestScriptedLiftIntegration:
 
         env = env_factory()
         policy = ScriptedLiftPolicy(InjectedFailures(gripper_close_prematurely=True), seed=0)
+        assert self._run(env, policy) is False
+
+    def test_approach_offset_fails(self, env_factory) -> None:  # type: ignore[no-untyped-def]
+        from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy
+
+        env = env_factory()
+        policy = ScriptedLiftPolicy(InjectedFailures(approach_angle_offset_deg=15.0), seed=0)
+        assert self._run(env, policy) is False
+
+    def test_weak_grip_fails(self, env_factory) -> None:  # type: ignore[no-untyped-def]
+        from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy
+
+        env = env_factory()
+        policy = ScriptedLiftPolicy(InjectedFailures(grip_force_scale=0.3), seed=0)
+        assert self._run(env, policy) is False
+
+    def test_high_noise_fails(self, env_factory) -> None:  # type: ignore[no-untyped-def]
+        from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy
+
+        env = env_factory()
+        policy = ScriptedLiftPolicy(InjectedFailures(action_noise=0.15), seed=0)
         assert self._run(env, policy) is False
