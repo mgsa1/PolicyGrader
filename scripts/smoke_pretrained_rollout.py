@@ -27,6 +27,7 @@ import imageio  # noqa: E402
 import numpy as np  # noqa: E402
 import robosuite as suite  # noqa: E402
 
+from src.sim.cameras import NUT_RENDER_CAMERA, apply_nut_eval_camera  # noqa: E402
 from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +35,10 @@ CHECKPOINT = REPO_ROOT / "artifacts" / "checkpoints" / "square_ph_low_dim.pth"
 OUT_DIR = REPO_ROOT / "artifacts" / "smoke"
 OUT_MP4 = OUT_DIR / "pretrained_rollout.mp4"
 
-CAMERA = "frontview"
+# Render from the midpoint(frontview, agentview)+30 cm pose (see src.sim.cameras).
+# We need both cameras allocated so that override can read frontview's pose.
+CAMERA = NUT_RENDER_CAMERA
+ALLOCATED_CAMERAS = ["frontview", "agentview"]
 RENDER_W, RENDER_H = 512, 512
 MAX_STEPS = 400  # NutAssemblySquare horizon in robomimic configs is 400
 RENDER_FPS = 20  # matches control_freq from the checkpoint's env_kwargs
@@ -52,13 +56,14 @@ def main() -> int:
     # Override training-time renderer settings: we need offscreen frames at
     # demo resolution, not the 84x84 the policy was trained on.
     env_kwargs["has_offscreen_renderer"] = True
-    env_kwargs["camera_names"] = CAMERA
+    env_kwargs["camera_names"] = ALLOCATED_CAMERAS
     env_kwargs["camera_heights"] = RENDER_H
     env_kwargs["camera_widths"] = RENDER_W
 
     env = suite.make(env_name=policy.env_name, **env_kwargs)
     obs = env.reset()
     policy.reset()
+    apply_nut_eval_camera(env)
 
     frames: list[np.ndarray] = []
     success = False
