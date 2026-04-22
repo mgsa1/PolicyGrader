@@ -32,6 +32,10 @@ ROOM_HALF = 7.8
 # control to the player. Long enough to notice whiskers + ears + tail.
 INTRO_DURATION = 3.5
 
+# Broom contacts scale the rat's per-step velocity change 3× (1× natural
+# + 2× extra) so the fling feels like a smash instead of a nudge.
+PUSHBACK_BOOST = 2.0
+
 
 def claim_code() -> str:
     return "RAT-" + secrets.token_hex(3).upper()
@@ -60,6 +64,23 @@ def main() -> None:
     robot = RobotController(model, data)
 
     key_box_pos = np.array(data.xpos[key_box_body], copy=True)
+
+    # Precompute the set of broom geom ids so the per-step contact scan
+    # stays tight.
+    broom_geom_ids = {
+        model.geom("broom_handle").id,
+        model.geom("broom_bristles").id,
+    }
+
+    def broom_is_touching_rat() -> bool:
+        for c_idx in range(data.ncon):
+            con = data.contact[c_idx]
+            g1, g2 = int(con.geom1), int(con.geom2)
+            if g1 in broom_geom_ids and int(model.geom_bodyid[g2]) == rat.rat_body_id:
+                return True
+            if g2 in broom_geom_ids and int(model.geom_bodyid[g1]) == rat.rat_body_id:
+                return True
+        return False
 
     state = {
         "won": False,
@@ -108,7 +129,26 @@ def main() -> None:
         ) as viewer:
             viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
             viewer.cam.fixedcamid = intro_cam_id
-            viewer.opt.label = mujoco.mjtLabel.mjLABEL_BODY
+            # Rendering cost controls: no per-body text labels (those render
+            # 3D text for every body every frame), no debug visualizations.
+            viewer.opt.label = mujoco.mjtLabel.mjLABEL_NONE
+            for flag in (
+                mujoco.mjtVisFlag.mjVIS_INERTIA,
+                mujoco.mjtVisFlag.mjVIS_JOINT,
+                mujoco.mjtVisFlag.mjVIS_ACTUATOR,
+                mujoco.mjtVisFlag.mjVIS_CONTACTPOINT,
+                mujoco.mjtVisFlag.mjVIS_CONTACTFORCE,
+                mujoco.mjtVisFlag.mjVIS_TRANSPARENT,
+                mujoco.mjtVisFlag.mjVIS_AUTOCONNECT,
+                mujoco.mjtVisFlag.mjVIS_COM,
+                mujoco.mjtVisFlag.mjVIS_PERTFORCE,
+                mujoco.mjtVisFlag.mjVIS_PERTOBJ,
+            ):
+                viewer.opt.flags[flag] = 0
+            # Hide collision-only geoms (Franka collision meshes are group 3)
+            # and any ancillary groups. Visuals live in group 0-2.
+            for g in range(3, 6):
+                viewer.opt.geomgroup[g] = 0
 
             sim_dt = model.opt.timestep
             frame_dt = 1.0 / 60.0
@@ -120,9 +160,14 @@ def main() -> None:
 
             print_banner()
 
+            # Cap the per-frame sim catch-up to 2 render frames. Without
+            # this, a single slow frame can make the inner sim loop spiral:
+            # more steps -> slower frame -> even more steps.
+            MAX_SIM_PER_FRAME = 2.5 * frame_dt
+
             while viewer.is_running():
                 now = time.perf_counter()
-                sim_accum += min(now - last_real, 0.1)
+                sim_accum = min(sim_accum + (now - last_real), MAX_SIM_PER_FRAME)
                 last_real = now
 
                 # Intro → FPV transition.
@@ -146,7 +191,7 @@ def main() -> None:
                     continue
 
                 steps_this_frame = 0
-                while sim_accum >= sim_dt and steps_this_frame < 40:
+                while sim_accum >= sim_dt and steps_this_frame < 10:
                     if state["intro_active"] or state["won"]:
                         data.ctrl[rat.act_fx] = 0.0
                         data.ctrl[rat.act_fy] = 0.0
@@ -158,7 +203,29 @@ def main() -> None:
                         robot.step(sim_dt)
                     data.mocap_pos[broom_mocap_id] = data.xpos[hand_body]
                     data.mocap_quat[broom_mocap_id] = data.xquat[hand_body]
+
+                    # Cache pre-step rat velocity + whether the broom is
+                    # touching it, so we can amplify the contact-induced
+                    # delta-v after mj_step.
+                    boost_active = broom_is_touching_rat()
+                    if boost_active:
+                        pre_vx = float(data.qvel[rat.dofadr_x])
+                        pre_vy = float(data.qvel[rat.dofadr_y])
+
                     mujoco.mj_step(model, data)
+
+                    if boost_active:
+                        actuator_dv_x = float(data.ctrl[rat.act_fx]) * sim_dt / rat.m_eff
+                        actuator_dv_y = float(data.ctrl[rat.act_fy]) * sim_dt / rat.m_eff
+                        dv_x = float(data.qvel[rat.dofadr_x]) - pre_vx
+                        dv_y = float(data.qvel[rat.dofadr_y]) - pre_vy
+                        # Contact-induced delta-v = total dv minus what the
+                        # actuator would have added in an empty step.
+                        contact_dv_x = dv_x - actuator_dv_x
+                        contact_dv_y = dv_y - actuator_dv_y
+                        data.qvel[rat.dofadr_x] += PUSHBACK_BOOST * contact_dv_x
+                        data.qvel[rat.dofadr_y] += PUSHBACK_BOOST * contact_dv_y
+
                     sim_accum -= sim_dt
                     steps_this_frame += 1
 

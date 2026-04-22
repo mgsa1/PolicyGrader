@@ -8,18 +8,14 @@ Controls:
     Q          strafe left
     E          strafe right
 
-Translation is driven by direct-force motors: a steady push while a
-movement key is held, zero otherwise. Kinetic friction from the floor
-+ rat geom decelerates coast. Same physics applies during input, after
-release, and after a broom hit — one consistent ice feel. A soft
-velocity cap stops the force at MAX_FORWARD / MAX_STRAFE; broom
-impulses can push the rat past that cap (they're not gated by input).
+Translation uses direct-force motors with damping compensation: while a
+movement key is held we apply `m*accel + c*v_along_axis`, which gives a
+*constant* acceleration (linear speed ramp) up to the max speed — no
+spamming keys, just hold. Release = zero force, joint damping handles
+the icy coast. Knockback impulses from the broom pass through
+unresisted, so the player-vs-broom dynamic stays dramatic.
 
 Yaw is a velocity servo so aiming snaps to stop on release.
-
-`mujoco.viewer.launch_passive`'s `key_callback` only fires on press and
-GLFW auto-repeat — never on release. We stamp each key's last-seen time
-and treat it as "still held" while that stamp is fresh.
 """
 
 from __future__ import annotations
@@ -30,8 +26,9 @@ import time
 import mujoco
 import numpy as np
 
-MOVE_FORCE = 1.2
-STRAFE_FORCE = 0.7
+# Target accelerations (m/s² and m/s per s of strafe).
+MOVE_ACCEL = 3.0
+STRAFE_ACCEL = 2.0
 MAX_FORWARD = 4.0
 MAX_STRAFE = 2.5
 YAW_RATE = 2.8
@@ -50,6 +47,15 @@ class RatController:
         self.dofadr_x = int(model.jnt_dofadr[model.joint("rat_x").id])
         self.dofadr_y = int(model.jnt_dofadr[model.joint("rat_y").id])
         self.rat_body_id = model.body("rat").id
+        # Effective translational mass at each slide joint =
+        # body mass + armature. Used so the damping-compensation force
+        # produces the intended acceleration.
+        body_mass = float(model.body_mass[self.rat_body_id])
+        arm_x = float(model.dof_armature[self.dofadr_x])
+        self.m_eff = body_mass + arm_x
+        # Per-slide-joint Rayleigh damping coefficient.
+        self.damp_x = float(model.dof_damping[self.dofadr_x])
+        self.damp_y = float(model.dof_damping[self.dofadr_y])
         self.last_seen: dict[int, float] = {}
 
     def on_key(self, key: int) -> None:
@@ -75,7 +81,7 @@ class RatController:
         cur_vx = float(self.data.qvel[self.dofadr_x])
         cur_vy = float(self.data.qvel[self.dofadr_y])
 
-        # Forward = rat's local +x; strafe-left = local +y.
+        # Rat-local axes in world frame: forward = local +x, strafe-left = +y.
         fwd_x, fwd_y = cos_y, sin_y
         strafe_x, strafe_y = -sin_y, cos_y
 
@@ -84,24 +90,25 @@ class RatController:
 
         if forward != 0:
             vel_along = cur_vx * fwd_x + cur_vy * fwd_y
-            # Only push if we're still below the max speed *in the desired
-            # direction*. This lets knockback push the rat past the cap
-            # without the player's held key fighting it.
-            if forward > 0 and vel_along < MAX_FORWARD:
-                fx += MOVE_FORCE * fwd_x
-                fy += MOVE_FORCE * fwd_y
-            elif forward < 0 and -vel_along < MAX_FORWARD:
-                fx -= MOVE_FORCE * fwd_x
-                fy -= MOVE_FORCE * fwd_y
+            signed_speed = forward * vel_along  # positive while moving with input
+            if signed_speed < MAX_FORWARD:
+                # F = m * a  (desired acceleration) + damping compensation
+                # (c*v in the forward direction). Yields a *constant* accel.
+                push = forward * (self.m_eff * MOVE_ACCEL)
+                damp_comp_x = self.damp_x * vel_along * fwd_x
+                damp_comp_y = self.damp_y * vel_along * fwd_y
+                fx += push * fwd_x + damp_comp_x
+                fy += push * fwd_y + damp_comp_y
 
         if strafe != 0:
             vel_along_s = cur_vx * strafe_x + cur_vy * strafe_y
-            if strafe > 0 and vel_along_s < MAX_STRAFE:
-                fx += STRAFE_FORCE * strafe_x
-                fy += STRAFE_FORCE * strafe_y
-            elif strafe < 0 and -vel_along_s < MAX_STRAFE:
-                fx -= STRAFE_FORCE * strafe_x
-                fy -= STRAFE_FORCE * strafe_y
+            signed_s = strafe * vel_along_s
+            if signed_s < MAX_STRAFE:
+                push = strafe * (self.m_eff * STRAFE_ACCEL)
+                damp_comp_x = self.damp_x * vel_along_s * strafe_x
+                damp_comp_y = self.damp_y * vel_along_s * strafe_y
+                fx += push * strafe_x + damp_comp_x
+                fy += push * strafe_y + damp_comp_y
 
         self.data.ctrl[self.act_fx] = fx
         self.data.ctrl[self.act_fy] = fy
