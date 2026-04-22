@@ -1,19 +1,26 @@
 """Keyboard -> rat force / yaw targets.
 
 Controls:
-    W / ↑      forward
-    S / ↓      backward
-    A / ←      turn left
-    D / →      turn right
+    ↑          forward
+    ↓          backward
+    ←          turn left
+    →          turn right
     Q          strafe left
     E          strafe right
 
-Translation uses direct-force motors with damping compensation: while a
-movement key is held we apply `m*accel + c*v_along_axis`, which gives a
-*constant* acceleration (linear speed ramp) up to the max speed — no
-spamming keys, just hold. Release = zero force, joint damping handles
-the icy coast. Knockback impulses from the broom pass through
-unresisted, so the player-vs-broom dynamic stays dramatic.
+MuJoCo's native viewer hijacks several letter keys as render-flag
+hotkeys (W = wireframe, D = depth, A = actuator vis, S = skin vis,
+K = skybox, O = shadow, L = reflection, etc.), and those are handled
+in the C++ layer before any Python callback can see them. The safe
+set of non-hijacked keys for gameplay is tiny — E, Q, U, V, Y, and
+the arrow keys — so movement lives on the arrows and strafe on Q/E.
+
+Translation uses direct-force motors with damping compensation: while
+a movement key is held we apply `m*accel + c*v_along_axis`, which
+gives a *constant* acceleration (linear speed ramp) up to the max
+speed — no spamming keys, just hold. Release = zero force, joint
+damping handles the icy coast. Knockback impulses from the broom pass
+through unresisted, so the player-vs-broom dynamic stays dramatic.
 
 Yaw is a velocity servo so aiming snaps to stop on release.
 """
@@ -68,12 +75,10 @@ class RatController:
     def step(self) -> None:
         import glfw
 
-        forward = int(self._held(glfw.KEY_W, glfw.KEY_UP)) - int(
-            self._held(glfw.KEY_S, glfw.KEY_DOWN)
-        )
-        turn = int(self._held(glfw.KEY_A, glfw.KEY_LEFT)) - int(
-            self._held(glfw.KEY_D, glfw.KEY_RIGHT)
-        )
+        # Arrow keys only for move/turn — see module docstring for why WASD
+        # is off-limits.
+        forward = int(self._held(glfw.KEY_UP)) - int(self._held(glfw.KEY_DOWN))
+        turn = int(self._held(glfw.KEY_LEFT)) - int(self._held(glfw.KEY_RIGHT))
         strafe = int(self._held(glfw.KEY_Q)) - int(self._held(glfw.KEY_E))
 
         yaw = float(self.data.qpos[self.qposadr_yaw])
