@@ -17,14 +17,17 @@ import mujoco
 import numpy as np
 
 DIFFICULTY = 1.0
-LEAD_TIME = 0.35
-REACTION_DELAY = 0.08
-AIM_JITTER = 0.04
-LUNGE_RADIUS = 1.5
-LUNGE_COOLDOWN = 1.2
-LUNGE_EXTEND_TIME = 0.12
-LUNGE_HOLD_TIME = 0.08
-LUNGE_RETRACT_TIME = 0.18
+# Short lead-time + near-zero reaction delay + tiny aim jitter make the
+# broom track the rat almost perfectly — the game is meant to be
+# nearly impossible, with only occasional human-timing-based openings.
+LEAD_TIME = 0.25
+REACTION_DELAY = 0.02
+AIM_JITTER = 0.012
+LUNGE_RADIUS = 2.2
+LUNGE_COOLDOWN = 0.7
+LUNGE_EXTEND_TIME = 0.08
+LUNGE_HOLD_TIME = 0.06
+LUNGE_RETRACT_TIME = 0.12
 
 HOME_J2 = 0.0
 HOME_J4 = -math.pi / 2
@@ -57,13 +60,14 @@ class RobotController:
         self.act_j7 = model.actuator("actuator7").id
         self.act_grip = model.actuator("actuator8").id
 
-        # The real Franka's 87 Nm on joint1 can just barely keep pace with a
-        # 4.5 m/s rat; modestly boost force and gain so the broom feels fast
-        # enough to make the game hard.
-        model.actuator_forcerange[self.act_j1] = [-400.0, 400.0]
-        model.actuator_gainprm[self.act_j1, 0] = 9000.0
-        model.actuator_biasprm[self.act_j1, 1] = -9000.0
-        model.actuator_biasprm[self.act_j1, 2] = -600.0
+        # Gameplay > realism: crank joint1 well past the real Franka's 87 Nm
+        # so the arm can outrun the rat's 5 m/s top speed with margin.
+        # Broom tip at r≈0.55 m needs ω≈18 rad/s to reach ~10 m/s, so we
+        # make sure the actuator can sustain that.
+        model.actuator_forcerange[self.act_j1] = [-1200.0, 1200.0]
+        model.actuator_gainprm[self.act_j1, 0] = 18000.0
+        model.actuator_biasprm[self.act_j1, 1] = -18000.0
+        model.actuator_biasprm[self.act_j1, 2] = -700.0
 
         self.j1_qposadr = int(model.jnt_qposadr[model.joint("joint1").id])
 

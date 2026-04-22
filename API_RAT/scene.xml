@@ -77,7 +77,7 @@
             contype="2" conaffinity="2"
             friction="0.6 0.005 0.0001"/>
       <geom name="broom_bristles" type="box"
-            size="0.22 0.02 0.05"
+            size="0.30 0.025 0.05"
             pos="0 0 0.55" material="broom_bristles_mat"
             contype="2" conaffinity="2"
             friction="0.5 0.005 0.0001"/>

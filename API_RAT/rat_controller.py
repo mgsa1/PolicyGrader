@@ -33,14 +33,16 @@ import time
 import mujoco
 import numpy as np
 
-# Target accelerations (m/s² and m/s per s of strafe).
-MOVE_ACCEL = 3.0
-STRAFE_ACCEL = 2.0
-MAX_FORWARD = 4.0
-MAX_STRAFE = 2.5
-YAW_RATE = 2.8
+# RC-car feel: snappy ramp to max speed (~0.5 s), brisk turn rate, modest
+# coast when released. Spam-proof key hold (300 ms) so if GLFW's auto-
+# repeat on macOS is slow, the controls don't stutter.
+MOVE_ACCEL = 10.0
+STRAFE_ACCEL = 6.0
+MAX_FORWARD = 5.0
+MAX_STRAFE = 3.5
+YAW_RATE = 4.0
 
-KEY_HOLD_TIMEOUT = 0.12
+KEY_HOLD_TIMEOUT = 0.3
 
 
 class RatController:
