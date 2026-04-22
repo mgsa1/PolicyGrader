@@ -134,8 +134,15 @@ class TestScriptedLiftIntegration:
         assert self._run(env, policy) is False
 
     def test_high_noise_fails(self, env_factory) -> None:  # type: ignore[no-untyped-def]
+        # Use 0.30 here, not the demo-facing 0.15 from claude.md sec 4. With
+        # NOISE_GAIN=8, action_noise=0.15 lives right at the edge of "knocks
+        # the cube", and tiny floating-point differences in MuJoCo's solver
+        # across CPUs flip the outcome. 0.30 is unambiguously chaotic on every
+        # machine. The 0.15 -> KNOCK_OBJECT_OFF_TABLE label mapping is pinned
+        # by TestInjectedFailuresLabel above; this test only verifies that
+        # the noise mechanism CAN break the rollout when cranked up.
         from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy
 
         env = env_factory()
-        policy = ScriptedLiftPolicy(InjectedFailures(action_noise=0.15), seed=0)
+        policy = ScriptedLiftPolicy(InjectedFailures(action_noise=0.30), seed=0)
         assert self._run(env, policy) is False
