@@ -11,3 +11,4 @@ artifacts/
 .claude/settings.local.json
 .gstack/
 API_RAT/assets/mujoco_menagerie/
+MUJOCO_LOG.TXT

@@ -1,8 +1,19 @@
 """Keyboard -> rat velocity actuator targets.
 
-`mujoco.viewer.launch_passive`'s `key_callback` only fires on key press and
-GLFW auto-repeat — it never receives release events. To emulate continuous
-'is-key-held' state, we stamp each key's last-seen time and decay.
+Controls:
+    W / ↑      forward
+    S / ↓      backward
+    A / ←      turn left
+    D / →      turn right
+
+When no forward/back key is held, translation ctrl is set to the rat's
+*current* qvel so the velocity-servo force is ~zero and the rat coasts
+like it's on ice. Yaw instead snaps to stop when no turn key is held so
+aiming stays crisp.
+
+`mujoco.viewer.launch_passive`'s `key_callback` only fires on press and
+GLFW auto-repeat — never on release. We stamp each key's last-seen time
+and treat it as "still held" while that stamp is fresh.
 """
 
 from __future__ import annotations
@@ -14,11 +25,10 @@ import mujoco
 import numpy as np
 
 MOVE_SPEED = 4.5
-STRAFE_SPEED = 3.5
-YAW_RATE = 2.5
+YAW_RATE = 2.8
 
-# GLFW auto-repeat is ~30 ms; hold the "still pressed" assumption for 120 ms
-# after the last event so short repeat gaps don't stutter movement.
+# GLFW auto-repeat is ~30 ms; hold the "still pressed" assumption a little
+# longer so short repeat gaps don't stutter.
 KEY_HOLD_TIMEOUT = 0.12
 
 
@@ -29,7 +39,9 @@ class RatController:
         self.act_vx = model.actuator("rat_vx").id
         self.act_vy = model.actuator("rat_vy").id
         self.act_vyaw = model.actuator("rat_vyaw").id
-        self.joint_yaw_qposadr = int(model.jnt_qposadr[model.joint("rat_yaw").id])
+        self.qposadr_yaw = int(model.jnt_qposadr[model.joint("rat_yaw").id])
+        self.dofadr_x = int(model.jnt_dofadr[model.joint("rat_x").id])
+        self.dofadr_y = int(model.jnt_dofadr[model.joint("rat_y").id])
         self.rat_body_id = model.body("rat").id
         self.last_seen: dict[int, float] = {}
 
@@ -46,22 +58,26 @@ class RatController:
         forward = int(self._held(glfw.KEY_W, glfw.KEY_UP)) - int(
             self._held(glfw.KEY_S, glfw.KEY_DOWN)
         )
-        strafe = int(self._held(glfw.KEY_A)) - int(self._held(glfw.KEY_D))
-        turn = int(self._held(glfw.KEY_LEFT, glfw.KEY_Q)) - int(
-            self._held(glfw.KEY_RIGHT, glfw.KEY_E)
+        turn = int(self._held(glfw.KEY_A, glfw.KEY_LEFT)) - int(
+            self._held(glfw.KEY_D, glfw.KEY_RIGHT)
         )
 
-        yaw = float(self.data.qpos[self.joint_yaw_qposadr])
-        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+        yaw = float(self.data.qpos[self.qposadr_yaw])
+        cur_vx = float(self.data.qvel[self.dofadr_x])
+        cur_vy = float(self.data.qvel[self.dofadr_y])
 
-        vx_local = forward * MOVE_SPEED
-        vy_local = strafe * STRAFE_SPEED
+        if forward != 0:
+            cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+            target_vx = forward * MOVE_SPEED * cos_y
+            target_vy = forward * MOVE_SPEED * sin_y
+        else:
+            # No input → drive ctrl to the current velocity so the servo
+            # produces ~0 force and the rat glides.
+            target_vx = cur_vx
+            target_vy = cur_vy
 
-        vx_world = cos_y * vx_local - sin_y * vy_local
-        vy_world = sin_y * vx_local + cos_y * vy_local
-
-        self.data.ctrl[self.act_vx] = vx_world
-        self.data.ctrl[self.act_vy] = vy_world
+        self.data.ctrl[self.act_vx] = target_vx
+        self.data.ctrl[self.act_vy] = target_vy
         self.data.ctrl[self.act_vyaw] = turn * YAW_RATE
 
     def position(self) -> np.ndarray:

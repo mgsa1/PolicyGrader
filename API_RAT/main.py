@@ -115,6 +115,7 @@ def main() -> None:
             last_real = time.perf_counter()
             sim_accum = 0.0
             last_print = 0.0
+            frame_counter = [0]
             state["intro_start"] = last_real
 
             print_banner()
@@ -183,6 +184,7 @@ def main() -> None:
                 if elapsed_frame < frame_dt:
                     time.sleep(frame_dt - elapsed_frame)
 
+                frame_counter[0] += 1
                 if now - last_print > 2.0:
                     rp = data.xpos[rat.rat_body_id]
                     d_box = math.hypot(
@@ -195,13 +197,17 @@ def main() -> None:
                         status = "intro"
                     else:
                         status = "alive"
+                    dt_print = now - last_print
+                    fps = frame_counter[0] / dt_print if dt_print > 0 else 0.0
                     print(
                         f"[{status}] rat=({rp[0]:+.2f},{rp[1]:+.2f})  "
                         f"dist_to_box={d_box:.2f}  "
-                        f"lunge={robot.lunge_state}",
+                        f"lunge={robot.lunge_state}  "
+                        f"fps={fps:.0f}",
                         flush=True,
                     )
                     last_print = now
+                    frame_counter[0] = 0
 
         print("  ↳ viewer closed. see you.", flush=True)
     except Exception:
@@ -215,8 +221,8 @@ def print_banner() -> None:
     print("=" * 52)
     print("  API_RAT")
     print("  You are the rat. Steal the ANTHROPIC_API_KEY box.")
-    print("  W/A/S/D move  |  Q/E or ←/→ turn  |  R reset")
-    print("  The Franka will hit you. Far.")
+    print("  W/S or ↑/↓ move  |  A/D or ←/→ turn  |  R reset")
+    print("  Floor is ice. Broom is fast. Good luck.")
     print("=" * 52)
     print()
 
