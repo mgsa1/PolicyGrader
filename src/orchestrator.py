@@ -49,6 +49,7 @@ from src.costing import (
     format_cost,
     format_duration,
 )
+from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ def _run_one_turn(
     mirror_root: Path,
     messages_client: Anthropic,
     cost_tracker: CostTracker,
+    runtime: RuntimeState,
 ) -> str:
     """Drive one phase of the session to completion. Returns the terminal stop_reason.
 
@@ -193,7 +195,8 @@ def _run_one_turn(
     arrived. We reopen the stream and let the agent continue. Only
     `end_turn` / `retries_exhausted` (or `session.error`) actually stops a
     phase. Token usage on every event with a `usage` field is summed into
-    `cost_tracker` for the Phase 4 baseline comparison.
+    `cost_tracker`; runtime.json + chat.jsonl are updated on every event
+    so the UI can read along.
     """
     while True:
         terminal: str | None = None
@@ -215,16 +218,19 @@ def _run_one_turn(
                 )
                 if text:
                     logger.info("agent: %s", text[:500])
+                    runtime.append_chat("agent_message", text=text)
 
             elif ev_type == "agent.thinking":
                 text = getattr(event, "text", "") or ""
                 if text:
                     logger.debug("thinking: %s", text[:500])
+                    runtime.append_chat("agent_thinking", text=text)
 
             elif ev_type == "agent.custom_tool_use":
                 tool_name = event.name
                 tool_input = event.input
                 logger.info("tool_use %s args=%s", tool_name, tool_input)
+                runtime.append_chat("tool_use", tool=tool_name, args=dict(tool_input))
                 try:
                     payload = dispatch_custom_tool(
                         tool_name,
@@ -234,6 +240,7 @@ def _run_one_turn(
                         cost_tracker=cost_tracker,
                     )
                     _send_tool_result(client, session_id, event.id, payload)
+                    runtime.append_chat("tool_result", tool=tool_name, payload=payload)
                 except Exception as exc:  # noqa: BLE001 — must report back to the agent
                     logger.exception("tool %s failed", tool_name)
                     _send_tool_result(
@@ -243,6 +250,7 @@ def _run_one_turn(
                         f'{{"error": "{type(exc).__name__}: {exc}"}}',
                         is_error=True,
                     )
+                    runtime.append_chat("tool_error", tool=tool_name, error=str(exc))
 
             elif ev_type == "session.status_idle":
                 saw_status_idle = True
@@ -251,6 +259,7 @@ def _run_one_turn(
                 if stop_type == "requires_action":
                     # Tool results were sent inline above; reopen the stream
                     # so the agent can pick up where it left off.
+                    runtime.mark_event()
                     break
                 terminal = str(stop_type)
                 break
@@ -260,7 +269,10 @@ def _run_one_turn(
                 terminal = "error"
                 break
 
+            runtime.mark_event()
+
         if terminal is not None:
+            runtime.mark_event()
             return terminal
         if not saw_status_idle:
             # Stream closed without a status_idle event — unusual, bail out
@@ -345,8 +357,18 @@ def run_all_phases(
     rollouts_dir = mirror_root / "rollouts"
 
     start_time = time.time()
+    runtime = RuntimeState(
+        mirror_root=mirror_root,
+        cost_tracker=cost_tracker,
+        start_time=start_time,
+        session_id=handle.session_id,
+    )
+    runtime.set_phase("starting")
+
     stops: list[str] = []
     for marker in PHASE_MARKERS:
+        runtime.set_phase(marker)
+        runtime.append_chat("phase_marker", marker=marker)
         if marker == PHASE_MARKER_PLANNER:
             payload = f"{marker}\n\nEvaluation goal: {user_goal}"
         elif marker == PHASE_MARKER_REPORT:
@@ -365,12 +387,14 @@ def run_all_phases(
             mirror_root=mirror_root,
             messages_client=messages_client,
             cost_tracker=cost_tracker,
+            runtime=runtime,
         )
         stops.append(stop)
         if stop != "end_turn":
             logger.warning("phase %s ended with %s — stopping orchestrator", marker, stop)
             break
 
+    runtime.set_phase("complete")
     n_rollouts_final = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0
     return SessionResult(
         stops=stops,

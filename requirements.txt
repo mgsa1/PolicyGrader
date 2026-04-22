@@ -6,6 +6,7 @@ robosuite>=1.5
 robomimic==0.3.0
 imageio
 imageio-ffmpeg
+gradio>=4
 numpy
 torch
 h5py
