@@ -25,9 +25,10 @@ OPUS_4_7_CACHE_WRITE_PER_MTOK = 18.75  # 1.25× input
 
 # Industry-baseline parameters. 3 min/rollout is a sympathetic estimate —
 # quick to confirm obvious successes, slower to diagnose ambiguous failures.
-# $50/hr is mid-band for a junior robotics engineer. Adjust in the report
-# writer if the demo narrative wants a different framing.
-BASELINE_HOURLY_RATE_USD = 50.0
+# $75/hr is mid-band for a robotics engineer doing eval review (loaded cost
+# including benefits/overhead is typically higher than raw salary). Adjust
+# in the report writer if the demo narrative wants a different framing.
+BASELINE_HOURLY_RATE_USD = 75.0
 BASELINE_SECONDS_PER_ROLLOUT = 180
 
 

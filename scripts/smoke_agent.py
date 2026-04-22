@@ -85,7 +85,7 @@ def main() -> int:
     print("\n=== Cost & time vs manual-review baseline ===", flush=True)
     print(f"  scenarios:        {result.n_rollouts}")
     print(f"  pipeline cost:    {format_cost(pipeline_cost)}")
-    baseline_note = "(manual reviewer @ $50/hr × 3min/rollout)"
+    baseline_note = "(manual reviewer @ $75/hr × 3min/rollout)"
     print(f"  baseline cost:    {format_cost(base_cost)}  {baseline_note}")
     print(f"  pipeline time:    {format_duration(result.elapsed_seconds)}")
     print(f"  baseline time:    {format_duration(base_time)}  (sequential reviewer)")
