@@ -148,8 +148,8 @@ def main() -> None:
                 steps_this_frame = 0
                 while sim_accum >= sim_dt and steps_this_frame < 40:
                     if state["intro_active"] or state["won"]:
-                        data.ctrl[rat.act_vx] = 0.0
-                        data.ctrl[rat.act_vy] = 0.0
+                        data.ctrl[rat.act_fx] = 0.0
+                        data.ctrl[rat.act_fy] = 0.0
                         data.ctrl[rat.act_vyaw] = 0.0
                         if not state["won"]:
                             robot.step(sim_dt)
@@ -221,7 +221,7 @@ def print_banner() -> None:
     print("=" * 52)
     print("  API_RAT")
     print("  You are the rat. Steal the ANTHROPIC_API_KEY box.")
-    print("  W/S or ↑/↓ move  |  A/D or ←/→ turn  |  R reset")
+    print("  W/S or ↑/↓ move  |  A/D or ←/→ turn  |  Q/E strafe  |  R reset")
     print("  Floor is ice. Broom is fast. Good luck.")
     print("=" * 52)
     print()

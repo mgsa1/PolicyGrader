@@ -45,7 +45,7 @@
            diffuse="0.8 0.8 0.8" specular="0 0 0"/>
 
     <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"
-          friction="0.05 0.005 0.0001"/>
+          friction="0.22 0.005 0.0001"/>
 
     <!-- walls: 8m from center, 1.5m tall -->
     <geom name="wall_n" type="box" size="8 0.1 1.5" pos="0 8 1.5" material="wall_mat"/>
@@ -87,13 +87,16 @@
          friction on the body geom make the rat glide like it's on ice when
          the broom sends it flying. -->
     <body name="rat" pos="0 0 0.09">
-      <!-- Armature stabilises the implicit integrator against the kv=3-4
-           velocity servos (without it, small joint inertia + stiff servo
-           => NaN). -->
+      <!-- Rayleigh-damped slide joints + motor (direct-force) actuators
+           make the rat accelerate slowly under input and coast when
+           released — one consistent ice feel. Damping is tuned so a 4 m/s
+           rat coasts for ~2-3 s and a knockback at ~8 m/s glides ~3 s.
+           Armature 0.005 keeps Euler stable. Yaw keeps a velocity servo
+           (snappy aiming), with higher armature. -->
       <joint name="rat_x" type="slide" axis="1 0 0" limited="false"
-             damping="0.05" armature="0.05"/>
+             damping="0.15" armature="0.005"/>
       <joint name="rat_y" type="slide" axis="0 1 0" limited="false"
-             damping="0.05" armature="0.05"/>
+             damping="0.15" armature="0.005"/>
       <joint name="rat_yaw" type="hinge" axis="0 0 1" limited="false"
              damping="0.3" armature="0.02"/>
 
@@ -102,7 +105,7 @@
       <geom name="rat_body" type="capsule" fromto="-0.08 0 0 0.08 0 0"
             size="0.065" material="rat_fur" mass="0.25"
             contype="3" conaffinity="3"
-            friction="0.04 0.002 0.0001"/>
+            friction="0.18 0.005 0.0001"/>
       <geom name="rat_head" type="ellipsoid" size="0.055 0.045 0.045"
             pos="0.13 0 0.02" material="rat_fur"
             contype="3" conaffinity="3"/>
@@ -177,12 +180,13 @@
   </worldbody>
 
   <actuator>
-    <!-- kv stays moderate so the ice feel comes from how the controller
-         drives ctrl: when no forward/back input, it sets ctrl to current
-         qvel so force ≈ 0 and the rat coasts; for yaw it drives ctrl=0 so
-         turning stops snappily. -->
-    <velocity name="rat_vx" joint="rat_x" kv="4.0" ctrlrange="-8 8"/>
-    <velocity name="rat_vy" joint="rat_y" kv="4.0" ctrlrange="-8 8"/>
+    <!-- Translation: direct-force motors. The RatController applies a push
+         force in the rat's forward/strafe direction while keys are held,
+         and zero otherwise. Acceleration ramps up, release just coasts, and
+         broom impulses pass through unresisted — one consistent feel. -->
+    <motor name="rat_fx" joint="rat_x" ctrlrange="-4 4"/>
+    <motor name="rat_fy" joint="rat_y" ctrlrange="-4 4"/>
+    <!-- Yaw keeps a velocity servo so turning snaps to stop on release. -->
     <velocity name="rat_vyaw" joint="rat_yaw" kv="3.0" ctrlrange="-4 4"/>
   </actuator>
 
