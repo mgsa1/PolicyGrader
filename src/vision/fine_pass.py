@@ -32,19 +32,47 @@ FINE_RANGE_PADDING_FRAMES = 4  # widen the coarse range by this on each side
 
 ALLOWED_LABELS = sorted(label.value for label in FailureMode if label != FailureMode.NONE)
 
+
+def _load_taxonomy() -> str:
+    """Embed docs/taxonomy.md verbatim — single source of truth for the label set."""
+    return (Path(__file__).resolve().parents[2] / "docs" / "taxonomy.md").read_text()
+
+
+_TAXONOMY_MARKDOWN = _load_taxonomy()
+
 SYSTEM_PROMPT = f"""\
-You are a robot manipulation eval judge. You will be shown a tight sequence of \
-high-resolution frames from a SINGLE failed robot rollout (a Franka Panda arm \
-attempting to pick up a cube). The frames span the moment the failure became \
-visible.
+You are a robot manipulation eval judge. You will be shown 8-12 high-resolution \
+frames from a SINGLE failed robot rollout. The task is one of:
+  - Lift: a Franka Panda arm picks up a cube from a table.
+  - NutAssemblySquare: a Franka Panda arm picks a square nut and places it on a square peg.
+Identify the task from the first frame, then watch how it fails across the sequence.
 
-Pick exactly ONE label from this closed set, no exceptions:
-  {", ".join(ALLOWED_LABELS)}
+Pick exactly ONE label from this closed set: {", ".join(ALLOWED_LABELS)}.
+Do NOT pick `none` — Pass-2 only runs on confirmed failures.
 
-Then pick the SINGLE most diagnostic frame in the sequence and a pixel \
-coordinate on the visual evidence — the object, the offending finger, the \
-misalignment axis, etc. The coordinate is in the resolution of the frame as \
-shown to you (long edge {FINE_LONG_EDGE_PX} px).
+The label is often only distinguishable by what CHANGES between consecutive \
+frames: did the object move on its own? did the gripper close on contact or \
+in empty air? did the arm collide with anything? Read the "Visual cue" \
+column in the table below carefully — those are the discriminating features \
+between modes that look similar.
+
+{_TAXONOMY_MARKDOWN}
+
+Common confusions to avoid (these have caused mis-labels in past runs):
+  - approach_miss vs knock_object_off_table: if the object visibly moves \
+    BEFORE the grasp attempt, it's knock_object_off_table; if the gripper \
+    closes on air with the object stationary, it's approach_miss.
+  - approach_miss vs slip_during_lift: if the gripper visibly contacted the \
+    object and lifted it briefly before losing it, it's slip_during_lift, \
+    NOT approach_miss. slip requires evidence of partial pickup.
+  - approach_miss vs insertion_misalignment: insertion_misalignment requires \
+    a SUCCESSFUL pick followed by a failed PLACEMENT (only relevant for \
+    NutAssemblySquare — nut held above peg but offset).
+
+Then pick the SINGLE most diagnostic frame and a pixel coordinate on the \
+visual evidence — the object, the offending finger, the misalignment axis. \
+The coordinate is in the resolution of the frame as shown to you (long edge \
+{FINE_LONG_EDGE_PX} px).
 
 Respond with ONE valid JSON object and NOTHING else. Schema:
   {{"taxonomy_label": <one of the labels above>,
