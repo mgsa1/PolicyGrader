@@ -1,0 +1,179 @@
+<mujoco model="api_rat">
+  <include file="assets/mujoco_menagerie/franka_emika_panda/panda.xml"/>
+
+  <compiler meshdir="assets/mujoco_menagerie/franka_emika_panda/assets" autolimits="true" angle="radian"/>
+
+  <!-- panda.xml picks implicitfast, which damps the position servos so hard
+       the arm can only sweep at ~0.1 rad/s. Euler preserves real arm speed. -->
+  <option integrator="Euler" timestep="0.002"/>
+
+  <statistic center="0 0 0.6" extent="4"/>
+
+  <visual>
+    <headlight diffuse="0.5 0.5 0.5" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20" offwidth="1920" offheight="1080"/>
+    <quality shadowsize="2048"/>
+    <map znear="0.02"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0.1"/>
+
+    <material name="wall_mat" rgba="0.55 0.58 0.62 1"/>
+    <material name="key_box_mat" rgba="0.94 0.78 0.2 1" specular="0.4" shininess="0.3"/>
+    <material name="broom_handle_mat" rgba="0.62 0.42 0.22 1"/>
+    <material name="broom_bristles_mat" rgba="0.9 0.75 0.35 1"/>
+    <material name="rat_fur" rgba="0.55 0.47 0.39 1"/>
+    <material name="rat_pink" rgba="0.92 0.68 0.64 1"/>
+    <material name="rat_eye" rgba="0.05 0.05 0.05 1"/>
+    <material name="rat_whisker" rgba="0.92 0.9 0.88 0.95"/>
+    <material name="pedestal_mat" rgba="0.25 0.26 0.3 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 4" dir="0 0 -1" directional="true" diffuse="0.7 0.7 0.7"/>
+    <light pos="3 3 3" dir="-0.5 -0.5 -1" diffuse="0.3 0.3 0.3"/>
+
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"
+          friction="0.6 0.005 0.0001"/>
+
+    <!-- walls: 8m from center, 1.5m tall -->
+    <geom name="wall_n" type="box" size="8 0.1 1.5" pos="0 8 1.5" material="wall_mat"/>
+    <geom name="wall_s" type="box" size="8 0.1 1.5" pos="0 -8 1.5" material="wall_mat"/>
+    <geom name="wall_e" type="box" size="0.1 8 1.5" pos="8 0 1.5" material="wall_mat"/>
+    <geom name="wall_w" type="box" size="0.1 8 1.5" pos="-8 0 1.5" material="wall_mat"/>
+
+    <!-- pedestal under Franka (visual only — colliding with link0 would
+         generate huge friction torques that stop joint1 from spinning) -->
+    <geom name="pedestal" type="cylinder" size="0.22 0.1" pos="0 0 0.05"
+          material="pedestal_mat" contype="0" conaffinity="0"/>
+
+    <!-- The prize. Body is named so the viewer label toggle (key 'B') shows
+         ANTHROPIC_API_KEY floating above the box. -->
+    <body name="ANTHROPIC_API_KEY" pos="0.4 0 0.09">
+      <geom name="key_box_geom" type="box" size="0.09 0.09 0.09"
+            material="key_box_mat" mass="0.3"
+            friction="0.6 0.01 0.0001"/>
+    </body>
+
+    <!-- broom: mocap body, kinematically pinned to Franka hand each step.
+         Broom frame origin = hand frame origin; broom extends along hand's +z
+         (which points downward in the home pose). Bristles' long axis is along
+         broom's +x (= hand's +x = world +y at home), so they sweep tangentially
+         to the orbit around the Franka base when joint1 rotates. -->
+    <body name="broom" mocap="true" pos="0 0 1.0">
+      <geom name="broom_handle" type="cylinder" size="0.012 0.26"
+            pos="0 0 0.26" material="broom_handle_mat"
+            contype="2" conaffinity="2"
+            friction="0.6 0.005 0.0001"/>
+      <geom name="broom_bristles" type="box"
+            size="0.22 0.02 0.05"
+            pos="0 0 0.55" material="broom_bristles_mat"
+            contype="2" conaffinity="2"
+            friction="0.5 0.005 0.0001"/>
+    </body>
+
+    <!-- rat: slide-x, slide-y, hinge-yaw on a zero-origin body so qpos is world xy -->
+    <body name="rat" pos="0 0 0.09">
+      <joint name="rat_x" type="slide" axis="1 0 0" limited="false" damping="0.8"/>
+      <joint name="rat_y" type="slide" axis="0 1 0" limited="false" damping="0.8"/>
+      <joint name="rat_yaw" type="hinge" axis="0 0 1" limited="false" damping="0.5"/>
+
+      <inertial pos="0 0 0" mass="0.35" diaginertia="0.002 0.002 0.002"/>
+
+      <geom name="rat_body" type="capsule" fromto="-0.08 0 0 0.08 0 0"
+            size="0.065" material="rat_fur" mass="0.25"
+            contype="3" conaffinity="3"
+            friction="0.4 0.005 0.0001"/>
+      <geom name="rat_head" type="ellipsoid" size="0.055 0.045 0.045"
+            pos="0.13 0 0.02" material="rat_fur"
+            contype="3" conaffinity="3"/>
+      <geom name="rat_snout" type="ellipsoid" size="0.028 0.022 0.022"
+            pos="0.18 0 0.01" material="rat_fur"
+            contype="3" conaffinity="3"/>
+      <geom name="rat_nose" type="sphere" size="0.012"
+            pos="0.205 0 0.005" material="rat_pink"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_ear_l" type="ellipsoid" size="0.02 0.008 0.028"
+            pos="0.09 0.042 0.06" material="rat_pink"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_ear_r" type="ellipsoid" size="0.02 0.008 0.028"
+            pos="0.09 -0.042 0.06" material="rat_pink"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_eye_l" type="sphere" size="0.008"
+            pos="0.15 0.028 0.03" material="rat_eye"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_eye_r" type="sphere" size="0.008"
+            pos="0.15 -0.028 0.03" material="rat_eye"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_tail" type="capsule" fromto="-0.08 0 0 -0.28 0.02 -0.02"
+            size="0.008" material="rat_pink"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_leg_fl" type="box" size="0.012 0.012 0.03"
+            pos="0.05 0.05 -0.045" material="rat_fur"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_leg_fr" type="box" size="0.012 0.012 0.03"
+            pos="0.05 -0.05 -0.045" material="rat_fur"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_leg_bl" type="box" size="0.012 0.012 0.03"
+            pos="-0.05 0.05 -0.045" material="rat_fur"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_leg_br" type="box" size="0.012 0.012 0.03"
+            pos="-0.05 -0.05 -0.045" material="rat_fur"
+            contype="0" conaffinity="0"/>
+
+      <!-- whiskers: visible in first-person as thin arcs at bottom of screen,
+           and frame the snout nicely in third-person. -->
+      <geom name="rat_whisker_l1" type="capsule"
+            fromto="0.195 0.012 0.02 0.30 0.09 0.04"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_whisker_l2" type="capsule"
+            fromto="0.195 0.012 0.015 0.31 0.11 0.00"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_whisker_l3" type="capsule"
+            fromto="0.195 0.008 0.01 0.30 0.07 -0.02"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_whisker_r1" type="capsule"
+            fromto="0.195 -0.012 0.02 0.30 -0.09 0.04"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_whisker_r2" type="capsule"
+            fromto="0.195 -0.012 0.015 0.31 -0.11 0.00"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+      <geom name="rat_whisker_r3" type="capsule"
+            fromto="0.195 -0.008 0.01 0.30 -0.07 -0.02"
+            size="0.0015" material="rat_whisker"
+            contype="0" conaffinity="0"/>
+
+      <!-- first-person camera on rat head, facing +x (forward) -->
+      <camera name="rat_cam" pos="0.13 0 0.07" xyaxes="0 -1 0 0 0 1" fovy="75"/>
+    </body>
+
+    <!-- Intro camera: tracks the rat body from outside so the player gets
+         a "this is your rat" reveal for the first few seconds. -->
+    <camera name="intro_cam" pos="-6.6 -6.4 0.55" mode="targetbody" target="rat"/>
+  </worldbody>
+
+  <actuator>
+    <velocity name="rat_vx" joint="rat_x" kv="8.0" ctrlrange="-6 6"/>
+    <velocity name="rat_vy" joint="rat_y" kv="8.0" ctrlrange="-6 6"/>
+    <velocity name="rat_vyaw" joint="rat_yaw" kv="2.5" ctrlrange="-4 4"/>
+  </actuator>
+
+  <keyframe>
+    <!-- start pose: Franka home (gripper pointing down) + rat in back corner facing center -->
+    <key name="start"
+         qpos="0 0 0 -1.57079 0 1.57079 -0.7853 0.04 0.04
+               -5.5 -5.5 0.785"
+         ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 255 0 0 0"/>
+  </keyframe>
+</mujoco>
