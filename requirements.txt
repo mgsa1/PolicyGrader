@@ -1,4 +1,9 @@
 pydantic>=2,<3
+mujoco>=3
+robosuite>=1.5
+imageio
+imageio-ffmpeg
+numpy
 ruff
 mypy
 pytest
