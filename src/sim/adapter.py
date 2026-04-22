@@ -33,6 +33,12 @@ from src.sim.policies import Policy  # noqa: E402
 from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 from src.sim.scripted import ScriptedLiftPolicy  # noqa: E402
 
+# After success, keep stepping for ~1 s so the recorded video shows the cube
+# clearly held aloft over an empty table. Without this, the rollout cuts the
+# instant success triggers and Pass-1 mistakes the ambiguous final frames for
+# a failure. Does not affect steps_taken, which still reflects success step.
+POST_SUCCESS_HOLD_STEPS = 20
+
 
 def _build_pretrained(config: RolloutConfig) -> tuple[Policy, dict[str, Any], str]:
     assert config.checkpoint_path is not None  # invariant from RolloutConfig
@@ -84,8 +90,8 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
     frames: list[np.ndarray[Any, Any]] = []
     success = False
     steps = 0
+    hold_remaining = 0
     for step in range(1, config.max_steps + 1):
-        steps = step
         action = policy.act(obs)
         obs, _reward, _done, _info = env.step(action)
 
@@ -97,9 +103,15 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
             )
             frames.append(frame[::-1])
 
-        if env._check_success():
-            success = True
-            break
+        if not success:
+            steps = step
+            if env._check_success():
+                success = True
+                hold_remaining = POST_SUCCESS_HOLD_STEPS
+        else:
+            hold_remaining -= 1
+            if hold_remaining <= 0:
+                break
 
     if record_video and video_out is not None and frames:
         video_out.parent.mkdir(parents=True, exist_ok=True)
