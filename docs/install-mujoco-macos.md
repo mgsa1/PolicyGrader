@@ -17,6 +17,17 @@ The script sets `MUJOCO_GL=glfw` per CLAUDE.md §16, but MuJoCo silently overrid
 
 Practical implication: on this machine, every `MUJOCO_GL` value (glfw, egl, osmesa) ends up routed through CGL for offscreen rendering. Don't waste time chasing the env var if rendering breaks — chase the robosuite/MuJoCo versions instead.
 
+## robomimic 0.3.0 build gotcha (CMake 4.x)
+
+`robomimic==0.3.0` pulls in `egl-probe==1.0.2`, whose `CMakeLists.txt` uses `cmake_minimum_required(VERSION <3.5)`. CMake 4.x drops support for that. Two-line fix:
+
+```bash
+brew install cmake   # if not already installed
+CMAKE_POLICY_VERSION_MINIMUM=3.5 uv pip install -r requirements.txt
+```
+
+The env var only matters during the egl-probe wheel build. egl-probe is unused on macOS at runtime (it only probes Linux EGL devices).
+
 ## Harmless warnings to ignore
 
 ```

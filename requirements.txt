@@ -1,9 +1,12 @@
 pydantic>=2,<3
 mujoco>=3
 robosuite>=1.5
+robomimic==0.3.0
 imageio
 imageio-ffmpeg
 numpy
+torch
+h5py
 ruff
 mypy
 pytest
