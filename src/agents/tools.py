@@ -32,6 +32,28 @@ ROLLOUT_TOOL_NAME = "rollout"
 COARSE_TOOL_NAME = "coarse"
 FINE_TOOL_NAME = "fine"
 
+# Default pretrained checkpoints, keyed by env_name. Lets the agent request a
+# pretrained rollout by env_name alone — the host substitutes the path so the
+# agent never has to know the local filesystem layout. The agent CAN still
+# pass `checkpoint_path` explicitly to override.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_CHECKPOINTS: dict[str, Path] = {
+    "NutAssemblySquare": _REPO_ROOT / "artifacts" / "checkpoints" / "square_ph_low_dim.pth",
+}
+
+
+def _resolve_checkpoint(env_name: str, explicit: str | None) -> Path:
+    """Return the host path of the checkpoint to load for a pretrained rollout."""
+    if explicit:
+        return Path(explicit)
+    if env_name in _DEFAULT_CHECKPOINTS:
+        return _DEFAULT_CHECKPOINTS[env_name]
+    raise ValueError(
+        f"no default pretrained checkpoint registered for env_name={env_name!r}; "
+        f"either register one in _DEFAULT_CHECKPOINTS or pass checkpoint_path explicitly"
+    )
+
+
 # JSONSchema definitions used as `input_schema` on each custom tool. We hand
 # the agent flat scalar kwargs because nested objects make the model's tool
 # calls noisier — flat is easier to validate and easier for the model to fill in.
@@ -78,7 +100,12 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
         },
         "checkpoint_path": {
             "type": "string",
-            "description": "pretrained only — path to the robomimic .pth checkpoint.",
+            "description": (
+                "pretrained only — optional path to a robomimic .pth checkpoint. "
+                "If omitted, the host substitutes a default per env_name "
+                "(NutAssemblySquare -> a BC-RNN proficient-human checkpoint that "
+                "ships with the repo). Pass explicitly only to override."
+            ),
         },
     },
     "required": ["rollout_id", "policy_kind", "env_name", "seed", "max_steps"],
@@ -193,16 +220,14 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
             injected_failures=failures,
         )
     else:
-        ckpt = args.get("checkpoint_path")
-        if not ckpt:
-            raise ValueError("pretrained rollout requires checkpoint_path")
+        ckpt = _resolve_checkpoint(args["env_name"], args.get("checkpoint_path"))
         config = RolloutConfig(
             rollout_id=rollout_id,
             policy_kind="pretrained",
             env_name=args["env_name"],
             seed=int(args["seed"]),
             max_steps=int(args["max_steps"]),
-            checkpoint_path=Path(ckpt),
+            checkpoint_path=ckpt,
         )
 
     video_out = mirror_root / ROLLOUTS_DIR / f"{rollout_id}.mp4"

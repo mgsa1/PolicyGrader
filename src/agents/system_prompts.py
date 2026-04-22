@@ -104,17 +104,25 @@ Deliverables, in /memories/:
      rollout_id, policy_kind, env_name, seed, max_steps,
      injected_action_noise, injected_premature_close, injected_angle_deg,
      injected_grip_scale, expected_label.
-     The injected_* columns are 0/False for clean rollouts and the pretrained
-     policy. expected_label is the ground-truth label derived from the
-     injected knobs (use "none" for clean and pretrained rows).
+     The injected_* columns are 0/False for clean rollouts and for any
+     pretrained-policy rollout. For expected_label:
+       - clean scripted Lift rollouts:  "none"
+       - injected scripted Lift rollouts: the label per the knob mapping below
+       - pretrained NutAssemblySquare rollouts: leave EMPTY. Ground truth for
+         these is binary (env._check_success); we don't know which taxonomy
+         label a natural failure would carry. The report writer treats empty
+         expected_label as label-unknown and excludes those rows from per-label
+         metrics, but still uses them for binary judge precision/recall.
   3. taxonomy.md — copy the failure taxonomy above into /memories/ verbatim
      so future phases can read it without depending on this prompt.
 
 Sizing for the demo run: aim for {DEMO_SCENARIO_COUNT} scenarios with at
 least {int(DEMO_INJECTED_FRACTION * 100)}% carrying an injected failure
-(distributed across the four scripted-policy failure knobs). The
-remaining rows can be clean scripted runs (label "none") and, optionally,
-pretrained-policy runs if a checkpoint is available.
+(distributed across the four scripted-policy failure knobs). The remaining
+rows can be clean scripted runs (label "none") and pretrained-policy runs.
+Pretrained NutAssemblySquare rollouts are zero-config: just set
+policy_kind=pretrained and env_name=NutAssemblySquare. The host substitutes
+the checkpoint path automatically — do NOT invent or pass checkpoint_path.
 
 Knob-to-label mapping (from src/sim/scripted.py — keep in sync):
   - injected_action_noise >= 0.10  -> knock_object_off_table
