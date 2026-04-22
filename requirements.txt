@@ -1,0 +1,5 @@
+pydantic>=2,<3
+ruff
+mypy
+pytest
+pytest-asyncio
