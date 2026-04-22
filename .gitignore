@@ -9,3 +9,5 @@ artifacts/
 *.egg-info/
 .DS_Store
 .claude/settings.local.json
+.gstack/
+API_RAT/assets/mujoco_menagerie/

@@ -93,7 +93,7 @@ Multi-agent Managed Agents sessions, `outcomes`, and cross-session memory are al
 - **Testing:** `pytest`, `pytest-asyncio`.
 - **Env:** `uv`. Pin everything in `requirements.txt`. No conda.
 
-**Do not add a dependency without asking first.** Every new dep is a potential Saturday-morning install failure.
+**Do not add a dependency without asking first.** Every new dep is a potential install failure.
 
 ---
 
@@ -178,7 +178,7 @@ The Managed Agent writes to `/memories/` in its container. We mirror to `artifac
 
 Track progress here. Update checkboxes as we go.
 
-### Saturday AM — foundations (aim: 4 hours) — resequenced to de-risk env first
+### Foundations (aim: 4 hours) — resequenced to de-risk env first
 
 - [ ] **H1: `scripts/smoke_render.py`** — MUJOCO_GL smoke test. Try `glfw` first on macOS, fallback to `egl`. Render one frame offscreen from a fresh robosuite env and write `.png`. **If this burns > 60 min, skip to §12 pivot.**
 - [ ] **H2: robomimic install + one pretrained rollout.** Load BC-RNN checkpoint for NutAssemblySquare, run one episode, write `.mp4`, confirm success flag matches episode outcome.
@@ -187,7 +187,7 @@ Track progress here. Update checkboxes as we go.
 - [ ] **H4: Parallelism smoke test.** `multiprocessing.get_context("spawn").Pool` with 4 workers, each creating its own env. If parallel fails, document the sequential fallback (30 scenarios × ~15s = < 8 min, fine for demo) and move on.
 - [ ] `ruff check && ruff format && mypy src/ && pytest -q` green.
 
-### Saturday PM — the brain (aim: 6 hours)
+### The brain (aim: 6 hours)
 
 - [ ] Write `src/agents/system_prompts.py` — phase markers for planner / rollout / judge / report inside ONE Managed Agents session
 - [ ] Planner phase reads goal → writes `/memories/plan.md` + `test_matrix.csv` (clean + injected rows mixed, ground-truth column kept *inside matrix* so agent sees it only when we want)
@@ -198,21 +198,21 @@ Track progress here. Update checkboxes as we go.
   - Pass 2 (fine, only on failed rollouts): sample 8–12 frames at **2576px** windowed on the failure range, ask for `{taxonomy_label, point: [x,y], one_line_description}`.
 - [ ] End-to-end on 5 scenarios (mix of clean + injected).
 
-### Saturday evening — make it visible (aim: 3 hours)
+### Make it visible (aim: 3 hours)
 
 - [ ] Gradio UI: chat pane / sim-grid pane / `/memories` tree pane
 - [ ] **Live banner from second 1**: `$X.XX spent · Y:ZZ elapsed · N / total scenarios`
 - [ ] Stream Managed Agents events live
 - [ ] Render Pass-2 annotations (points / bboxes) over frames
 
-### Sunday AM — measurement + polish (aim: 5 hours)
+### Measurement + polish (aim: 5 hours)
 
 - [ ] `src/metrics.py` — precision/recall of judge labels vs injected ground truth
 - [ ] **Clustering via ONE final Opus 4.7 call** with full `findings.jsonl` in the 1M-context window. Output: 3–6 labeled clusters with counts and a representative frame per cluster. **Do not implement k-means.**
 - [ ] Report writer produces `report.md` with matplotlib bar chart of cluster frequencies + precision/recall table
 - [ ] Scale run to 30+ scenarios (≥50% with injected failures) without crashing
 
-### Sunday PM — demo artifacts (aim: 4 hours)
+### Demo artifacts (aim: 4 hours)
 
 - [ ] README.md polished: positioning one-liner, architecture diagram, demo gif, install, cost/time quote
 - [ ] `docs/demo_script.md` — exact shot list
