@@ -175,61 +175,79 @@ def _run_one_turn(
     mirror_root: Path,
     messages_client: Anthropic,
 ) -> str:
-    """Drive one turn of the session: stream events, dispatch tool calls, stop on idle.
+    """Drive one phase of the session to completion. Returns the terminal stop_reason.
 
-    Returns the stop_reason `type` from the terminal session.status_idle event,
-    so the caller can decide whether to advance to the next phase or bail out.
-    `messages_client` is the client used for the vision passes (Messages API),
-    which can be the same instance as the session client.
+    `requires_action` is non-terminal: the session paused for tool results,
+    which we already sent inline when the `agent.custom_tool_use` event
+    arrived. We reopen the stream and let the agent continue. Only
+    `end_turn` / `retries_exhausted` (or `session.error`) actually stops a
+    phase.
     """
-    for event in _stream_events(client, session_id):
-        ev_type = getattr(event, "type", None)
-        logger.debug("event %s", ev_type)
+    while True:
+        terminal: str | None = None
+        saw_status_idle = False
 
-        if ev_type == "agent.message":
-            text = "".join(
-                block.text for block in getattr(event, "content", []) if block.type == "text"
-            )
-            if text:
-                logger.info("agent: %s", text[:500])
+        for event in _stream_events(client, session_id):
+            ev_type = getattr(event, "type", None)
+            logger.debug("event %s", ev_type)
 
-        elif ev_type == "agent.thinking":
-            text = getattr(event, "text", "") or ""
-            if text:
-                logger.debug("thinking: %s", text[:500])
-
-        elif ev_type == "agent.custom_tool_use":
-            tool_name = event.name
-            tool_input = event.input
-            logger.info("tool_use %s args=%s", tool_name, tool_input)
-            try:
-                payload = dispatch_custom_tool(
-                    tool_name,
-                    dict(tool_input),
-                    mirror_root=mirror_root,
-                    client=messages_client,
+            if ev_type == "agent.message":
+                text = "".join(
+                    block.text for block in getattr(event, "content", []) if block.type == "text"
                 )
-                _send_tool_result(client, session_id, event.id, payload)
-            except Exception as exc:  # noqa: BLE001 — must report back to the agent
-                logger.exception("tool %s failed", tool_name)
-                _send_tool_result(
-                    client,
-                    session_id,
-                    event.id,
-                    f'{{"error": "{type(exc).__name__}: {exc}"}}',
-                    is_error=True,
-                )
+                if text:
+                    logger.info("agent: %s", text[:500])
 
-        elif ev_type == "session.status_idle":
-            stop_type = getattr(getattr(event, "stop_reason", None), "type", "unknown")
-            logger.info("idle stop_reason=%s", stop_type)
-            return str(stop_type)
+            elif ev_type == "agent.thinking":
+                text = getattr(event, "text", "") or ""
+                if text:
+                    logger.debug("thinking: %s", text[:500])
 
-        elif ev_type == "session.error":
-            logger.error("session error: %s", event)
-            return "error"
+            elif ev_type == "agent.custom_tool_use":
+                tool_name = event.name
+                tool_input = event.input
+                logger.info("tool_use %s args=%s", tool_name, tool_input)
+                try:
+                    payload = dispatch_custom_tool(
+                        tool_name,
+                        dict(tool_input),
+                        mirror_root=mirror_root,
+                        client=messages_client,
+                    )
+                    _send_tool_result(client, session_id, event.id, payload)
+                except Exception as exc:  # noqa: BLE001 — must report back to the agent
+                    logger.exception("tool %s failed", tool_name)
+                    _send_tool_result(
+                        client,
+                        session_id,
+                        event.id,
+                        f'{{"error": "{type(exc).__name__}: {exc}"}}',
+                        is_error=True,
+                    )
 
-    return "stream_closed"
+            elif ev_type == "session.status_idle":
+                saw_status_idle = True
+                stop_type = getattr(getattr(event, "stop_reason", None), "type", "unknown")
+                logger.info("idle stop_reason=%s", stop_type)
+                if stop_type == "requires_action":
+                    # Tool results were sent inline above; reopen the stream
+                    # so the agent can pick up where it left off.
+                    break
+                terminal = str(stop_type)
+                break
+
+            elif ev_type == "session.error":
+                logger.error("session error: %s", event)
+                terminal = "error"
+                break
+
+        if terminal is not None:
+            return terminal
+        if not saw_status_idle:
+            # Stream closed without a status_idle event — unusual, bail out
+            # rather than reopen indefinitely.
+            return "stream_closed"
+        # else: requires_action — outer while reopens the stream.
 
 
 PHASE_MARKERS = (
