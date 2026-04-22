@@ -40,7 +40,7 @@ Submitted to the Anthropic Opus 4.7 Hackathon.
 
 **Deployment decision: build for Plan A. Treat Plan B as stretch only.**
 
-Multi-agent Managed Agents sessions, `outcomes`, and cross-session memory are all **research preview** and require a gated access request. Do not assume access by Saturday.
+Multi-agent Managed Agents sessions, `outcomes`, and cross-session memory are all **research preview** but the feature are available. 
 
 - **Plan A (default).** ONE Managed Agents session running Opus 4.7 with the full tool suite. The four logical roles — planner, rollout worker, vision judge, report writer — are *phases* within one session, separated by system-prompt markers and distinct artifacts in `/memories/`. The agent thinks to disk; we read along. This is what we actually build.
 - **Plan B (only if research preview granted in time).** Swap in a true coordinator with `callable_agents`. Because of the interface discipline below, this is a config change, not a refactor.
