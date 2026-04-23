@@ -217,18 +217,27 @@ html.dark, body.dark, .gradio-container.dark,
   font-size: 12px; color: {INK_3};
   line-height: 1.2; margin-top: 2px;
 }}
-.pg-topbar__session {{
+.pg-topbar__meta {{
+  display: inline-flex; align-items: center; gap: 14px;
+}}
+.pg-topbar__run-chip {{
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  background: {OK_SOFT};
-  color: {OK};
+  padding: 4px 12px;
+  background: {SURFACE};
+  color: {INK_1};
+  border: 1px solid {LINE_2};
   border-radius: 999px;
-  font-size: 11px; font-weight: 600;
-  letter-spacing: 0.3px;
+  font-size: 12px; font-weight: 500;
   font-family: {FONT_MONO};
 }}
-.pg-topbar__session::before {{
+.pg-topbar__run-chip::before {{
   content: "●"; font-size: 8px; color: {OK};
+}}
+.pg-topbar__elapsed {{
+  font-family: {FONT_MONO};
+  font-size: 12px;
+  color: {INK_3};
+  font-variant-numeric: tabular-nums;
 }}
 
 /* --- cards --------------------------------------------------------------- */

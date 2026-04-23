@@ -136,17 +136,24 @@ def _read_chat(mirror_root: Path, limit: int = 200) -> list[dict[str, Any]]:
 
 
 def _topbar_html() -> str:
-    """Brand + tagline + session chip — the always-on header above the banner."""
+    """Brand + tagline + run-name pill + elapsed-time — always-on header.
+
+    Run name and elapsed time are placeholders for now — another pass will
+    wire them to runtime.json (session_id, elapsed_seconds).
+    """
     return (
         "<div class='pg-topbar'>"
         "<div class='pg-topbar__brand'>"
         "<div class='pg-topbar__logo'>P</div>"
         "<div>"
         "<div class='pg-topbar__wordmark'>PolicyGrader</div>"
-        "<div class='pg-topbar__tagline'>Robot manipulation evals, hours to minutes</div>"
+        "<div class='pg-topbar__tagline'>Embodied eval orchestrator</div>"
         "</div>"
         "</div>"
-        "<div class='pg-topbar__session'>live session</div>"
+        "<div class='pg-topbar__meta'>"
+        "<span class='pg-topbar__run-chip'>eval_000000</span>"
+        "<span class='pg-topbar__elapsed'>00:00 elapsed</span>"
+        "</div>"
         "</div>"
     )
 
@@ -197,7 +204,7 @@ def _banner_html(mirror_root: Path) -> str:
         "<div style='display:flex;align-items:baseline;justify-content:space-between;gap:16px;'>"
         "<div>"
         "<div class='pg-hero__eyebrow'>Live evaluation</div>"
-        "<h1 class='pg-hero__headline'>This pipeline vs manual review</h1>"
+        "<h1 class='pg-hero__headline'>PolicyGrader vs manual review</h1>"
         "<div class='pg-hero__subhead'>"
         "Agent-run robot-manipulation evals, measured against the baseline a "
         "human would spend."
