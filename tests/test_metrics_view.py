@@ -1,0 +1,153 @@
+"""Pure-arithmetic tests for src.ui.metrics_view. No Gradio, no plotly assertions."""
+
+from __future__ import annotations
+
+from src.sim.scripted import FailureMode
+from src.ui.metrics_view import (
+    EMPTY_FILTER,
+    DrillFilter,
+    cohort_counts,
+    filter_rollouts,
+    to_labeled_rollouts,
+    wilson_ci_95,
+)
+from tests.test_synthesis import _scored
+
+
+class TestCohortCounts:
+    def test_empty(self) -> None:
+        c = cohort_counts([])
+        assert c.total == 0 and c.binary_scored == 0
+        assert c.label_scored == 0 and c.excluded_pretrained == 0
+
+    def test_mixed(self) -> None:
+        rollouts = [
+            _scored("s0", pass1="pass", pass2_label=None, ground_truth_label="none"),
+            _scored(
+                "s1", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+            ),
+            _scored("p0", pass1="fail", pass2_label="approach_miss", policy_kind="pretrained"),
+        ]
+        c = cohort_counts(rollouts)
+        assert c.total == 3
+        assert c.binary_scored == 3  # all three got a pass1 verdict
+        assert c.label_scored == 2  # only the two scripted with ground truth
+        assert c.excluded_pretrained == 1
+
+
+class TestWilsonCI:
+    def test_zero_n(self) -> None:
+        lo, hi = wilson_ci_95(0, 0)
+        assert lo == 0.0 and hi == 0.0
+
+    def test_perfect_score_small_n(self) -> None:
+        # 5/5 should give a wide upper-leaning interval, not 1.0±0.
+        lo, hi = wilson_ci_95(5, 5)
+        assert hi == 1.0
+        assert lo < 0.7  # plenty of slack
+
+    def test_half_p(self) -> None:
+        # 5/10 → roughly [0.24, 0.76] for Wilson 95%.
+        lo, hi = wilson_ci_95(5, 10)
+        assert 0.20 < lo < 0.30
+        assert 0.70 < hi < 0.80
+
+    def test_large_n_tightens(self) -> None:
+        # 50/100 → tighter bounds than 5/10.
+        lo, hi = wilson_ci_95(50, 100)
+        assert hi - lo < 0.20
+
+
+class TestToLabeledRollouts:
+    def test_skips_no_ground_truth(self) -> None:
+        rollouts = [_scored("p0", policy_kind="pretrained")]  # ground_truth_label=None
+        assert to_labeled_rollouts(rollouts) == []
+
+    def test_skips_pass1_pending(self) -> None:
+        rollouts = [_scored("s0", pass1=None, ground_truth_label="approach_miss")]
+        assert to_labeled_rollouts(rollouts) == []
+
+    def test_skips_pass2_pending(self) -> None:
+        # Pass-1 said fail but Pass-2 hasn't returned yet.
+        rollouts = [
+            _scored("s0", pass1="fail", pass2_label=None, ground_truth_label="approach_miss")
+        ]
+        assert to_labeled_rollouts(rollouts) == []
+
+    def test_pass1_pass_maps_to_none(self) -> None:
+        rollouts = [
+            _scored("s0", pass1="pass", pass2_label=None, ground_truth_label="none", success=True)
+        ]
+        labeled = to_labeled_rollouts(rollouts)
+        assert len(labeled) == 1
+        assert labeled[0].expected == FailureMode.NONE
+        assert labeled[0].judged == FailureMode.NONE
+
+    def test_pass2_label_round_trip(self) -> None:
+        rollouts = [
+            _scored(
+                "s0",
+                pass1="fail",
+                pass2_label="slip_during_lift",
+                ground_truth_label="approach_miss",
+            )
+        ]
+        labeled = to_labeled_rollouts(rollouts)
+        assert labeled[0].expected == FailureMode.APPROACH_MISS
+        assert labeled[0].judged == FailureMode.SLIP_DURING_LIFT
+
+
+class TestDrillFilter:
+    def test_empty_filter_inactive(self) -> None:
+        assert not EMPTY_FILTER.is_active
+        assert EMPTY_FILTER.label_text() == ""
+
+    def test_cell_filter(self) -> None:
+        f = DrillFilter(expected="approach_miss", judged="slip_during_lift")
+        assert f.is_active
+        assert "approach_miss" in f.label_text() and "slip_during_lift" in f.label_text()
+
+    def test_row_filter_only_expected(self) -> None:
+        f = DrillFilter(expected="approach_miss", judged=None)
+        assert f.is_active
+        assert "expected OR judged" in f.label_text()
+
+
+class TestFilterRollouts:
+    def test_no_filter_returns_empty(self) -> None:
+        rollouts = [_scored("s0", ground_truth_label="approach_miss")]
+        assert filter_rollouts(rollouts, EMPTY_FILTER) == []
+
+    def test_cell_filter_strict(self) -> None:
+        rollouts = [
+            _scored(
+                "a", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+            ),
+            _scored(
+                "b",
+                pass1="fail",
+                pass2_label="approach_miss",
+                ground_truth_label="slip_during_lift",
+            ),  # mismatch
+        ]
+        f = DrillFilter(expected="approach_miss", judged="approach_miss")
+        out = filter_rollouts(rollouts, f)
+        assert [r.rollout_id for r in out] == ["a"]
+
+    def test_row_filter_loose(self) -> None:
+        rollouts = [
+            _scored(
+                "a", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+            ),
+            _scored(
+                "b",
+                pass1="fail",
+                pass2_label="approach_miss",
+                ground_truth_label="slip_during_lift",
+            ),
+            _scored("c", pass1="pass", pass2_label=None, ground_truth_label="none", success=True),
+        ]
+        f = DrillFilter(expected="approach_miss", judged=None)
+        out = sorted(r.rollout_id for r in filter_rollouts(rollouts, f))
+        # Both a (matches) and b (judged as approach_miss) should appear.
+        assert out == ["a", "b"]

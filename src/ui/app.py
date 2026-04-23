@@ -36,9 +36,15 @@ from src.costing import (
     format_duration,
 )
 from src.runtime_state import CHAT_JSONL, RUNTIME_JSON
+from src.ui.metrics_view import (
+    EMPTY_FILTER,
+    DrillFilter,
+    render_drill_down,
+    render_heatmap_figure,
+    render_static_blocks,
+)
 from src.ui.synthesis import (
     Cluster,
-    JudgeMetrics,
     cluster_by_condition,
     cluster_by_label,
     compute_metrics,
@@ -412,102 +418,61 @@ def _current_video_path(mirror_root: Path) -> str | None:
     return None
 
 
-def _metrics_html(mirror_root: Path) -> str:
-    """Render the Pass-1 + Pass-2 metrics computed from dispatch_log_jsonl."""
+def _metrics_blocks(mirror_root: Path) -> tuple[str, str, str, str]:
+    """Return (cohort, caption, binary_panel, per_label_table) HTML blocks."""
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
-        return (
+        empty = (
             "<div style='padding:40px;text-align:center;color:#94a3b8;font-style:italic;'>"
             "Metrics appear once the orchestrator has run rollouts AND the judge has finished."
             "</div>"
         )
-    metrics = compute_metrics(rollouts)
-    if metrics.pass1_tp + metrics.pass1_fp + metrics.pass1_fn + metrics.pass1_tn == 0:
-        return (
-            "<div style='padding:40px;text-align:center;color:#94a3b8;font-style:italic;'>"
-            "Judge hasn't returned any verdicts yet."
-            "</div>"
-        )
-    return _metrics_card(metrics)
+        return empty, "", "", ""
+    binary = compute_metrics(rollouts)
+    return render_static_blocks(rollouts, binary)
 
 
-def _metrics_card(m: JudgeMetrics) -> str:
-    """Render the metrics dashboard. Heavy on contextual explanations for newcomers."""
-    p1_prec = m.pass1_precision
-    p1_rec = m.pass1_recall
+def _heatmap_figure(mirror_root: Path) -> Any:
+    """Build the Plotly confusion heatmap for the current mirror."""
+    rollouts = load_scored_rollouts(mirror_root)
+    return render_heatmap_figure(rollouts)
 
-    pass2_block = ""
-    if m.pass2_label_accuracy is not None:
-        acc = m.pass2_label_accuracy
-        pass2_block = f"""
-<div style='margin-top:18px;padding:18px;background:#1e293b;border-radius:8px;
-            border-left:4px solid #fb923c;'>
-  <div style='color:#fb923c;font-size:11px;font-weight:700;text-transform:uppercase;
-              letter-spacing:1.2px;margin-bottom:8px;'>Pass-2 — failure mode label accuracy</div>
-  <div style='font-size:32px;font-weight:700;color:#f1f5f9;font-variant-numeric:tabular-nums;'>
-    {acc * 100:.0f}%
-  </div>
-  <div style='color:#cbd5e1;font-size:13px;margin-top:6px;'>
-    On the {m.pass2_labeled} rollouts where the judge picked a label AND ground truth is
-    available, <b>{m.pass2_correct}</b> matched the injected failure mode exactly.
-  </div>
-  <div style='color:#94a3b8;font-size:12px;margin-top:8px;font-style:italic;'>
-    Why: only scripted-policy rollouts have ground-truth labels (we know which
-    knob we perturbed). Pretrained policy rollouts contribute to Pass-1 binary
-    metrics but not to label accuracy.
-  </div>
-</div>
-""".strip()
-    else:
-        pass2_block = """
-<div style='margin-top:18px;padding:14px;background:#1e293b;border-radius:8px;
-            color:#94a3b8;font-size:13px;font-style:italic;'>
-  No label-accuracy number yet — needs scripted rollouts (which carry ground-truth labels)
-  to be judged by Pass-2.
-</div>
-""".strip()
 
-    return f"""
-<div style='padding:8px;'>
-  <div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;'>
-    <div style='padding:18px;background:#1e293b;border-radius:8px;
-                border-left:4px solid #c084fc;'>
-      <div style='color:#c084fc;font-size:11px;font-weight:700;text-transform:uppercase;
-                  letter-spacing:1.2px;margin-bottom:8px;'>Pass-1 — precision</div>
-      <div style='font-size:32px;font-weight:700;color:#f1f5f9;font-variant-numeric:tabular-nums;'>
-        {p1_prec * 100:.0f}%
-      </div>
-      <div style='color:#cbd5e1;font-size:13px;margin-top:6px;'>
-        Of the rollouts the judge flagged as <b>fail</b>, this fraction actually failed.
-      </div>
-      <div style='color:#94a3b8;font-size:11px;margin-top:8px;font-variant-numeric:tabular-nums;'>
-        TP {m.pass1_tp} · FP {m.pass1_fp}
-      </div>
-    </div>
-    <div style='padding:18px;background:#1e293b;border-radius:8px;
-                border-left:4px solid #c084fc;'>
-      <div style='color:#c084fc;font-size:11px;font-weight:700;text-transform:uppercase;
-                  letter-spacing:1.2px;margin-bottom:8px;'>Pass-1 — recall</div>
-      <div style='font-size:32px;font-weight:700;color:#f1f5f9;font-variant-numeric:tabular-nums;'>
-        {p1_rec * 100:.0f}%
-      </div>
-      <div style='color:#cbd5e1;font-size:13px;margin-top:6px;'>
-        Of all rollouts that <b>actually failed</b>, this fraction was caught by the judge.
-      </div>
-      <div style='color:#94a3b8;font-size:11px;margin-top:8px;font-variant-numeric:tabular-nums;'>
-        TP {m.pass1_tp} · FN {m.pass1_fn}
-      </div>
-    </div>
-  </div>
-  {pass2_block}
-  <div style='margin-top:14px;padding:10px 14px;background:#0f172a;border-radius:6px;
-              color:#64748b;font-size:11px;'>
-    n = {m.n_total} rollouts · {m.n_with_ground_truth} with ground-truth labels.
-    Ground truth is from the env (success / no success) for Pass-1, and from the
-    injection knob for Pass-2 (scripted rollouts only).
-  </div>
-</div>
-""".strip()
+def _drill_html(mirror_root: Path, f: DrillFilter) -> str:
+    rollouts = load_scored_rollouts(mirror_root)
+    keyframes = render_all_keyframes(rollouts, mirror_root)
+    return render_drill_down(rollouts, f, keyframes)
+
+
+def _heatmap_labels(mirror_root: Path) -> list[str]:
+    """Return the labels currently used as rows/columns in the heatmap.
+
+    We re-derive them from the same data path render_heatmap_figure used,
+    so a click index from gr.SelectData maps consistently back to a label.
+    """
+    from src.metrics import compute as compute_label_metrics
+    from src.ui.metrics_view import _taxonomy_order, _used_labels, to_labeled_rollouts
+
+    rollouts = load_scored_rollouts(mirror_root)
+    labeled = to_labeled_rollouts(rollouts)
+    metrics = compute_label_metrics(labeled)
+    used = _used_labels(metrics, _taxonomy_order())
+    return [lab.value for lab in used]
+
+
+def _filter_status_html(f: DrillFilter) -> str:
+    """Small status pill showing the active drill filter, or empty if none."""
+    if not f.is_active:
+        return ""
+    return (
+        "<div style='display:flex;gap:10px;align-items:center;padding:8px 12px;"
+        "background:#1e293b;border-radius:6px;'>"
+        "<span style='font-size:11px;color:#94a3b8;text-transform:uppercase;"
+        "letter-spacing:1.2px;font-weight:600;'>Filter active:</span>"
+        f"<code style='color:#fbbf24;font-size:12px;background:none;'>"
+        f"{_escape(f.label_text())}</code>"
+        "</div>"
+    )
 
 
 def _files_list(mirror_root: Path) -> str:
@@ -630,8 +595,14 @@ def build_app(mirror_root: Path) -> gr.Blocks:
     def files() -> str:
         return _files_list(mirror_root)
 
-    def metrics() -> str:
-        return _metrics_html(mirror_root)
+    def metrics_blocks() -> tuple[str, str, str, str]:
+        return _metrics_blocks(mirror_root)
+
+    def heatmap() -> Any:
+        return _heatmap_figure(mirror_root)
+
+    def drill(f: DrillFilter) -> str:
+        return _drill_html(mirror_root, f)
 
     def synth_by_label() -> str:
         return _synthesis_html(mirror_root, "label")
@@ -666,17 +637,38 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                     gr.Markdown("### /memories/ tree")
                     files_html = gr.HTML(value=files())
             with gr.Tab("Metrics"):
+                _initial_blocks = metrics_blocks()
+                metrics_cohort_html = gr.HTML(value=_initial_blocks[0])
+                metrics_caption_html = gr.HTML(value=_initial_blocks[1])
+                metrics_binary_html = gr.HTML(value=_initial_blocks[2])
                 gr.Markdown(
-                    "### Judge accuracy against ground truth\n\n"
-                    "**Pass-1** is the cheap binary classifier — it decides whether "
-                    "each rollout succeeded or failed. Ground truth here comes from "
-                    "the simulator (`env._check_success()`), so *every* rollout counts.\n\n"
-                    "**Pass-2** only runs on rollouts Pass-1 flagged as failures, and it "
-                    "picks a specific failure label. Ground truth for the label comes "
-                    "from the injection knob used in the scripted policy (pretrained "
-                    "rollouts have no label ground truth)."
+                    "**Pass-2 — multiclass confusion.** Rows=expected, cols=judged. "
+                    "Diagonal (green) = matches, off-diagonal (orange) = mis-labels."
                 )
-                metrics_html = gr.HTML(value=metrics())
+                metrics_heatmap = gr.Plot(value=heatmap())
+                metrics_per_label_html = gr.HTML(value=_initial_blocks[3])
+
+                gr.Markdown(
+                    "### Drill into rollouts\n"
+                    "Pick an expected/judged pair (or either alone) to see the "
+                    "rollouts behind the number. Leave both blank to clear."
+                )
+                _initial_labels = _heatmap_labels(mirror_root)
+                with gr.Row():
+                    metrics_filter_expected = gr.Dropdown(
+                        label="Expected label",
+                        choices=_initial_labels,
+                        value=None,
+                        interactive=True,
+                    )
+                    metrics_filter_judged = gr.Dropdown(
+                        label="Judged label",
+                        choices=_initial_labels,
+                        value=None,
+                        interactive=True,
+                    )
+                metrics_filter_status = gr.HTML(value="")
+                metrics_drill_html = gr.HTML(value=drill(EMPTY_FILTER))
             with gr.Tab("Failure synthesis · by label"):
                 gr.Markdown(
                     "**Each card** = one Pass-2 taxonomy label seen across all "
@@ -703,9 +695,60 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         timer.tick(fn=files, outputs=files_html)
         # Slower-refresh outputs: anything that decodes mp4s or re-joins data.
         heavy_timer = gr.Timer(5.0)
-        heavy_timer.tick(fn=metrics, outputs=metrics_html)
+        heavy_timer.tick(
+            fn=metrics_blocks,
+            outputs=[
+                metrics_cohort_html,
+                metrics_caption_html,
+                metrics_binary_html,
+                metrics_per_label_html,
+            ],
+        )
+        heavy_timer.tick(fn=heatmap, outputs=metrics_heatmap)
         heavy_timer.tick(fn=synth_by_label, outputs=synth_label_html)
         heavy_timer.tick(fn=synth_by_condition, outputs=synth_condition_html)
+
+        # Dropdown changes → drill-down filter. (gr.Plot in Gradio 6 only emits
+        # .change, not .select, so cell clicks aren't wired; a pair of label
+        # dropdowns above the drill table drives the filter instead.)
+        def _on_filter_change(expected: str | None, judged: str | None) -> tuple[str, str]:
+            exp = expected or None
+            jud = judged or None
+            f = DrillFilter(expected=exp, judged=jud)
+            return _filter_status_html(f), drill(f)
+
+        metrics_filter_expected.change(
+            fn=_on_filter_change,
+            inputs=[metrics_filter_expected, metrics_filter_judged],
+            outputs=[metrics_filter_status, metrics_drill_html],
+        )
+        metrics_filter_judged.change(
+            fn=_on_filter_change,
+            inputs=[metrics_filter_expected, metrics_filter_judged],
+            outputs=[metrics_filter_status, metrics_drill_html],
+        )
+
+        # Keep dropdown choices in sync with the labels the data currently uses.
+        def _refresh_dropdown_choices() -> tuple[Any, Any]:
+            labels = _heatmap_labels(mirror_root)
+            return gr.update(choices=labels), gr.update(choices=labels)
+
+        heavy_timer.tick(
+            fn=_refresh_dropdown_choices,
+            outputs=[metrics_filter_expected, metrics_filter_judged],
+        )
+
+        # Re-render the drill-down on the slow timer too, so new rollouts that
+        # match the active filter appear without forcing a manual refresh.
+        def _refresh_drill(expected: str | None, judged: str | None) -> str:
+            f = DrillFilter(expected=expected or None, judged=judged or None)
+            return drill(f)
+
+        heavy_timer.tick(
+            fn=_refresh_drill,
+            inputs=[metrics_filter_expected, metrics_filter_judged],
+            outputs=metrics_drill_html,
+        )
 
     # mypy can't track gr.Blocks's __enter__ return type through the with-block.
     assert isinstance(app, gr.Blocks)
