@@ -26,10 +26,11 @@ from src.schemas import Pass2Annotation
 from src.sim.scripted import FailureMode
 from src.vision.frames import encode_png_b64, read_frames, resize_long_edge, sample_indices
 
-FINE_NUM_FRAMES = 10  # midpoint of CLAUDE.md's 8-12 range
+FINE_NUM_FRAMES = 14  # denser temporal coverage of the failure window
 FINE_LONG_EDGE_PX = 2576
 FINE_MAX_TOKENS = 1024
-FINE_RANGE_PADDING_FRAMES = 4  # widen the coarse range by this on each side
+FINE_RANGE_PADDING_FRAMES = 8  # widen the coarse range by this on each side
+# (catches the failure even when Pass-1's range is off by 1 second or so)
 
 ALLOWED_LABELS = sorted(label.value for label in FailureMode if label != FailureMode.NONE)
 
@@ -42,8 +43,8 @@ def _load_taxonomy() -> str:
 _TAXONOMY_MARKDOWN = _load_taxonomy()
 
 SYSTEM_PROMPT = f"""\
-You are a robot manipulation eval judge. You will be shown 8-12 high-resolution \
-frames from a SINGLE failed robot rollout. The task is one of:
+You are a robot manipulation eval judge. You will be shown {FINE_NUM_FRAMES} \
+high-resolution frames from a SINGLE failed robot rollout. The task is one of:
   - Lift: a Franka Panda arm picks up a cube from a table.
   - NutAssemblySquare: a Franka Panda arm picks a square nut and places it on a square peg.
 Identify the task from the first frame, then watch how it fails across the sequence.
@@ -51,24 +52,42 @@ Identify the task from the first frame, then watch how it fails across the seque
 Pick exactly ONE label from this closed set: {", ".join(ALLOWED_LABELS)}.
 Do NOT pick `none` — Pass-2 only runs on confirmed failures.
 
-The label is often only distinguishable by what CHANGES between consecutive \
-frames: did the object move on its own? did the gripper close on contact or \
-in empty air? did the arm collide with anything? Read the "Visual cue" \
-column in the table below carefully — those are the discriminating features \
-between modes that look similar.
+CRITICAL — temporal reasoning. The decisive evidence may span only 2-3 \
+consecutive frames and is often subtle. Walk through the frames in order and \
+ask, between each adjacent pair:
+  1. Did the cube move WITHOUT the arm touching it? (object moved on its own)
+  2. Did the gripper fingers come together (close)? If yes, did they close \
+     ON the cube or in empty space NEAR the cube?
+  3. Did the cube briefly rise with the gripper, then drop?
+  4. Did the arm visibly bump or jostle the cube before any grasp attempt?
+
+The "obvious final state" frame (e.g. arm retreating with no cube held) is \
+NOT the failure event itself — it's the consequence. Pick the label based \
+on the EVENT (the contact, the close, the slip, the impact), not on the \
+end state. If the only evidence you have is the end state, you've likely \
+been given the wrong window — pick the closest specific label rather than \
+defaulting to approach_miss.
+
+Read the "Visual cue" column in the table below carefully — those are the \
+discriminating features between modes that look similar:
 
 {_TAXONOMY_MARKDOWN}
 
 Common confusions to avoid (these have caused mis-labels in past runs):
-  - approach_miss vs knock_object_off_table: if the object visibly moves \
-    BEFORE the grasp attempt, it's knock_object_off_table; if the gripper \
-    closes on air with the object stationary, it's approach_miss.
+  - approach_miss vs knock_object_off_table: if the cube visibly moves \
+    BEFORE the gripper closes (or moves while the arm is still descending), \
+    it's knock_object_off_table — even if the arm later closes on empty \
+    space and retreats. The IMPACT is the failure, not the empty close.
   - approach_miss vs slip_during_lift: if the gripper visibly contacted the \
-    object and lifted it briefly before losing it, it's slip_during_lift, \
-    NOT approach_miss. slip requires evidence of partial pickup.
+    cube and lifted it briefly before losing it, it's slip_during_lift, \
+    NOT approach_miss. slip requires evidence of partial pickup — look for \
+    the cube briefly above the table surface in any frame.
   - approach_miss vs insertion_misalignment: insertion_misalignment requires \
     a SUCCESSFUL pick followed by a failed PLACEMENT (only relevant for \
     NutAssemblySquare — nut held above peg but offset).
+
+Default-to-approach_miss is the failure mode of this judge — resist it. \
+If you're unsure, look one more time for cube motion or gripper-cube contact.
 
 Then pick the SINGLE most diagnostic frame and a pixel coordinate on the \
 visual evidence — the object, the offending finger, the misalignment axis. \
@@ -78,7 +97,7 @@ The coordinate is in the resolution of the frame as shown to you (long edge \
 Respond with ONE valid JSON object and NOTHING else. Schema:
   {{"taxonomy_label": <one of the labels above>,
     "point": [x, y],
-    "description": <one short sentence>}}
+    "description": <one short sentence naming the EVENT, not the end state>}}
 
 x and y are integers in pixel coordinates of the chosen frame. Prefer "other" \
 ONLY for genuinely unrecognized failures — if any specific label fits, use it.

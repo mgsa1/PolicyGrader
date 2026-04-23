@@ -26,7 +26,7 @@ from src.costing import CostTracker
 from src.schemas import Pass1Verdict
 from src.vision.frames import encode_png_b64, read_frames, resize_long_edge, sample_indices
 
-COARSE_NUM_FRAMES = 14  # midpoint of CLAUDE.md's 12-16 range
+COARSE_NUM_FRAMES = 24  # ~one frame every 0.4 s for a 10 s Lift video
 COARSE_LONG_EDGE_PX = 768
 COARSE_MAX_TOKENS = 1024
 
@@ -42,14 +42,27 @@ of the table and held there at the end. Anything else — gripper missed, \
 gripper closed on air, object slid out, object knocked off the table, \
 collision, no-op — is a failure.
 
-If the rollout failed, also report the index range of the frames in which the \
-failure became visible (inclusive). Use the smallest tight range you can.
+If the rollout failed, return the EARLIEST tight frame range during which the \
+failure event itself happened — NOT the later frames where the consequence is \
+visible. The distinction matters: many failures end with the arm retreating in \
+disgust, but the diagnostic moment is the failure event itself (the impact, the \
+slip, the missed close). Heuristics for finding the earliest moment:
+  - If the cube moves on its own in any frame, the failure event includes \
+    that frame.
+  - If the gripper closes (fingers come together), the failure event includes \
+    the frames immediately before AND after the close — that's where you can \
+    tell whether the gripper contacted the cube or closed on empty air.
+  - If the arm makes contact with the cube but cube doesn't follow up, the \
+    failure event includes the contact frame.
+The downstream Pass-2 will window TIGHTLY on whatever range you return, so \
+returning the late "arm retreating" frames means Pass-2 mis-labels the failure.
 
 Respond with ONE valid JSON object and NOTHING else. Schema:
   {"verdict": "pass" | "fail", "failure_frame_range": [start, end] | null}
 
 `failure_frame_range` MUST be null when verdict is "pass". When verdict is \
-"fail", `start` and `end` are integers in [0, N-1] with start <= end.
+"fail", `start` and `end` are integers in [0, N-1] with start <= end. Keep \
+the range as tight as possible — typically 2-5 frames is enough.
 """
 
 
