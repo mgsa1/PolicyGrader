@@ -38,6 +38,43 @@ THUMBNAIL_LONG_EDGE_PX = 384
 POINT_DOT_RADIUS_PX = 16
 POINT_DOT_OUTLINE_WIDTH = 4
 
+
+# ---- Tiny shared HTML helpers -----------------------------------------------------
+# Both src/ui/app.py and src/ui/metrics_view.py render keyframe + mp4 paths and
+# want a consistent "copyable path" treatment. Defined here so they can share.
+
+
+def html_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def copyable_path(path: object, click_label: str = "copy", max_width_px: int = 220) -> str:
+    """Render a monospace path + a small clipboard-copy button.
+
+    Selectable (user-select:all → single-click selects the whole path); the
+    button writes via navigator.clipboard. Truncates with ellipsis at
+    `max_width_px` but the full path stays in the title attribute and in the
+    text content (so triple-click + copy also works).
+    """
+    p_str = str(path)
+    js_safe = p_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+    h_safe = html_escape(p_str)
+    return (
+        "<div style='display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px;'>"
+        f"<code style='color:#94a3b8;background:#0f172a;padding:2px 6px;border-radius:3px;"
+        f"font-family:ui-monospace,monospace;user-select:all;"
+        f"overflow:hidden;text-overflow:ellipsis;max-width:{max_width_px}px;"
+        f"white-space:nowrap;' title='{h_safe}'>{h_safe}</code>"
+        f"<button onclick=\"navigator.clipboard.writeText('{js_safe}');"
+        f"this.textContent='✓';"
+        f"setTimeout(()=>this.textContent='{click_label}',900)\" "
+        f"style='background:#1e293b;color:#94a3b8;border:1px solid #334155;"
+        f"padding:1px 7px;border-radius:3px;cursor:pointer;font-size:10px;"
+        f"font-family:ui-monospace,monospace;flex:0 0 auto;'>{click_label}</button>"
+        "</div>"
+    )
+
+
 # Threshold below which we consider an injection knob "default" (not perturbed).
 # Mirrors the knob-to-label mapping in src.agents.system_prompts:
 #   action_noise >= 0.10 => knock_object_off_table

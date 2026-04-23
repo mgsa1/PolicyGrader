@@ -48,6 +48,7 @@ from src.ui.synthesis import (
     cluster_by_condition,
     cluster_by_label,
     compute_metrics,
+    copyable_path,
     load_scored_rollouts,
     render_all_keyframes,
 )
@@ -394,6 +395,35 @@ def _rollout_paths(mirror_root: Path) -> list[str]:
     return [str(p) for p in paths]
 
 
+def _current_video_path_html(mirror_root: Path) -> str:
+    """Render the host path of the currently-playing video, with copy button."""
+    path = _current_video_path(mirror_root)
+    if path is None:
+        return (
+            "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:4px;'>"
+            "(no rollout selected yet)</div>"
+        )
+    return copyable_path(path, click_label="copy mp4", max_width_px=420)
+
+
+def _rollout_paths_panel_html(mirror_root: Path) -> str:
+    """Compact list of mp4 paths for every rollout in the gallery, each copyable."""
+    paths = _rollout_paths(mirror_root)
+    if not paths:
+        return (
+            "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:6px;'>"
+            "(no rollout videos on disk yet)</div>"
+        )
+    rows = "".join(copyable_path(p, click_label="copy", max_width_px=380) for p in paths[:30])
+    overflow = (
+        f"<div style='font-size:10px;color:#64748b;margin-top:4px;'>"
+        f"showing 30 newest of {len(paths)}</div>"
+        if len(paths) > 30
+        else ""
+    )
+    return f"<div style='margin-top:6px;max-height:220px;overflow-y:auto;'>{rows}{overflow}</div>"
+
+
 def _current_video_path(mirror_root: Path) -> str | None:
     """Most recently mentioned rollout_id from chat.jsonl, mapped to its mp4 if it exists."""
     entries = _read_chat(mirror_root)
@@ -514,25 +544,31 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
         breakdown_chips = "".join(chips)
 
     # Keyframe grid: PNG per rollout that has video. Each is a clickable link
-    # to the source mp4 served by Gradio (file= URL prefix).
+    # to the source mp4 served by Gradio (file= URL prefix). Below the
+    # thumbnail we render copyable host paths for both the keyframe PNG and
+    # the source mp4 — so anyone testing can `open` or `ffprobe` the file.
     thumbs = ""
     for r in cluster.rollouts:
         kf = keyframes.get(r.rollout_id)
         if kf is None:
             continue
-        # Gradio 6 serves static files under /gradio_api/file=<abs_path>,
-        # and only for paths in the app's `allowed_paths`. The launcher in
-        # scripts/run_ui.py passes mirror_root into allowed_paths.
         kf_url = f"/gradio_api/file={kf}"
         mp4_url = f"/gradio_api/file={r.video_path_host}" if r.video_path_host else "#"
+        path_block = ""
+        if r.video_path_host:
+            path_block += copyable_path(r.video_path_host, click_label="copy mp4")
+        path_block += copyable_path(kf, click_label="copy png")
         thumbs += (
-            f"<a href='{mp4_url}' target='_blank' style='display:inline-block;margin:4px;"
+            f"<div style='display:inline-block;margin:4px;vertical-align:top;width:200px;'>"
+            f"<a href='{mp4_url}' target='_blank' style='display:block;"
             f"text-decoration:none;color:inherit;'>"
-            f"<img src='{kf_url}' style='width:180px;height:auto;display:block;border-radius:6px;"
+            f"<img src='{kf_url}' style='width:200px;height:auto;display:block;border-radius:6px;"
             f"border:1px solid #cbd5e1;'/>"
             f"<div style='font-family:ui-monospace,monospace;font-size:11px;text-align:center;"
-            f"margin-top:3px;opacity:0.75;'>{_escape(r.rollout_id)}</div>"
+            f"margin-top:3px;opacity:0.85;'>{_escape(r.rollout_id)}</div>"
             f"</a>"
+            f"{path_block}"
+            f"</div>"
         )
     if not thumbs:
         thumbs = (
@@ -628,6 +664,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                         loop=True,
                         height=400,
                     )
+                    current_video_path_html = gr.HTML(value=_current_video_path_html(mirror_root))
                     gr.Markdown("### All rollouts")
                     rollout_gallery = gr.Gallery(
                         value=rollouts(),
@@ -635,6 +672,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                         height=300,
                         object_fit="contain",
                     )
+                    rollout_paths_html = gr.HTML(value=_rollout_paths_panel_html(mirror_root))
                 with gr.Column(scale=2):
                     gr.Markdown("### /memories/ tree")
                     files_html = gr.HTML(value=files())
@@ -693,7 +731,15 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         timer.tick(fn=banner, outputs=banner_html)
         timer.tick(fn=chat, outputs=chat_html)
         timer.tick(fn=current_video, outputs=current_video_player)
+        timer.tick(
+            fn=lambda: _current_video_path_html(mirror_root),
+            outputs=current_video_path_html,
+        )
         timer.tick(fn=rollouts, outputs=rollout_gallery)
+        timer.tick(
+            fn=lambda: _rollout_paths_panel_html(mirror_root),
+            outputs=rollout_paths_html,
+        )
         timer.tick(fn=files, outputs=files_html)
         # Slower-refresh outputs: anything that decodes mp4s or re-joins data.
         heavy_timer = gr.Timer(5.0)
