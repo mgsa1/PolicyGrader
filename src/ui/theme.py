@@ -77,15 +77,57 @@ FONT_MONO = '"Roboto Mono", "SF Mono", "Menlo", "Consolas", ui-monospace, monosp
 # place raw colors/paddings live for chrome — component helpers stay markup-
 # only aside from data-driven inline colors (phase tint, population accent).
 CSS = f"""
-/* --- reset on gradio container ------------------------------------------- */
-/* color-scheme: light tells the browser not to dark-ify form elements, and
-   the !important on body/container color fights Gradio 6's theme-variable
-   defaults that otherwise render Markdown headings as near-white text. */
+/* --- force light color-scheme everywhere --------------------------------- */
+/* Gradio 6 ships a dark-mode stylesheet keyed off @media (prefers-color-scheme:
+   dark) AND/OR a .dark class. Three lines of defense:
+     1. color-scheme: light disables the browser's auto dark-mode form styling.
+     2. html.dark / body.dark / .gradio-container.dark selectors revert to
+        light if Gradio auto-applied the class.
+     3. Every theme variable below is pinned to a light palette value so
+        Gradio's own components (Accordion, Block, Panel, Markdown body) can't
+        drift back to dark via var() fallbacks. */
 html, body, .gradio-container {{
-  color-scheme: light;
+  color-scheme: light !important;
   background: {BG} !important;
 }}
+html.dark, body.dark, .gradio-container.dark,
+.gradio-container .dark {{
+  color-scheme: light !important;
+}}
+
 .gradio-container {{
+  --body-text-color: {INK_2};
+  --body-text-color-subdued: {INK_3};
+  --body-background-fill: {BG};
+  --background-fill-primary: {SURFACE};
+  --background-fill-secondary: {SURFACE_2};
+  --block-background-fill: {SURFACE};
+  --block-border-color: {LINE};
+  --block-label-background-fill: {SURFACE};
+  --block-label-text-color: {INK_1};
+  --block-title-text-color: {INK_1};
+  --block-info-text-color: {INK_3};
+  --panel-background-fill: {SURFACE};
+  --panel-border-color: {LINE};
+  --border-color-primary: {LINE};
+  --border-color-accent: {ACCENT};
+  --color-accent: {ACCENT};
+  --color-accent-soft: {ACCENT_SOFT};
+  --input-background-fill: {SURFACE};
+  --input-border-color: {LINE_2};
+  --input-text-color: {INK_1};
+  --link-text-color: {ACCENT};
+  --neutral-50: #fafafa;
+  --neutral-100: {SURFACE_2};
+  --neutral-200: {SURFACE_INSET};
+  --neutral-300: {LINE_2};
+  --neutral-400: {INK_5};
+  --neutral-500: {INK_4};
+  --neutral-600: {INK_3};
+  --neutral-700: {INK_2};
+  --neutral-800: {INK_1};
+  --neutral-900: #0f0f0f;
+
   max-width: 1400px !important;
   font-family: {FONT_BODY};
   color: {INK_2} !important;
@@ -103,16 +145,44 @@ html, body, .gradio-container {{
 .gradio-container .markdown :where(h1, h2, h3, h4, h5, h6) {{
   color: {INK_1} !important;
 }}
+/* Force body text to ink color on all text-bearing elements, including any
+   Gradio-added `.dark` descendants. The !important here beats the theme's
+   own !important in its dark stylesheet. */
 .gradio-container .prose,
+.gradio-container .prose *,
 .gradio-container .markdown,
+.gradio-container .markdown *,
 .gradio-container p,
 .gradio-container span,
-.gradio-container label {{
+.gradio-container label,
+.gradio-container div {{
   color: {INK_2};
+}}
+.gradio-container .prose p,
+.gradio-container .markdown p,
+.gradio-container .prose li,
+.gradio-container .markdown li {{
+  color: {INK_2} !important;
+}}
+.gradio-container .prose strong,
+.gradio-container .markdown strong,
+.gradio-container .prose b,
+.gradio-container .markdown b {{
+  color: {INK_1} !important;
 }}
 .gradio-container code, .gradio-container pre {{
   font-family: {FONT_MONO};
   color: {INK_1};
+  background: {SURFACE_INSET};
+}}
+
+/* Kill any lingering dark backgrounds on block wrappers. */
+.gradio-container .block,
+.gradio-container .gradio-container .block,
+.gradio-container .form,
+.gradio-container .gap {{
+  background: transparent !important;
+  border-color: {LINE} !important;
 }}
 
 /* --- topbar -------------------------------------------------------------- */
@@ -464,22 +534,42 @@ html, body, .gradio-container {{
   -webkit-text-fill-color: {INK_1} !important;
 }}
 
-/* --- accordion header ---------------------------------------------------- */
-/* Gradio 6 Accordion header renders dark-on-dark by default (dark-mode leak).
-   Force a light card look so "What is this tool doing?" matches the page. */
-.gradio-container .label-wrap,
+/* --- accordion ----------------------------------------------------------- */
+/* Cover every DOM shape Gradio 6 has shipped for Accordion: the <details>
+   element, the .accordion wrapper div, the .label-wrap header button, the
+   class-less header button, and any <summary>. Also force the inner content
+   region light so text inside (rendered via gr.HTML) sits on white. */
+.gradio-container .accordion,
+.gradio-container details,
+.gradio-container details[open] {{
+  background: {SURFACE} !important;
+  border: 1px solid {LINE} !important;
+  border-radius: 10px !important;
+}}
+.gradio-container .accordion > .label-wrap,
 .gradio-container .accordion > button,
-.gradio-container .accordion-header {{
+.gradio-container details > summary,
+.gradio-container .label-wrap {{
   background: {SURFACE} !important;
   color: {INK_1} !important;
-  border: 1px solid {LINE} !important;
-  border-radius: 8px !important;
-}}
-.gradio-container .label-wrap span,
-.gradio-container .accordion > button span {{
-  color: {INK_1} !important;
+  border: none !important;
+  border-radius: 10px 10px 0 0 !important;
+  padding: 12px 16px !important;
   font-family: {FONT_DISPLAY} !important;
+  font-size: 14px !important;
   font-weight: 500 !important;
+}}
+.gradio-container .accordion > .label-wrap *,
+.gradio-container .accordion > button *,
+.gradio-container details > summary *,
+.gradio-container .label-wrap * {{
+  color: {INK_1} !important;
+}}
+/* The body region that holds child components when the accordion is open. */
+.gradio-container .accordion > div:not(.label-wrap),
+.gradio-container details > div {{
+  background: {SURFACE} !important;
+  padding: 0 16px 16px 16px !important;
 }}
 
 /* --- chat blocks --------------------------------------------------------- */
