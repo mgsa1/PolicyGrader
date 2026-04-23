@@ -52,12 +52,13 @@ from src.ui.synthesis import (
     CALIBRATION_COLOR,
     DEPLOYMENT_COLOR,
     Cluster,
+    ScoredRollout,
     cluster_by_condition,
     cluster_by_label,
     cohort_split,
     compute_metrics,
+    copy_button,
     load_scored_rollouts,
-    paperclip_button,
     population_chip,
     render_all_keyframes,
 )
@@ -426,7 +427,7 @@ def _current_video_path_html(mirror_root: Path) -> str:
     return (
         "<div style='display:flex;align-items:center;gap:8px;margin-top:4px;'>"
         "<span style='font-size:11px;color:#94a3b8;'>Current mp4:</span>"
-        f"{paperclip_button(path, tooltip='Copy current mp4 path', inline=True)}"
+        f"{copy_button(path, kind='mp4', inline=True)}"
         "</div>"
     )
 
@@ -444,7 +445,7 @@ def _rollout_paths_panel_html(mirror_root: Path) -> str:
         f"<span style='font-family:ui-monospace,monospace;font-size:10px;color:#94a3b8;"
         f"max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' "
         f"title='{Path(p).name}'>{Path(p).name}</span>"
-        f"{paperclip_button(p, tooltip='Copy mp4 path', inline=True)}"
+        f"{copy_button(p, kind='mp4', inline=True)}"
         f"</div>"
         for p in paths[:30]
     )
@@ -608,11 +609,9 @@ def _cluster_card_html(
             continue
         kf_url = f"/gradio_api/file={kf}"
         mp4_url = f"/gradio_api/file={r.video_path_host}" if r.video_path_host else "#"
-        overlays = paperclip_button(kf, tooltip="Copy keyframe PNG path", anchor="top-left")
+        overlays = copy_button(kf, kind="png", anchor="top-left")
         if r.video_path_host:
-            overlays += paperclip_button(
-                r.video_path_host, tooltip="Copy source mp4 path", anchor="top-right"
-            )
+            overlays += copy_button(r.video_path_host, kind="mp4", anchor="top-right")
         # Population chip overlaid bottom-left over the thumb.
         pop_chip = (
             f"<div style='position:absolute;bottom:6px;left:6px;'>"
@@ -825,6 +824,102 @@ def _phase_chip(
     )
 
 
+def _live_gallery_html(mirror_root: Path) -> str:
+    """Metadata-rich custom grid replacing gr.Gallery on the Live tab.
+
+    Each card:
+      - inline <video> thumbnail (browser auto-renders the first frame as poster)
+      - rollout_id (clickable to open the mp4 in a new tab)
+      - population chip (calibration/deployment) when we have dispatch_log data
+      - env name + success indicator if known
+      - copy-mp4 button overlaid top-right
+
+    Newest first, capped at 30 cards. Replaces gr.Gallery + the separate
+    paths panel — those are now redundant since each card carries its own
+    copy button.
+    """
+    rollouts_dir = mirror_root / "rollouts"
+    if not rollouts_dir.exists():
+        return _live_gallery_empty()
+    mp4s = sorted(rollouts_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not mp4s:
+        return _live_gallery_empty()
+
+    by_id = {r.rollout_id: r for r in load_scored_rollouts(mirror_root)}
+    cards = [_live_gallery_card(p, by_id.get(p.stem)) for p in mp4s[:30]]
+
+    overflow = (
+        f"<div style='font-size:11px;color:#64748b;margin-top:8px;text-align:center;'>"
+        f"showing 30 newest of {len(mp4s)}</div>"
+        if len(mp4s) > 30
+        else ""
+    )
+    return (
+        "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));"
+        "gap:14px;margin-top:6px;'>" + "".join(cards) + "</div>" + overflow
+    )
+
+
+def _live_gallery_empty() -> str:
+    return (
+        "<div style='padding:24px;text-align:center;color:#64748b;font-style:italic;"
+        "border:1px dashed #334155;border-radius:8px;margin-top:6px;'>"
+        "No rollouts yet. The first one will appear here when Phase 2 starts."
+        "</div>"
+    )
+
+
+def _live_gallery_card(mp4: Path, scored: ScoredRollout | None) -> str:
+    """One card in the metadata-rich gallery.
+
+    `scored` is the matching ScoredRollout from dispatch_log if we have one
+    (None for mp4s that exist on disk but haven't been logged yet — usually
+    a brief transient between mp4 write and dispatch-log append).
+    """
+    mp4_url = f"/gradio_api/file={mp4}"
+    rid = mp4.stem
+    pop_html = ""
+    meta_html = ""
+    if scored is not None:
+        pop_html = (
+            "<div style='position:absolute;bottom:6px;left:6px;'>"
+            f"{population_chip(scored, compact=True)}"
+            "</div>"
+        )
+        success_str = (
+            "<span style='color:#4ade80;'>✓ success</span>"
+            if scored.success
+            else "<span style='color:#fb923c;'>✗ failed</span>"
+        )
+        meta_html = (
+            "<div style='display:flex;justify-content:space-between;align-items:baseline;"
+            "margin-top:6px;font-size:11px;'>"
+            f"<span style='color:#94a3b8;font-family:ui-monospace,monospace;'>"
+            f"{_escape(scored.env_name)}</span>"
+            f"{success_str}"
+            "</div>"
+        )
+
+    overlay = copy_button(mp4, kind="mp4", anchor="top-right")
+    return (
+        "<div style='background:#1e293b;border:1px solid #334155;border-radius:8px;"
+        "overflow:hidden;'>"
+        "<div style='position:relative;'>"
+        f"<video src='{mp4_url}' preload='metadata' muted loop playsinline "
+        "style='width:100%;height:auto;display:block;'></video>"
+        f"{overlay}"
+        f"{pop_html}"
+        "</div>"
+        "<div style='padding:8px 10px 10px 10px;'>"
+        f"<a href='{mp4_url}' target='_blank' "
+        "style='font-family:ui-monospace,monospace;font-size:12px;color:#cbd5e1;"
+        f"text-decoration:none;'>{_escape(rid)}</a>"
+        f"{meta_html}"
+        "</div>"
+        "</div>"
+    )
+
+
 def _read_dashboard_intro_html() -> str:
     """The 'How to read this dashboard' accordion content."""
     return (
@@ -888,7 +983,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                 with gr.Accordion("What is this tool doing?", open=False):
                     gr.HTML(value=_read_dashboard_intro_html())
                 with gr.Row():
-                    with gr.Column(scale=3):
+                    with gr.Column(scale=2):
                         gr.Markdown("### Agent activity")
                         chat_html = gr.HTML(value=chat())
                     with gr.Column(scale=3):
@@ -903,16 +998,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                             value=_current_video_path_html(mirror_root)
                         )
                         gr.Markdown("### All rollouts")
-                        rollout_gallery = gr.Gallery(
-                            value=rollouts(),
-                            columns=3,
-                            height=300,
-                            object_fit="contain",
-                        )
-                        rollout_paths_html = gr.HTML(value=_rollout_paths_panel_html(mirror_root))
-                    with gr.Column(scale=2):
-                        gr.Markdown("### /memories/ tree")
-                        files_html = gr.HTML(value=files())
+                        live_gallery_html = gr.HTML(value=_live_gallery_html(mirror_root))
             with gr.Tab("Judge calibration"):
                 gr.HTML(value=render_judge_calibration_header())
                 _initial_blocks = metrics_blocks()
@@ -980,12 +1066,10 @@ def build_app(mirror_root: Path) -> gr.Blocks:
             fn=lambda: _current_video_path_html(mirror_root),
             outputs=current_video_path_html,
         )
-        timer.tick(fn=rollouts, outputs=rollout_gallery)
         timer.tick(
-            fn=lambda: _rollout_paths_panel_html(mirror_root),
-            outputs=rollout_paths_html,
+            fn=lambda: _live_gallery_html(mirror_root),
+            outputs=live_gallery_html,
         )
-        timer.tick(fn=files, outputs=files_html)
         # Slower-refresh outputs: anything that decodes mp4s or re-joins data.
         heavy_timer = gr.Timer(5.0)
         heavy_timer.tick(

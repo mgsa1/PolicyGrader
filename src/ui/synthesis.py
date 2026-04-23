@@ -60,6 +60,97 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+# Inline SVG icons used by copy_button. Both share the "two overlapping
+# rectangles" copy semantic (so the user knows clicking copies to clipboard);
+# the inner content of the back rectangle differentiates format:
+#   mp4 → small play triangle
+#   png → small landscape silhouette (mountain + sun)
+_SVG_COPY_MP4 = (
+    "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' "
+    "stroke='currentColor' stroke-width='1.6' stroke-linecap='round' "
+    "stroke-linejoin='round'>"
+    "<rect x='9' y='9' width='13' height='13' rx='2'/>"
+    "<path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>"
+    "<polygon points='14,13 14,18 18,15.5' fill='currentColor' stroke='none'/>"
+    "</svg>"
+)
+_SVG_COPY_PNG = (
+    "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' "
+    "stroke='currentColor' stroke-width='1.6' stroke-linecap='round' "
+    "stroke-linejoin='round'>"
+    "<rect x='9' y='9' width='13' height='13' rx='2'/>"
+    "<path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>"
+    "<circle cx='13' cy='13' r='1' fill='currentColor' stroke='none'/>"
+    "<polyline points='10,19 13.5,15 16.5,17 20,14'/>"
+    "</svg>"
+)
+_SVG_COPY_GENERIC = (
+    "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' "
+    "stroke='currentColor' stroke-width='1.6' stroke-linecap='round' "
+    "stroke-linejoin='round'>"
+    "<rect x='9' y='9' width='13' height='13' rx='2'/>"
+    "<path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>"
+    "</svg>"
+)
+_SVG_CHECK = (
+    "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' "
+    "stroke='currentColor' stroke-width='2.4' stroke-linecap='round' "
+    "stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>"
+)
+
+
+def copy_button(
+    path: object,
+    *,
+    kind: str = "generic",  # "mp4" | "png" | "generic"
+    tooltip: str | None = None,
+    anchor: str | None = None,
+    inline: bool = False,
+) -> str:
+    """Small clipboard-copy button. Format-aware SVG (mp4 = play, png = image).
+
+    `anchor` (top-right / top-left / bottom-right / bottom-left) absolutely
+    positions the button to overlay a thumbnail — the immediate parent must
+    be position:relative. `inline=True` flows in normal layout (for cases
+    where overlay isn't possible, like next to gr.Video).
+    """
+    p_str = str(path)
+    js_safe = p_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+    icon = {"mp4": _SVG_COPY_MP4, "png": _SVG_COPY_PNG}.get(kind, _SVG_COPY_GENERIC)
+    js_check = _SVG_CHECK.replace("'", "\\'")
+    js_icon = icon.replace("'", "\\'")
+    if tooltip is None:
+        tooltip = {
+            "mp4": "Copy mp4 path",
+            "png": "Copy keyframe PNG path",
+        }.get(kind, "Copy path")
+    title = html_escape(f"{tooltip}: {p_str}")
+
+    if anchor and not inline:
+        pos_css = {
+            "top-right": "position:absolute;top:6px;right:6px;",
+            "top-left": "position:absolute;top:6px;left:6px;",
+            "bottom-right": "position:absolute;bottom:6px;right:6px;",
+            "bottom-left": "position:absolute;bottom:6px;left:6px;",
+        }.get(anchor, "position:absolute;top:6px;right:6px;")
+    else:
+        pos_css = "display:inline-flex;align-items:center;vertical-align:middle;margin-left:6px;"
+
+    return (
+        f'<button onclick="event.preventDefault();event.stopPropagation();'
+        f"navigator.clipboard.writeText('{js_safe}');"
+        f"this.innerHTML='{js_check}';"
+        f"setTimeout(()=>this.innerHTML='{js_icon}',900)\" "
+        f"title='{title}' "
+        f"style='{pos_css}"
+        f"background:rgba(15,23,42,0.85);color:#f1f5f9;"
+        f"border:1px solid rgba(255,255,255,0.22);border-radius:4px;"
+        f"padding:3px 5px;cursor:pointer;line-height:0;"
+        f"backdrop-filter:blur(4px);'>{icon}</button>"
+    )
+
+
+# Backwards-compat alias (older code paths still call paperclip_button).
 def paperclip_button(
     path: object,
     *,
@@ -67,39 +158,8 @@ def paperclip_button(
     anchor: str | None = None,
     inline: bool = False,
 ) -> str:
-    """Small clipboard button (📎). Briefly shows ✓ on click.
-
-    `anchor` is a position keyword (top-right, top-left, bottom-right,
-    bottom-left). If set, the button is absolutely positioned for overlaying
-    on a thumbnail — the immediate parent must be position:relative.
-    `inline=True` produces a non-overlay version that flows in normal layout
-    (used next to gr.Video / gr.Gallery headers where we can't overlay).
-    """
-    p_str = str(path)
-    js_safe = p_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-    title = html_escape(f"{tooltip}: {p_str}")
-    if anchor and not inline:
-        anchor_css = {
-            "top-right": "position:absolute;top:6px;right:6px;",
-            "top-left": "position:absolute;top:6px;left:6px;",
-            "bottom-right": "position:absolute;bottom:6px;right:6px;",
-            "bottom-left": "position:absolute;bottom:6px;left:6px;",
-        }.get(anchor, "position:absolute;top:6px;right:6px;")
-    else:
-        anchor_css = "display:inline-block;vertical-align:middle;margin-left:6px;"
-    return (
-        f'<button onclick="event.preventDefault();event.stopPropagation();'
-        f"navigator.clipboard.writeText('{js_safe}');"
-        f"this.textContent='✓';"
-        f"setTimeout(()=>this.textContent='📎',900)\" "
-        f"title='{title}' "
-        f"style='{anchor_css}"
-        f"background:rgba(15,23,42,0.85);color:#f1f5f9;"
-        f"border:1px solid rgba(255,255,255,0.22);border-radius:4px;"
-        f"padding:2px 7px;cursor:pointer;font-size:13px;line-height:1;"
-        f"font-family:-apple-system,system-ui,sans-serif;"
-        f"backdrop-filter:blur(4px);'>📎</button>"
-    )
+    """Deprecated alias — prefer copy_button(kind=...)."""
+    return copy_button(path, kind="generic", tooltip=tooltip, anchor=anchor, inline=inline)
 
 
 # Threshold below which we consider an injection knob "default" (not perturbed).

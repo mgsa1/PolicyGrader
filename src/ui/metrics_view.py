@@ -31,8 +31,8 @@ from src.ui.synthesis import (
     KEYFRAMES_DIR_NAME,
     JudgeMetrics,
     ScoredRollout,
+    copy_button,
     html_escape,
-    paperclip_button,
 )
 
 SMALL_SAMPLE_THRESHOLD = 10  # below this, attach a "small sample" chip
@@ -845,11 +845,9 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
     if kf is not None:
         # Wrap the <img> in a position:relative container so the paperclip
         # overlays sit on top of the thumbnail.
-        overlays = paperclip_button(kf, tooltip="Copy keyframe PNG path", anchor="top-left")
+        overlays = copy_button(kf, kind="png", anchor="top-left")
         if r.video_path_host:
-            overlays += paperclip_button(
-                r.video_path_host, tooltip="Copy source mp4 path", anchor="top-right"
-            )
+            overlays += copy_button(r.video_path_host, kind="mp4", anchor="top-right")
         img_html = (
             "<div style='position:relative;width:140px;'>"
             f"<img src='/gradio_api/file={kf}' style='width:140px;height:auto;display:block;"
