@@ -48,8 +48,8 @@ from src.ui.synthesis import (
     cluster_by_condition,
     cluster_by_label,
     compute_metrics,
-    copyable_path,
     load_scored_rollouts,
+    paperclip_button,
     render_all_keyframes,
 )
 
@@ -396,32 +396,53 @@ def _rollout_paths(mirror_root: Path) -> list[str]:
 
 
 def _current_video_path_html(mirror_root: Path) -> str:
-    """Render the host path of the currently-playing video, with copy button."""
+    """A single paperclip button beside the Current Rollout heading.
+
+    gr.Video can't be overlaid (Gradio renders it inside its own container),
+    so the icon flows inline below the player. Click → copies the host mp4 path.
+    """
     path = _current_video_path(mirror_root)
     if path is None:
         return (
             "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:4px;'>"
             "(no rollout selected yet)</div>"
         )
-    return copyable_path(path, click_label="copy mp4", max_width_px=420)
+    return (
+        "<div style='display:flex;align-items:center;gap:8px;margin-top:4px;'>"
+        "<span style='font-size:11px;color:#94a3b8;'>Current mp4:</span>"
+        f"{paperclip_button(path, tooltip='Copy current mp4 path', inline=True)}"
+        "</div>"
+    )
 
 
 def _rollout_paths_panel_html(mirror_root: Path) -> str:
-    """Compact list of mp4 paths for every rollout in the gallery, each copyable."""
+    """Per-mp4 paperclip strip below the gallery, since gr.Gallery items aren't overlay-able."""
     paths = _rollout_paths(mirror_root)
     if not paths:
         return (
             "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:6px;'>"
             "(no rollout videos on disk yet)</div>"
         )
-    rows = "".join(copyable_path(p, click_label="copy", max_width_px=380) for p in paths[:30])
+    chips = "".join(
+        f"<div style='display:flex;align-items:center;gap:6px;'>"
+        f"<span style='font-family:ui-monospace,monospace;font-size:10px;color:#94a3b8;"
+        f"max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' "
+        f"title='{Path(p).name}'>{Path(p).name}</span>"
+        f"{paperclip_button(p, tooltip='Copy mp4 path', inline=True)}"
+        f"</div>"
+        for p in paths[:30]
+    )
     overflow = (
         f"<div style='font-size:10px;color:#64748b;margin-top:4px;'>"
         f"showing 30 newest of {len(paths)}</div>"
         if len(paths) > 30
         else ""
     )
-    return f"<div style='margin-top:6px;max-height:220px;overflow-y:auto;'>{rows}{overflow}</div>"
+    return (
+        "<div style='margin-top:6px;max-height:220px;overflow-y:auto;"
+        "display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;'>"
+        f"{chips}</div>{overflow}"
+    )
 
 
 def _current_video_path(mirror_root: Path) -> str | None:
@@ -543,10 +564,10 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
             )
         breakdown_chips = "".join(chips)
 
-    # Keyframe grid: PNG per rollout that has video. Each is a clickable link
-    # to the source mp4 served by Gradio (file= URL prefix). Below the
-    # thumbnail we render copyable host paths for both the keyframe PNG and
-    # the source mp4 — so anyone testing can `open` or `ffprobe` the file.
+    # Keyframe grid: PNG per rollout that has video. Click the thumb to open
+    # the source mp4. Two paperclip overlays per thumbnail: top-right copies
+    # the mp4 path, top-left copies the keyframe PNG path. Both buttons block
+    # the parent link's click so they don't accidentally open the mp4.
     thumbs = ""
     for r in cluster.rollouts:
         kf = keyframes.get(r.rollout_id)
@@ -554,21 +575,24 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
             continue
         kf_url = f"/gradio_api/file={kf}"
         mp4_url = f"/gradio_api/file={r.video_path_host}" if r.video_path_host else "#"
-        path_block = ""
+        overlays = paperclip_button(kf, tooltip="Copy keyframe PNG path", anchor="top-left")
         if r.video_path_host:
-            path_block += copyable_path(r.video_path_host, click_label="copy mp4")
-        path_block += copyable_path(kf, click_label="copy png")
+            overlays += paperclip_button(
+                r.video_path_host, tooltip="Copy source mp4 path", anchor="top-right"
+            )
         thumbs += (
-            f"<div style='display:inline-block;margin:4px;vertical-align:top;width:200px;'>"
-            f"<a href='{mp4_url}' target='_blank' style='display:block;"
-            f"text-decoration:none;color:inherit;'>"
-            f"<img src='{kf_url}' style='width:200px;height:auto;display:block;border-radius:6px;"
-            f"border:1px solid #cbd5e1;'/>"
-            f"<div style='font-family:ui-monospace,monospace;font-size:11px;text-align:center;"
-            f"margin-top:3px;opacity:0.85;'>{_escape(r.rollout_id)}</div>"
-            f"</a>"
-            f"{path_block}"
-            f"</div>"
+            "<div style='display:inline-block;margin:4px;vertical-align:top;width:180px;'>"
+            f"<a href='{mp4_url}' target='_blank' "
+            "style='display:block;text-decoration:none;color:inherit;'>"
+            "<div style='position:relative;'>"
+            f"<img src='{kf_url}' style='width:180px;height:auto;display:block;"
+            "border-radius:6px;border:1px solid #cbd5e1;'/>"
+            f"{overlays}"
+            "</div>"
+            "<div style='font-family:ui-monospace,monospace;font-size:11px;"
+            f"text-align:center;margin-top:3px;opacity:0.85;'>{_escape(r.rollout_id)}</div>"
+            "</a>"
+            "</div>"
         )
     if not thumbs:
         thumbs = (

@@ -29,7 +29,7 @@ from src.ui.synthesis import (
     KEYFRAMES_DIR_NAME,
     JudgeMetrics,
     ScoredRollout,
-    copyable_path,
+    paperclip_button,
 )
 
 SMALL_SAMPLE_THRESHOLD = 10  # below this, attach a "small sample" chip
@@ -648,20 +648,27 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
     badge_text = "match" if match else "mismatch"
 
     kf = keyframes.get(r.rollout_id)
-    img_html = (
-        f"<img src='/gradio_api/file={kf}' style='width:140px;height:auto;border-radius:4px;"
-        f"border:1px solid #334155;'/>"
-        if kf is not None
-        else "<div style='width:140px;height:80px;background:#1e293b;border-radius:4px;"
-        "color:#475569;font-size:10px;display:flex;align-items:center;justify-content:center;'>"
-        "no keyframe</div>"
-    )
-    # Copyable host paths under the thumbnail (in the keyframe column).
-    paths_block = ""
-    if r.video_path_host:
-        paths_block += copyable_path(r.video_path_host, click_label="copy mp4", max_width_px=140)
     if kf is not None:
-        paths_block += copyable_path(kf, click_label="copy png", max_width_px=140)
+        # Wrap the <img> in a position:relative container so the paperclip
+        # overlays sit on top of the thumbnail.
+        overlays = paperclip_button(kf, tooltip="Copy keyframe PNG path", anchor="top-left")
+        if r.video_path_host:
+            overlays += paperclip_button(
+                r.video_path_host, tooltip="Copy source mp4 path", anchor="top-right"
+            )
+        img_html = (
+            "<div style='position:relative;width:140px;'>"
+            f"<img src='/gradio_api/file={kf}' style='width:140px;height:auto;display:block;"
+            "border-radius:4px;border:1px solid #334155;'/>"
+            f"{overlays}"
+            "</div>"
+        )
+    else:
+        img_html = (
+            "<div style='width:140px;height:80px;background:#1e293b;border-radius:4px;"
+            "color:#475569;font-size:10px;display:flex;align-items:center;"
+            "justify-content:center;'>no keyframe</div>"
+        )
 
     mp4_link = (
         f"<a href='/gradio_api/file={r.video_path_host}' target='_blank' style='color:#60a5fa;"
@@ -675,7 +682,7 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
     return (
         "<div style='display:grid;grid-template-columns:160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr;"
         "gap:10px;padding:10px;align-items:start;border-bottom:1px solid #1e293b;'>"
-        f"<div>{img_html}{paths_block}</div>"
+        f"<div>{img_html}</div>"
         f"<div style='font-family:ui-monospace,monospace;font-size:12px;color:#cbd5e1;'>"
         f"{mp4_link}</div>"
         f"<div style='font-family:ui-monospace,monospace;font-size:11px;color:#cbd5e1;'>"

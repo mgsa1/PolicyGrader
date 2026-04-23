@@ -48,30 +48,45 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def copyable_path(path: object, click_label: str = "copy", max_width_px: int = 220) -> str:
-    """Render a monospace path + a small clipboard-copy button.
+def paperclip_button(
+    path: object,
+    *,
+    tooltip: str = "Copy path",
+    anchor: str | None = None,
+    inline: bool = False,
+) -> str:
+    """Small clipboard button (📎). Briefly shows ✓ on click.
 
-    Selectable (user-select:all → single-click selects the whole path); the
-    button writes via navigator.clipboard. Truncates with ellipsis at
-    `max_width_px` but the full path stays in the title attribute and in the
-    text content (so triple-click + copy also works).
+    `anchor` is a position keyword (top-right, top-left, bottom-right,
+    bottom-left). If set, the button is absolutely positioned for overlaying
+    on a thumbnail — the immediate parent must be position:relative.
+    `inline=True` produces a non-overlay version that flows in normal layout
+    (used next to gr.Video / gr.Gallery headers where we can't overlay).
     """
     p_str = str(path)
     js_safe = p_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-    h_safe = html_escape(p_str)
+    title = html_escape(f"{tooltip}: {p_str}")
+    if anchor and not inline:
+        anchor_css = {
+            "top-right": "position:absolute;top:6px;right:6px;",
+            "top-left": "position:absolute;top:6px;left:6px;",
+            "bottom-right": "position:absolute;bottom:6px;right:6px;",
+            "bottom-left": "position:absolute;bottom:6px;left:6px;",
+        }.get(anchor, "position:absolute;top:6px;right:6px;")
+    else:
+        anchor_css = "display:inline-block;vertical-align:middle;margin-left:6px;"
     return (
-        "<div style='display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px;'>"
-        f"<code style='color:#94a3b8;background:#0f172a;padding:2px 6px;border-radius:3px;"
-        f"font-family:ui-monospace,monospace;user-select:all;"
-        f"overflow:hidden;text-overflow:ellipsis;max-width:{max_width_px}px;"
-        f"white-space:nowrap;' title='{h_safe}'>{h_safe}</code>"
-        f"<button onclick=\"navigator.clipboard.writeText('{js_safe}');"
+        f'<button onclick="event.preventDefault();event.stopPropagation();'
+        f"navigator.clipboard.writeText('{js_safe}');"
         f"this.textContent='✓';"
-        f"setTimeout(()=>this.textContent='{click_label}',900)\" "
-        f"style='background:#1e293b;color:#94a3b8;border:1px solid #334155;"
-        f"padding:1px 7px;border-radius:3px;cursor:pointer;font-size:10px;"
-        f"font-family:ui-monospace,monospace;flex:0 0 auto;'>{click_label}</button>"
-        "</div>"
+        f"setTimeout(()=>this.textContent='📎',900)\" "
+        f"title='{title}' "
+        f"style='{anchor_css}"
+        f"background:rgba(15,23,42,0.85);color:#f1f5f9;"
+        f"border:1px solid rgba(255,255,255,0.22);border-radius:4px;"
+        f"padding:2px 7px;cursor:pointer;font-size:13px;line-height:1;"
+        f"font-family:-apple-system,system-ui,sans-serif;"
+        f"backdrop-filter:blur(4px);'>📎</button>"
     )
 
 
