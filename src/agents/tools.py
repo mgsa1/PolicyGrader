@@ -291,6 +291,27 @@ def _dispatch_fine(
     }
 
 
+DISPATCH_LOG = "dispatch_log.jsonl"
+
+
+def _append_dispatch_log(
+    mirror_root: Path, tool_name: str, args: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Append one (tool, args, result) record to mirror_root/dispatch_log.jsonl.
+
+    The Gradio UI / synthesis layer reads this to reconstruct rollout configs
+    and judge findings without needing access to /memories/ inside the agent's
+    environment. We see every tool call here anyway — logging it costs ~1 ms.
+    """
+    import time as _time
+
+    record = {"ts": _time.time(), "tool": tool_name, "args": args, "result": result}
+    path = mirror_root / DISPATCH_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
 def dispatch(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -304,7 +325,8 @@ def dispatch(
     Returning a string lets the caller stuff it directly into a
     `user.custom_tool_result` event content block. `cost_tracker`, if provided,
     is forwarded to the vision passes so their token usage is summed into the
-    session-wide ledger.
+    session-wide ledger. Every call is also appended to dispatch_log.jsonl so
+    the synthesis UI can reconstruct rollout configs and judge findings.
     """
     if tool_name == ROLLOUT_TOOL_NAME:
         result = _dispatch_rollout(tool_input, mirror_root)
@@ -314,4 +336,5 @@ def dispatch(
         result = _dispatch_fine(tool_input, mirror_root, client, cost_tracker)
     else:
         raise ValueError(f"unknown custom tool: {tool_name}")
+    _append_dispatch_log(mirror_root, tool_name, dict(tool_input), result)
     return json.dumps(result)

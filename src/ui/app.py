@@ -34,6 +34,13 @@ from src.costing import (
     format_duration,
 )
 from src.runtime_state import CHAT_JSONL, RUNTIME_JSON
+from src.ui.synthesis import (
+    Cluster,
+    cluster_by_condition,
+    cluster_by_label,
+    load_scored_rollouts,
+    render_all_keyframes,
+)
 
 REFRESH_SECONDS = 1.0
 
@@ -224,6 +231,88 @@ def _files_list(mirror_root: Path) -> str:
     return "<div style='max-height:600px;overflow-y:auto;'>" + "".join(rows) + "</div>"
 
 
+def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[str, Path]) -> str:
+    """Render one cluster card: name, count + %, breakdown row, keyframe grid."""
+    n = len(cluster.rollouts)
+    pct = (n / total_failures * 100) if total_failures else 0.0
+
+    # Breakdown row: top contributors first, formatted as "label N (XX%)"
+    breakdown_chips = ""
+    if cluster.breakdown:
+        chips = []
+        for label, count in sorted(cluster.breakdown.items(), key=lambda kv: -kv[1]):
+            sub_pct = (count / n * 100) if n else 0.0
+            chips.append(
+                f"<span style='display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;"
+                f"background:#e0e7ff;color:#3730a3;border-radius:12px;font-size:12px;'>"
+                f"{_escape(label)} · <b>{count}</b> ({sub_pct:.0f}%)</span>"
+            )
+        breakdown_chips = "".join(chips)
+
+    # Keyframe grid: PNG per rollout that has video. Each is a clickable link
+    # to the source mp4 served by Gradio (file= URL prefix).
+    thumbs = ""
+    for r in cluster.rollouts:
+        kf = keyframes.get(r.rollout_id)
+        if kf is None:
+            continue
+        # Gradio serves files from the working dir via /file= URL prefix.
+        kf_url = f"/file={kf}"
+        mp4_url = f"/file={r.video_path_host}" if r.video_path_host else "#"
+        thumbs += (
+            f"<a href='{mp4_url}' target='_blank' style='display:inline-block;margin:4px;"
+            f"text-decoration:none;color:inherit;'>"
+            f"<img src='{kf_url}' style='width:180px;height:auto;display:block;border-radius:6px;"
+            f"border:1px solid #cbd5e1;'/>"
+            f"<div style='font-family:ui-monospace,monospace;font-size:11px;text-align:center;"
+            f"margin-top:3px;opacity:0.75;'>{_escape(r.rollout_id)}</div>"
+            f"</a>"
+        )
+    if not thumbs:
+        thumbs = (
+            "<p style='opacity:0.6;font-style:italic;'>(no keyframes — videos not on host yet)</p>"
+        )
+
+    return f"""
+<div style='margin:16px 0;padding:18px;background:#ffffff;border:1px solid #e2e8f0;
+            border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);'>
+  <div style='display:flex;align-items:baseline;justify-content:space-between;
+              border-bottom:1px solid #f1f5f9;padding-bottom:10px;margin-bottom:12px;'>
+    <h3 style='margin:0;font-size:18px;font-family:ui-monospace,monospace;color:#1e293b;'>
+      {_escape(cluster.name)}
+    </h3>
+    <div style='font-size:14px;color:#475569;'>
+      <b>{n}</b> rollouts · <b>{pct:.0f}%</b> of all failures
+    </div>
+  </div>
+  <div style='margin-bottom:14px;'>{breakdown_chips}</div>
+  <div style='display:flex;flex-wrap:wrap;'>{thumbs}</div>
+</div>
+""".strip()
+
+
+def _synthesis_html(mirror_root: Path, mode: str) -> str:
+    """Render the full synthesis view in the chosen mode ('label' or 'condition')."""
+    rollouts = load_scored_rollouts(mirror_root)
+    if not rollouts:
+        return (
+            "<p style='opacity:0.6'><i>No dispatch_log.jsonl yet. Synthesis appears once "
+            "the orchestrator has run at least one rollout + judge cycle.</i></p>"
+        )
+
+    keyframes = render_all_keyframes(rollouts, mirror_root)
+    total_failures = sum(1 for r in rollouts if r.judged_failure)
+    if total_failures == 0:
+        return (
+            "<p style='opacity:0.6'><i>No judged failures yet — Pass-1 hasn't flagged "
+            "any rollout as fail.</i></p>"
+        )
+
+    clusters = cluster_by_label(rollouts) if mode == "label" else cluster_by_condition(rollouts)
+    cards = [_cluster_card_html(c, total_failures, keyframes) for c in clusters]
+    return "".join(cards)
+
+
 def build_app(mirror_root: Path) -> gr.Blocks:
     """Construct the Gradio Blocks app. `mirror_root` is what every pane watches."""
 
@@ -239,23 +328,46 @@ def build_app(mirror_root: Path) -> gr.Blocks:
     def files() -> str:
         return _files_list(mirror_root)
 
+    def synth_by_label() -> str:
+        return _synthesis_html(mirror_root, "label")
+
+    def synth_by_condition() -> str:
+        return _synthesis_html(mirror_root, "condition")
+
     with gr.Blocks(title="Embodied Eval Orchestrator") as app:
         banner_html = gr.HTML(value=banner())
-        with gr.Row():
-            with gr.Column(scale=2):
-                gr.Markdown("### Agent activity")
-                chat_html = gr.HTML(value=chat())
-            with gr.Column(scale=2):
-                gr.Markdown("### Rollout videos")
-                rollout_gallery = gr.Gallery(
-                    value=rollouts(),
-                    columns=2,
-                    height=600,
-                    object_fit="contain",
+
+        with gr.Tabs():
+            with gr.Tab("Live"), gr.Row():
+                with gr.Column(scale=2):
+                    gr.Markdown("### Agent activity")
+                    chat_html = gr.HTML(value=chat())
+                with gr.Column(scale=2):
+                    gr.Markdown("### Rollout videos")
+                    rollout_gallery = gr.Gallery(
+                        value=rollouts(),
+                        columns=2,
+                        height=600,
+                        object_fit="contain",
+                    )
+                with gr.Column(scale=1):
+                    gr.Markdown("### /memories/ tree")
+                    files_html = gr.HTML(value=files())
+            with gr.Tab("Failure synthesis · by label"):
+                gr.Markdown(
+                    "**Each card** = one Pass-2 taxonomy label seen across all "
+                    "judged failures. Chips inside show which **conditions** "
+                    "drove that label. Click a keyframe to open the source mp4."
                 )
-            with gr.Column(scale=1):
-                gr.Markdown("### /memories/ tree")
-                files_html = gr.HTML(value=files())
+                synth_label_html = gr.HTML(value=synth_by_label())
+            with gr.Tab("Failure synthesis · by condition"):
+                gr.Markdown(
+                    "**Each card** = one perturbation condition (or env+policy "
+                    "combination for pretrained). Chips inside show which "
+                    "**Pass-2 labels** that condition produced. Click a keyframe "
+                    "to open the source mp4."
+                )
+                synth_condition_html = gr.HTML(value=synth_by_condition())
 
         # gr.Timer fires on the given cadence; each tick re-reads the files
         # from disk. No orchestrator coupling.
@@ -264,6 +376,10 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         timer.tick(fn=chat, outputs=chat_html)
         timer.tick(fn=rollouts, outputs=rollout_gallery)
         timer.tick(fn=files, outputs=files_html)
+        # Synthesis is heavier (decodes mp4s for keyframes); refresh more slowly.
+        synth_timer = gr.Timer(5.0)
+        synth_timer.tick(fn=synth_by_label, outputs=synth_label_html)
+        synth_timer.tick(fn=synth_by_condition, outputs=synth_condition_html)
 
     # mypy can't track gr.Blocks's __enter__ return type through the with-block.
     assert isinstance(app, gr.Blocks)
