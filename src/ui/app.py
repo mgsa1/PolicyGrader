@@ -286,24 +286,33 @@ def _phase_explainer_card(marker: str) -> str:
 
     outputs_html = ""
     if outputs:
-        chips = "".join(
-            f"<code style='background:{color}22;color:{color};padding:2px 7px;"
-            f"border-radius:4px;font-size:11px;margin-right:4px;'>{_escape(o)}</code>"
+        files = " · ".join(
+            f"<code style='color:{color};opacity:0.8;background:none;font-size:11px;'>"
+            f"{_escape(o)}</code>"
             for o in outputs
         )
         outputs_html = (
-            f"<div style='margin-top:6px;font-size:12px;color:#94a3b8;'>Writes: {chips}</div>"
+            f"<div style='margin-top:6px;font-size:11px;color:#64748b;'>"
+            f"<span style='text-transform:uppercase;letter-spacing:1.2px;"
+            f"font-weight:600;'>Writes:</span> {files}</div>"
         )
 
+    # Typographic section divider, NOT a chat block. No background, no box.
+    # Uppercase eyebrow + tinted rule to the right so the eye reads it as
+    # "new section starting" rather than "another message".
     return f"""
-<div style="margin:18px 0 10px 0;padding:14px 18px;background:#0f172a;
-            border-left:4px solid {color};border-radius:6px;">
-  <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
-    <span style="color:{color};font-weight:700;font-size:11px;text-transform:uppercase;
-                 letter-spacing:1.2px;">{_escape(short)}</span>
-    <span style="color:#cbd5e1;font-size:14px;font-weight:600;">{_escape(title)}</span>
+<div style="margin:28px 0 12px 0;">
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px;">
+    <div style="font-size:11px;font-weight:800;color:{color};text-transform:uppercase;
+                letter-spacing:2.5px;white-space:nowrap;">
+      {_escape(short)}
+    </div>
+    <div style="flex:1;height:1px;
+                background:linear-gradient(90deg,{color}66 0%,transparent 100%);"></div>
   </div>
-  <div style="color:#cbd5e1;font-size:13px;line-height:1.5;">{_escape(subtitle)}</div>
+  <div style="color:#e2e8f0;font-size:15px;font-weight:600;
+              margin-bottom:3px;">{_escape(title)}</div>
+  <div style="color:#94a3b8;font-size:12px;line-height:1.5;">{_escape(subtitle)}</div>
   {outputs_html}
 </div>
 """.strip()
