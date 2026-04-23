@@ -53,6 +53,27 @@ from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
 
+# Goals tend to mention "N scenarios", "N rollouts", or "N <env> ..." somewhere.
+# Sum every match so a goal like "2 clean + 3 injected + 5 pretrained" reports 10.
+import re as _re  # noqa: E402
+
+_PLANNED_TOTAL_PATTERN = _re.compile(
+    r"(\d+)\s+(?:scripted|pretrained|mixed|clean|injected)?\s*"
+    r"(?:Lift|NutAssemblySquare|scenarios|rollouts|rows)",
+    _re.IGNORECASE,
+)
+
+
+def _parse_planned_total(goal: str) -> int | None:
+    """Best-effort: sum all 'N <something>' counts in the goal string.
+
+    Returns None if no number-like phrase matches. The progress strip in the
+    UI then renders without a denominator until ROLLOUT phase finishes (at
+    which point the actual dispatched count becomes the denominator).
+    """
+    matches = [int(m.group(1)) for m in _PLANNED_TOTAL_PATTERN.finditer(goal)]
+    return sum(matches) if matches else None
+
 
 @dataclass(frozen=True)
 class SessionHandle:
@@ -362,6 +383,7 @@ def run_all_phases(
         cost_tracker=cost_tracker,
         start_time=start_time,
         session_id=handle.session_id,
+        planned_total=_parse_planned_total(user_goal),
     )
     runtime.set_phase("starting")
 

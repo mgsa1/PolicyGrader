@@ -684,6 +684,147 @@ def _judge_trust_html(mirror_root: Path) -> str:
     return render_judge_trust_banner(judge_trust(rollouts))
 
 
+def _phase_progress_html(mirror_root: Path) -> str:
+    """4-phase progress strip below the top banner.
+
+    Each phase chip is one of pending / active / complete, with a progress
+    bar where counts are known. Sources of truth:
+      - phase: runtime.json `phase` (the active marker, or 'starting'/'complete')
+      - counts: runtime.json `n_rollouts_dispatched`, `n_coarse_dispatched`,
+        `n_fine_dispatched`, `n_fine_planned`
+      - denominator: runtime.json `planned_total` (parsed from goal) for
+        ROLLOUT, then the actual dispatched count for downstream phases.
+    """
+    rt = _read_runtime(mirror_root)
+    cur = str(rt.get("phase", "starting"))
+    n_roll = int(rt.get("n_rollouts_dispatched", 0))
+    n_coarse = int(rt.get("n_coarse_dispatched", 0))
+    n_fine = int(rt.get("n_fine_dispatched", 0))
+    n_fine_planned = int(rt.get("n_fine_planned", 0))
+    planned: int | None = rt.get("planned_total")
+
+    # Phase ordering: 0=PLANNER, 1=ROLLOUT, 2=JUDGE, 3=REPORT.
+    order = {
+        "starting": -1,
+        "BEGIN PHASE 1: PLANNER": 0,
+        "BEGIN PHASE 2: ROLLOUT": 1,
+        "BEGIN PHASE 3: JUDGE": 2,
+        "BEGIN PHASE 4: REPORT": 3,
+        "complete": 4,
+    }
+    cur_idx = order.get(cur, -1)
+
+    # Once Phase 2 ends, the rollout dispatch count IS the planned total.
+    rollout_total = planned if cur_idx <= 1 else (n_roll if n_roll > 0 else planned)
+
+    def _state(phase_idx: int) -> str:
+        if cur_idx > phase_idx:
+            return "complete"
+        if cur_idx == phase_idx:
+            return "active"
+        return "pending"
+
+    chips = [
+        _phase_chip("Phase 1: Planner", "BEGIN PHASE 1: PLANNER", _state(0), None, None),
+        _phase_chip(
+            "Phase 2: Rollout",
+            "BEGIN PHASE 2: ROLLOUT",
+            _state(1),
+            n_roll,
+            rollout_total,
+        ),
+        _phase_chip(
+            "Phase 3: Judge",
+            "BEGIN PHASE 3: JUDGE",
+            _state(2),
+            n_coarse + n_fine,
+            (rollout_total or 0) + (n_fine_planned or 0) if rollout_total else None,
+            sub=f"coarse {n_coarse}/{rollout_total or '?'} · fine {n_fine}/{n_fine_planned or '?'}",
+        ),
+        _phase_chip("Phase 4: Report", "BEGIN PHASE 4: REPORT", _state(3), None, None),
+    ]
+    return (
+        "<div style='display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;"
+        "padding:14px 0 4px 0;'>" + "".join(chips) + "</div>"
+    )
+
+
+def _phase_chip(
+    title: str,
+    marker: str,
+    state: str,  # 'pending' | 'active' | 'complete'
+    done: int | None,
+    total: int | None,
+    sub: str | None = None,
+) -> str:
+    """One phase tile with title, status, and optional progress bar + sub-line."""
+    color = PHASE_COLORS.get(marker, DEFAULT_PHASE_COLOR)
+
+    if state == "complete":
+        bg = f"{color}1f"
+        border = color
+        status_chip = (
+            f"<span style='color:{color};font-size:10px;font-weight:700;"
+            "text-transform:uppercase;letter-spacing:1.5px;'>✓ complete</span>"
+        )
+    elif state == "active":
+        bg = f"{color}33"
+        border = color
+        status_chip = (
+            f"<span style='color:{color};font-size:10px;font-weight:700;"
+            "text-transform:uppercase;letter-spacing:1.5px;'>● active</span>"
+        )
+    else:
+        bg = "#1e293b"
+        border = "#334155"
+        status_chip = (
+            "<span style='color:#64748b;font-size:10px;font-weight:700;"
+            "text-transform:uppercase;letter-spacing:1.5px;'>○ pending</span>"
+        )
+
+    bar_html = ""
+    counter_html = ""
+    if done is not None:
+        if total and total > 0:
+            pct = min(100, int(done / total * 100))
+            bar_html = (
+                "<div style='margin-top:8px;height:6px;background:#0f172a;"
+                "border-radius:3px;overflow:hidden;'>"
+                f"<div style='width:{pct}%;height:100%;background:{color};"
+                "transition:width 0.3s ease;'></div></div>"
+            )
+            counter_html = (
+                f"<div style='margin-top:4px;font-size:11px;color:#cbd5e1;"
+                f"font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;'>"
+                f"{done} / {total}</div>"
+            )
+        else:
+            counter_html = (
+                f"<div style='margin-top:4px;font-size:11px;color:#cbd5e1;"
+                f"font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;'>"
+                f"{done} done</div>"
+            )
+    sub_html = (
+        f"<div style='margin-top:3px;font-size:10px;color:#94a3b8;"
+        f"font-family:ui-monospace,monospace;'>{sub}</div>"
+        if sub
+        else ""
+    )
+
+    return (
+        f"<div style='padding:10px 12px;background:{bg};border:1px solid {border}55;"
+        f"border-left:3px solid {border};border-radius:6px;'>"
+        f"<div style='display:flex;align-items:baseline;justify-content:space-between;'>"
+        f"<div style='color:#f1f5f9;font-size:12px;font-weight:600;'>{title}</div>"
+        f"{status_chip}"
+        f"</div>"
+        f"{bar_html}"
+        f"{counter_html}"
+        f"{sub_html}"
+        f"</div>"
+    )
+
+
 def _read_dashboard_intro_html() -> str:
     """The 'How to read this dashboard' accordion content."""
     return (
@@ -740,6 +881,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
 
     with gr.Blocks(title="Embodied Eval Orchestrator") as app:
         banner_html = gr.HTML(value=banner())
+        progress_html = gr.HTML(value=_phase_progress_html(mirror_root))
 
         with gr.Tabs():
             with gr.Tab("Live"):
@@ -831,6 +973,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         # to recompute (small JSON reads, a directory listing).
         timer = gr.Timer(REFRESH_SECONDS)
         timer.tick(fn=banner, outputs=banner_html)
+        timer.tick(fn=lambda: _phase_progress_html(mirror_root), outputs=progress_html)
         timer.tick(fn=chat, outputs=chat_html)
         timer.tick(fn=current_video, outputs=current_video_player)
         timer.tick(

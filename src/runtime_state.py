@@ -44,6 +44,10 @@ class RuntimeState:
     n_rollouts: int = 0
     last_event_at: float = 0.0
     session_id: str = ""
+    # Best-effort planned total parsed from the user goal. None if we can't
+    # tell — the UI then shows progress without a denominator until Phase 2
+    # finishes (at which point the actual count becomes the denominator).
+    planned_total: int | None = None
 
     def set_phase(self, phase: str) -> None:
         self.phase = phase
@@ -59,8 +63,38 @@ class RuntimeState:
             self.n_rollouts = len(list(rollouts_dir.glob("*.mp4")))
         self.write_snapshot()
 
+    def _dispatch_counts(self) -> tuple[int, int, int, int]:
+        """(rollouts, coarse, fine, fine_planned) from dispatch_log.jsonl.
+
+        fine_planned = number of coarse calls that returned verdict='fail',
+        which is the eventual denominator for Pass-2 progress.
+        """
+        path = self.mirror_root / "dispatch_log.jsonl"
+        if not path.exists():
+            return (0, 0, 0, 0)
+        n_rollout = n_coarse = n_fine = n_fail = 0
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            tool = rec.get("tool")
+            if tool == "rollout":
+                n_rollout += 1
+            elif tool == "coarse":
+                n_coarse += 1
+                if (rec.get("result") or {}).get("verdict") == "fail":
+                    n_fail += 1
+            elif tool == "fine":
+                n_fine += 1
+        return (n_rollout, n_coarse, n_fine, n_fail)
+
     def write_snapshot(self) -> None:
         """Atomic write of the runtime.json snapshot."""
+        n_roll, n_coarse, n_fine, n_fine_planned = self._dispatch_counts()
         snapshot = {
             "phase": self.phase,
             "elapsed_seconds": time.time() - self.start_time,
@@ -70,6 +104,11 @@ class RuntimeState:
             "cache_read_tokens": self.cost_tracker.cache_read_tokens,
             "cache_creation_tokens": self.cost_tracker.cache_creation_tokens,
             "n_rollouts": self.n_rollouts,
+            "planned_total": self.planned_total,
+            "n_rollouts_dispatched": n_roll,
+            "n_coarse_dispatched": n_coarse,
+            "n_fine_dispatched": n_fine,
+            "n_fine_planned": n_fine_planned,
             "last_event_at": self.last_event_at,
             "session_id": self.session_id,
         }
