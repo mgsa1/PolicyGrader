@@ -25,9 +25,8 @@ from src.metrics import JudgeMetrics as JudgeMetrics_label
 from src.metrics import LabeledRollout, LabelStats
 from src.metrics import compute as compute_label_metrics
 from src.sim.scripted import FailureMode
+from src.ui import theme
 from src.ui.synthesis import (
-    CALIBRATION_COLOR,
-    DEPLOYMENT_COLOR,
     KEYFRAMES_DIR_NAME,
     JudgeMetrics,
     ScoredRollout,
@@ -140,35 +139,22 @@ def _used_labels(metrics: JudgeMetrics_label, order: list[FailureMode]) -> list[
 def render_cohort_strip(counts: CohortCounts) -> str:
     """Three-pill cohort strip: calibration / in-this-tab / excluded(deployment)."""
     pills = [
-        ("Calibration rollouts", counts.n_calibration, CALIBRATION_COLOR),
-        ("In this tab", counts.n_calibration_with_findings, CALIBRATION_COLOR),
-        ("Excluded (deployment, no GT)", counts.n_deployment, DEPLOYMENT_COLOR),
+        ("Calibration rollouts", counts.n_calibration, theme.CAL),
+        ("In this tab", counts.n_calibration_with_findings, theme.CAL),
+        ("Excluded (deployment, no GT)", counts.n_deployment, theme.DEP),
     ]
     chips: list[str] = []
     for label, n, accent in pills:
         small = n > 0 and n < SMALL_SAMPLE_THRESHOLD
-        small_chip = (
-            "<span style='margin-left:8px;font-size:10px;color:#94a3b8;background:#334155;"
-            "padding:1px 6px;border-radius:8px;text-transform:none;letter-spacing:0;'>"
-            "small sample</span>"
-            if small
-            else ""
-        )
+        small_chip = "<span class='pg-chip__small'>small sample</span>" if small else ""
         chips.append(
-            "<div style='padding:10px 16px;background:#1e293b;border-radius:24px;"
-            f"display:flex;align-items:baseline;gap:8px;border-left:3px solid {accent};'>"
-            f"<span style='font-size:10px;color:{accent};text-transform:uppercase;"
-            f"letter-spacing:1.4px;font-weight:700;'>{label}</span>"
-            f"<span style='font-size:20px;font-weight:700;color:#f1f5f9;"
-            f"font-variant-numeric:tabular-nums;'>{n}</span>"
+            f"<div class='pg-cohort-pill' style='border-left-color:{accent};'>"
+            f"<span class='pg-cohort-pill__label' style='color:{accent};'>{label}</span>"
+            f"<span class='pg-cohort-pill__value'>{n}</span>"
             f"{small_chip}"
             "</div>"
         )
-    return (
-        "<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;'>"
-        + "".join(chips)
-        + "</div>"
-    )
+    return "<div class='pg-cohort-strip'>" + "".join(chips) + "</div>"
 
 
 # ---- Caption ---------------------------------------------------------------------
@@ -176,7 +162,9 @@ def render_cohort_strip(counts: CohortCounts) -> str:
 
 def render_caption() -> str:
     return (
-        "<div style='font-size:12px;color:#94a3b8;margin-bottom:18px;line-height:1.5;'>"
+        "<div style='font-size:12px;color:"
+        + theme.INK_3
+        + ";margin-bottom:18px;line-height:1.55;'>"
         "<b>Pass-1</b>: binary pass/fail vs <code>env._check_success()</code>. "
         "<b>Pass-2</b>: taxonomy label vs the failure-injection parameter used in the "
         "scripted policy. Pretrained rollouts enter Pass-1 only."
@@ -191,13 +179,9 @@ def render_judge_calibration_header() -> str:
     already understand what the tab is and is not.
     """
     return (
-        "<div style='padding:14px 18px;background:#0f172a;"
-        f"border:1px solid {CALIBRATION_COLOR}55;border-left:4px solid {CALIBRATION_COLOR};"
-        "border-radius:8px;margin-bottom:14px;'>"
-        f"<div style='font-size:10px;color:{CALIBRATION_COLOR};font-weight:800;"
-        "text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;'>"
-        "JUDGE CALIBRATION</div>"
-        "<div style='color:#e2e8f0;font-size:14px;line-height:1.55;'>"
+        "<div class='pg-callout'>"
+        f"<div class='pg-callout__eyebrow' style='color:{theme.CAL};'>JUDGE CALIBRATION</div>"
+        "<div class='pg-callout__body'>"
         "This tab measures the <b>judge</b>, not the policy. The numbers here "
         "come from rollouts where we injected a known failure, so we know the "
         "correct label. Policy findings live in the <b>Deployment findings</b> tab."
@@ -271,13 +255,10 @@ def render_judge_trust_banner(trust: JudgeTrust) -> str:
     """The 'how much to trust these findings' banner at the top of Deployment findings."""
     if trust.n_calibration == 0:
         return (
-            "<div style='padding:14px 18px;background:#0f172a;"
-            f"border:1px solid {DEPLOYMENT_COLOR}55;border-left:4px solid {DEPLOYMENT_COLOR};"
-            "border-radius:8px;margin-bottom:14px;'>"
-            f"<div style='font-size:10px;color:{DEPLOYMENT_COLOR};font-weight:800;"
-            "text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;'>"
+            "<div class='pg-callout pg-callout--dep'>"
+            f"<div class='pg-callout__eyebrow' style='color:{theme.DEP};'>"
             "JUDGE TRUST · uncalibrated run</div>"
-            "<div style='color:#e2e8f0;font-size:13px;line-height:1.55;'>"
+            "<div class='pg-callout__body'>"
             "No calibration rollouts in this run. Judge outputs below are "
             "<b>uncalibrated</b> — treat as directional, not measured."
             "</div></div>"
@@ -292,35 +273,32 @@ def render_judge_trust_banner(trust: JudgeTrust) -> str:
     avg_p = (
         f"<b>{trust.per_label_precision_avg:.2f}</b>"
         if trust.per_label_precision_avg is not None
-        else "<span style='opacity:0.6'>(no labels with support ≥3)</span>"
+        else f"<span style='color:{theme.INK_4};'>(no labels with support ≥3)</span>"
     )
     avg_r = (
         f"<b>{trust.per_label_recall_avg:.2f}</b>"
         if trust.per_label_recall_avg is not None
-        else "<span style='opacity:0.6'>—</span>"
+        else f"<span style='color:{theme.INK_4};'>—</span>"
     )
 
     return (
-        "<div style='padding:14px 18px;background:#0f172a;"
-        f"border:1px solid {CALIBRATION_COLOR}66;border-left:4px solid {CALIBRATION_COLOR};"
-        "border-radius:8px;margin-bottom:14px;'>"
-        f"<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:10px;'>"
-        f"<span style='font-size:10px;color:{CALIBRATION_COLOR};font-weight:800;"
-        "text-transform:uppercase;letter-spacing:2px;'>JUDGE TRUST</span>"
-        f"<span style='font-size:11px;color:#94a3b8;'>"
-        f"pulled from {trust.n_calibration} calibration rollouts</span></div>"
-        "<div style='display:grid;grid-template-columns:auto 1fr;gap:6px 18px;"
-        "font-size:13px;color:#cbd5e1;line-height:1.5;font-family:ui-monospace,monospace;'>"
-        "<div style='color:#94a3b8;'>Binary detection</div>"
+        "<div class='pg-callout'>"
+        "<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:10px;'>"
+        f"<span class='pg-callout__eyebrow' style='color:{theme.CAL};margin:0;'>JUDGE TRUST</span>"
+        f"<span style='font-size:11px;color:{theme.INK_4};'>"
+        f"pulled from {trust.n_calibration} calibration rollouts</span>"
+        "</div>"
+        "<div class='pg-callout__grid'>"
+        "<div class='pg-callout__grid-label'>Binary detection</div>"
         f"<div>precision <b>{bp}/{bp_n}</b> · {bp_pct:.1f}%  ·  "
         f"recall <b>{br}/{br_n}</b> · {br_pct:.1f}%</div>"
-        "<div style='color:#94a3b8;'>Per-label average</div>"
+        "<div class='pg-callout__grid-label'>Per-label average</div>"
         f"<div>precision {avg_p}   ·   recall {avg_r}</div>"
-        "<div style='color:#94a3b8;'>Coverage</div>"
+        "<div class='pg-callout__grid-label'>Coverage</div>"
         f"<div><b>{trust.n_labels_with_support}</b> of "
         f"{trust.total_taxonomy_labels} taxonomy labels have support ≥ 3</div>"
         "</div>"
-        "<div style='margin-top:10px;font-size:12px;color:#cbd5e1;font-style:italic;'>"
+        "<div class='pg-callout__note'>"
         "Findings below are <b>calibrated estimates</b>. Each failure label is "
         "decorated with its calibration precision where available."
         "</div></div>"
@@ -350,7 +328,7 @@ def render_calibration_chip(label: str, stats: dict[str, LabelStats]) -> str:
     if s is None:
         text = "uncalibrated"
         title = "No calibration rollouts have this expected label."
-        color = "#64748b"
+        variant = "neutral"
     else:
         support = s.tp + s.fn
         if support < 3:
@@ -359,19 +337,18 @@ def render_calibration_chip(label: str, stats: dict[str, LabelStats]) -> str:
                 f"Only {support} calibration rollouts with injected label "
                 f"'{label}' — too few to publish a precision."
             )
-            color = "#64748b"
+            variant = "neutral"
         else:
             text = f"judge P = {s.precision:.2f}"
             title = (
                 f"Based on {support} calibration rollouts with injected label "
                 f"'{label}'. See Judge calibration tab."
             )
-            color = CALIBRATION_COLOR
+            variant = "cal"
+    class_attr = "pg-chip" if variant == "neutral" else f"pg-chip pg-chip--{variant}"
     return (
-        f"<span title='{html_escape(title)}' "
-        f"style='display:inline-block;padding:2px 7px;margin-left:6px;"
-        f"background:{color}22;color:{color};border-radius:8px;font-size:10px;"
-        "font-weight:600;font-family:ui-monospace,monospace;letter-spacing:0.3px;'>"
+        f"<span title='{html_escape(title)}' class='{class_attr}' "
+        f"style='font-family:{theme.FONT_MONO};margin-left:6px;'>"
         f"{text}</span>"
     )
 
@@ -384,10 +361,7 @@ def render_binary_panel(metrics: JudgeMetrics) -> str:
     tp, fp, fn, tn = metrics.pass1_tp, metrics.pass1_fp, metrics.pass1_fn, metrics.pass1_tn
     n = tp + fp + fn + tn
     if n == 0:
-        return (
-            "<div style='padding:14px;color:#94a3b8;font-style:italic;'>"
-            "No Pass-1 verdicts yet.</div>"
-        )
+        return "<div class='pg-empty pg-empty--small'>No Pass-1 verdicts yet.</div>"
 
     prec_n = tp + fp
     rec_n = tp + fn
@@ -410,59 +384,40 @@ def render_binary_panel(metrics: JudgeMetrics) -> str:
         acc_n=accuracy_n,
     )
     caption = (
-        "<div style='font-size:11px;color:#64748b;margin-top:10px;'>"
+        "<div class='pg-binary__caption'>"
         "Ground truth: <code>env._check_success()</code>. All rollouts participate "
         "— pretrained included."
         "</div>"
     )
     return (
-        "<div style='padding:18px;background:#0f172a;border:1px solid #1e293b;"
-        "border-radius:10px;margin-bottom:18px;'>"
-        "<div style='font-size:11px;font-weight:800;color:#c084fc;text-transform:uppercase;"
-        "letter-spacing:2px;margin-bottom:12px;'>Pass-1 — binary detector</div>"
-        "<div style='display:flex;gap:32px;align-items:flex-start;'>"
-        + matrix_html
-        + stats_html
-        + "</div>"
-        + caption
-        + "</div>"
+        "<div class='pg-binary'>"
+        "<div class='pg-binary__eyebrow'>Pass-1 — binary detector</div>"
+        "<div class='pg-binary__row'>" + matrix_html + stats_html + "</div>" + caption + "</div>"
     )
 
 
 def _binary_matrix_html(tp: int, fp: int, fn: int, tn: int) -> str:
     """2x2 confusion matrix, rendered as an HTML grid."""
-    log_max = math.log1p(max(tp, fp, fn, tn, 1))
 
     def cell(count: int, *, correct: bool) -> str:
-        intensity = math.log1p(count) / log_max if log_max > 0 else 0.0
         if count == 0:
-            bg = "#0f172a"
+            modifier = "pg-binary__cell--empty"
         elif correct:
-            # Green tint scaling with count.
-            alpha = int(20 + intensity * 200)
-            bg = f"rgba(16, 185, 129, {alpha / 255:.2f})"
+            modifier = "pg-binary__cell--ok"
         else:
-            alpha = int(20 + intensity * 200)
-            bg = f"rgba(239, 68, 68, {alpha / 255:.2f})"
-        return (
-            f"<div style='background:{bg};color:#f1f5f9;padding:18px;text-align:center;"
-            f"font-size:22px;font-weight:700;border-radius:6px;"
-            f"font-variant-numeric:tabular-nums;border:1px solid #334155;'>{count}</div>"
-        )
+            modifier = "pg-binary__cell--err"
+        return f"<div class='pg-binary__cell {modifier}'>{count}</div>"
 
-    label_cell = (
-        "color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;"
-        "letter-spacing:1.2px;text-align:center;padding:6px;"
-    )
+    axis = "pg-binary__axis-label"
     return (
-        "<div style='display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;width:280px;'>"
-        f"<div></div>"
-        f"<div style='{label_cell}'>Judged: pass</div>"
-        f"<div style='{label_cell}'>Judged: fail</div>"
-        f"<div style='{label_cell};writing-mode:sideways-lr;'>Actual: pass</div>"
+        "<div class='pg-binary__matrix'>"
+        "<div></div>"
+        f"<div class='{axis}'>Judged: pass</div>"
+        f"<div class='{axis}'>Judged: fail</div>"
+        f"<div class='{axis}' style='writing-mode:sideways-lr;'>Actual: pass</div>"
         + cell(tn, correct=True)
         + cell(fp, correct=False)
-        + f"<div style='{label_cell};writing-mode:sideways-lr;'>Actual: fail</div>"
+        + f"<div class='{axis}' style='writing-mode:sideways-lr;'>Actual: fail</div>"
         + cell(fn, correct=False)
         + cell(tp, correct=True)
         + "</div>"
@@ -487,18 +442,12 @@ def _binary_stats_html(
     acc = acc_correct / acc_n if acc_n else 0.0
 
     def stat_row(label: str, fraction: str, pct: str, ci: str = "") -> str:
-        ci_html = (
-            f"<span style='color:#64748b;font-size:11px;margin-left:6px;'>{ci}</span>" if ci else ""
-        )
+        ci_html = f"<span class='pg-binary__stat-ci'>{ci}</span>" if ci else ""
         return (
-            "<div style='display:flex;align-items:baseline;gap:10px;padding:6px 0;"
-            "border-bottom:1px solid #1e293b;'>"
-            f"<div style='width:88px;font-size:11px;color:#94a3b8;text-transform:uppercase;"
-            f"letter-spacing:1.2px;font-weight:600;'>{label}</div>"
-            f"<div style='font-size:14px;color:#cbd5e1;font-variant-numeric:tabular-nums;"
-            f"font-family:ui-monospace,monospace;'>{fraction}</div>"
-            f"<div style='font-size:18px;font-weight:700;color:#f1f5f9;"
-            f"font-variant-numeric:tabular-nums;'>{pct}</div>"
+            "<div class='pg-binary__stat'>"
+            f"<div class='pg-binary__stat-label'>{label}</div>"
+            f"<div class='pg-binary__stat-frac'>{fraction}</div>"
+            f"<div class='pg-binary__stat-pct'>{pct}</div>"
             f"{ci_html}"
             "</div>"
         )
@@ -519,7 +468,7 @@ def _binary_stats_html(
         stat_row("F1", "—", f"{f1:.2f}"),
         stat_row("Accuracy", f"{acc_correct}/{acc_n}", f"{acc * 100:.1f}%"),
     ]
-    return "<div style='flex:1;'>" + "".join(rows) + "</div>"
+    return "<div class='pg-binary__stats'>" + "".join(rows) + "</div>"
 
 
 # ---- Multiclass heatmap ----------------------------------------------------------
@@ -543,11 +492,11 @@ def render_heatmap_figure(rollouts: list[ScoredRollout]) -> go.Figure:
                     "text": "No labeled rollouts yet — needs scripted "
                     "(ground-truth-bearing) rows judged.",
                     "showarrow": False,
-                    "font": {"size": 12, "color": "#94a3b8"},
+                    "font": {"size": 12, "color": theme.INK_4},
                 }
             ],
-            plot_bgcolor="#0f172a",
-            paper_bgcolor="#0f172a",
+            plot_bgcolor=theme.SURFACE,
+            paper_bgcolor=theme.SURFACE,
             margin={"l": 30, "r": 30, "t": 30, "b": 30},
             height=360,
         )
@@ -581,6 +530,22 @@ def render_heatmap_figure(rollouts: list[ScoredRollout]) -> go.Figure:
     row_totals = [sum(row) for row in counts]
     col_totals = [sum(counts[i][j] for i in range(n)) for j in range(n)]
 
+    # Text color per cell: the colorscale goes from a deep amber (off-diag, bad)
+    # through surface-white (zero) to deep green (diag, good). Near the extremes
+    # we need white text for contrast; near zero (surface-white bg) we need ink.
+    text_colors: list[list[str]] = []
+    for i in range(n):
+        row: list[str] = []
+        for j in range(n):
+            c = counts[i][j]
+            if c == 0:
+                row.append(theme.INK_5)
+            elif abs(z[i][j]) > 0.55:
+                row.append(theme.SURFACE)
+            else:
+                row.append(theme.INK_1)
+        text_colors.append(row)
+
     fig = go.Figure(
         data=go.Heatmap(
             z=z,
@@ -588,23 +553,42 @@ def render_heatmap_figure(rollouts: list[ScoredRollout]) -> go.Figure:
             y=label_strs,
             text=text,
             texttemplate="%{text}",
-            textfont={"size": 14, "color": "#f1f5f9"},
+            textfont={"size": 14, "color": theme.INK_1},
             zmin=-1,
             zmax=1,
             colorscale=[
-                [0.0, "#9a3412"],  # off-diag, high count -> deep orange
-                [0.49, "#1e293b"],  # off-diag, near zero -> background
-                [0.5, "#1e293b"],  # zero -> background
-                [0.51, "#1e293b"],
-                [1.0, "#15803d"],  # diag, high count -> deep green
+                [0.0, theme.ERR],  # off-diag, high count -> deep red
+                [0.49, theme.SURFACE],  # off-diag, near zero -> surface
+                [0.5, theme.SURFACE],  # zero -> surface
+                [0.51, theme.SURFACE],
+                [1.0, theme.OK],  # diag, high count -> deep green
             ],
             showscale=False,
             hovertemplate="expected: %{y}<br>judged: %{x}<br>count: %{text}<extra></extra>",
             customdata=[[(label_strs[i], label_strs[j]) for j in range(n)] for i in range(n)],
+            xgap=2,
+            ygap=2,
         )
     )
-    # Row-total + col-total margin annotations (right side and bottom).
+    # Per-cell text-color overrides for contrast against the new colorscale.
+    # We overlay an annotation per non-zero cell so we can color each one.
     annotations = []
+    for i in range(n):
+        for j in range(n):
+            if counts[i][j] == 0:
+                continue
+            annotations.append(
+                {
+                    "x": j,
+                    "y": i,
+                    "text": f"<b>{counts[i][j]}</b>",
+                    "showarrow": False,
+                    "xref": "x",
+                    "yref": "y",
+                    "font": {"size": 13, "color": text_colors[i][j]},
+                }
+            )
+    # Row/col totals in the margin (INK_4 on the surface).
     for i, total in enumerate(row_totals):
         annotations.append(
             {
@@ -614,7 +598,7 @@ def render_heatmap_figure(rollouts: list[ScoredRollout]) -> go.Figure:
                 "showarrow": False,
                 "xref": "x",
                 "yref": "y",
-                "font": {"size": 11, "color": "#94a3b8"},
+                "font": {"size": 11, "color": theme.INK_4},
                 "xanchor": "left",
             }
         )
@@ -627,33 +611,42 @@ def render_heatmap_figure(rollouts: list[ScoredRollout]) -> go.Figure:
                 "showarrow": False,
                 "xref": "x",
                 "yref": "y",
-                "font": {"size": 11, "color": "#94a3b8"},
+                "font": {"size": 11, "color": theme.INK_4},
                 "yanchor": "top",
             }
         )
+    # The colored text overlay supersedes the built-in texttemplate, which is
+    # always one color. Hide the built-in text so only our annotations show.
+    fig.update_traces(text=[["" for _ in range(n)] for _ in range(n)], selector={"type": "heatmap"})
 
     fig.update_layout(
         xaxis={
-            "title": {"text": "Judged label", "font": {"color": "#94a3b8", "size": 12}},
+            "title": {"text": "Judged label", "font": {"color": theme.INK_3, "size": 12}},
             "tickangle": -30,
-            "tickfont": {"color": "#cbd5e1", "size": 11},
+            "tickfont": {"color": theme.INK_2, "size": 11},
             "side": "top",
+            "gridcolor": theme.LINE,
         },
         yaxis={
-            "title": {"text": "Expected label", "font": {"color": "#94a3b8", "size": 12}},
+            "title": {"text": "Expected label", "font": {"color": theme.INK_3, "size": 12}},
             "autorange": "reversed",
-            "tickfont": {"color": "#cbd5e1", "size": 11},
+            "tickfont": {"color": theme.INK_2, "size": 11},
+            "gridcolor": theme.LINE,
         },
         margin={"l": 140, "r": 60, "t": 100, "b": 60},
-        plot_bgcolor="#0f172a",
-        paper_bgcolor="#0f172a",
+        plot_bgcolor=theme.SURFACE,
+        paper_bgcolor=theme.SURFACE,
         height=460,
         annotations=annotations,
+        font={"family": theme.FONT_BODY},
     )
     return fig
 
 
 # ---- Per-label table -------------------------------------------------------------
+
+
+_PER_LABEL_COLS = "grid-template-columns:1.6fr 0.7fr 0.9fr 1.2fr 1.2fr 0.6fr;"
 
 
 def render_per_label_table(rollouts: list[ScoredRollout]) -> str:
@@ -665,30 +658,24 @@ def render_per_label_table(rollouts: list[ScoredRollout]) -> str:
     labeled = to_labeled_rollouts(rollouts)
     metrics = compute_label_metrics(labeled)
 
-    # Pre-compute predicted-as counts (= tp + fp for each label).
     rows: list[str] = [
-        "<div style='display:grid;grid-template-columns:1.6fr 0.7fr 0.9fr 1.2fr 1.2fr 0.6fr;"
-        "gap:8px;padding:8px 12px;color:#94a3b8;font-size:10px;font-weight:700;"
-        "text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid #334155;'>"
+        f"<div class='pg-table__row pg-table__row--head' style='{_PER_LABEL_COLS}'>"
         "<div>Label</div><div>Support</div><div>Predicted as</div>"
         "<div>Precision</div><div>Recall</div><div>F1</div>"
         "</div>"
     ]
     if not metrics.per_label:
         rows.append(
-            "<div style='padding:14px;color:#94a3b8;font-style:italic;text-align:center;'>"
+            "<div class='pg-empty pg-empty--small'>"
             "(no labels with judged-vs-expected pairs yet)</div>"
         )
     for stats in metrics.per_label:
         rows.append(_per_label_row(stats))
 
     return (
-        "<div style='padding:14px;background:#0f172a;border:1px solid #1e293b;"
-        "border-radius:10px;margin-bottom:18px;'>"
-        "<div style='font-size:11px;font-weight:800;color:#fb923c;text-transform:uppercase;"
-        "letter-spacing:2px;margin-bottom:10px;'>Pass-2 — per-label breakdown</div>"
-        + "".join(rows)
-        + "</div>"
+        "<div class='pg-table'>"
+        f"<div class='pg-table__eyebrow' style='color:{theme.JUDGE};'>"
+        "Pass-2 — per-label breakdown</div>" + "".join(rows) + "</div>"
     )
 
 
@@ -703,34 +690,22 @@ def _per_label_row(stats: LabelStats) -> str:
     f1 = f"{stats.f1:.2f}"
     small = support > 0 and support < 3
 
-    text_color = "#94a3b8" if small else "#cbd5e1"
-    label_color = "#94a3b8" if small else "#f1f5f9"
+    label_color = theme.INK_4 if small else theme.INK_1
+    cell_color = theme.INK_4 if small else theme.INK_2
 
-    chip = (
-        "<span style='margin-left:6px;font-size:9px;color:#94a3b8;background:#334155;"
-        "padding:1px 5px;border-radius:6px;text-transform:none;letter-spacing:0;'>"
-        "small sample</span>"
-        if small
-        else ""
-    )
-
-    cell = (
-        f"font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;"
-        f"font-size:12px;color:{text_color};"
-    )
+    chip = "<span class='pg-chip__small'>small sample</span>" if small else ""
+    cell_style = f"color:{cell_color};"
     return (
-        "<div style='display:grid;grid-template-columns:1.6fr 0.7fr 0.9fr 1.2fr 1.2fr 0.6fr;"
-        "gap:8px;padding:8px 12px;align-items:baseline;"
-        "border-bottom:1px solid #1e293b;'>"
-        f"<div style='font-family:ui-monospace,monospace;font-size:13px;color:{label_color};"
-        f"font-weight:600;'>{label_str}{chip}</div>"
-        f"<div style='{cell}'>{support}</div>"
-        f"<div style='{cell}'>{predicted_as}</div>"
-        f"<div style='{cell}'>{prec_frac}"
-        f"<span style='margin-left:6px;color:#94a3b8;'>{prec_pct}</span></div>"
-        f"<div style='{cell}'>{rec_frac}"
-        f"<span style='margin-left:6px;color:#94a3b8;'>{rec_pct}</span></div>"
-        f"<div style='{cell};color:{label_color};'>{f1}</div>"
+        f"<div class='pg-table__row' style='{_PER_LABEL_COLS}'>"
+        f"<div class='pg-table__cell-mono' style='font-size:13px;color:{label_color};"
+        f"font-weight:500;'>{label_str}{chip}</div>"
+        f"<div class='pg-table__cell-mono' style='{cell_style}'>{support}</div>"
+        f"<div class='pg-table__cell-mono' style='{cell_style}'>{predicted_as}</div>"
+        f"<div class='pg-table__cell-mono' style='{cell_style}'>{prec_frac}"
+        f"<span style='margin-left:6px;color:{theme.INK_4};'>{prec_pct}</span></div>"
+        f"<div class='pg-table__cell-mono' style='{cell_style}'>{rec_frac}"
+        f"<span style='margin-left:6px;color:{theme.INK_4};'>{rec_pct}</span></div>"
+        f"<div class='pg-table__cell-mono' style='color:{label_color};'>{f1}</div>"
         "</div>"
     )
 
@@ -792,6 +767,9 @@ def filter_rollouts(rollouts: list[ScoredRollout], f: DrillFilter) -> list[Score
     return out
 
 
+_DRILL_COLS = "grid-template-columns:160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr;"
+
+
 def render_drill_down(
     rollouts: list[ScoredRollout],
     f: DrillFilter,
@@ -799,7 +777,7 @@ def render_drill_down(
 ) -> str:
     if not f.is_active:
         return (
-            "<div style='padding:24px;text-align:center;color:#94a3b8;font-style:italic;'>"
+            "<div class='pg-empty'>"
             "Click a confusion-matrix cell or a label row to inspect the rollouts behind it."
             "</div>"
         )
@@ -807,25 +785,20 @@ def render_drill_down(
     matches = filter_rollouts(rollouts, f)
     if not matches:
         return (
-            "<div style='padding:18px;color:#94a3b8;font-style:italic;'>"
+            "<div class='pg-empty pg-empty--small'>"
             "Filter active but no rollouts match. Try Clear filter."
             "</div>"
         )
 
     rows: list[str] = [
-        "<div style='display:grid;grid-template-columns:160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr;"
-        "gap:10px;padding:8px 10px;color:#94a3b8;font-size:10px;font-weight:700;"
-        "text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid #334155;'>"
+        f"<div class='pg-table__row pg-table__row--head' style='{_DRILL_COLS}'>"
         "<div>Keyframe</div><div>Rollout</div><div>Expected → Judged</div>"
         "<div>Policy</div><div>Match</div><div>Pass-2 description</div>"
         "</div>"
     ]
     for r in matches:
         rows.append(_drill_row(r, keyframes))
-    return (
-        "<div style='padding:14px;background:#0f172a;border:1px solid #1e293b;"
-        "border-radius:10px;'>" + "".join(rows) + "</div>"
-    )
+    return "<div class='pg-table'>" + "".join(rows) + "</div>"
 
 
 def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
@@ -838,53 +811,35 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
         judged = "(pending)"
 
     match = expected == judged
-    badge_color = "#15803d" if match else "#9a3412"
+    badge_class = "pg-match-badge--ok" if match else "pg-match-badge--err"
     badge_text = "match" if match else "mismatch"
 
     kf = keyframes.get(r.rollout_id)
     if kf is not None:
-        # Wrap the <img> in a position:relative container so the paperclip
-        # overlays sit on top of the thumbnail.
         overlays = copy_button(kf, kind="png", anchor="top-left")
         if r.video_path_host:
             overlays += copy_button(r.video_path_host, kind="mp4", anchor="top-right")
-        img_html = (
-            "<div style='position:relative;width:140px;'>"
-            f"<img src='/gradio_api/file={kf}' style='width:140px;height:auto;display:block;"
-            "border-radius:4px;border:1px solid #334155;'/>"
-            f"{overlays}"
-            "</div>"
-        )
+        img_html = f"<div class='pg-drill-thumb'><img src='/gradio_api/file={kf}'/>{overlays}</div>"
     else:
-        img_html = (
-            "<div style='width:140px;height:80px;background:#1e293b;border-radius:4px;"
-            "color:#475569;font-size:10px;display:flex;align-items:center;"
-            "justify-content:center;'>no keyframe</div>"
-        )
+        img_html = "<div class='pg-drill-thumb pg-drill-thumb--empty'>no keyframe</div>"
 
     mp4_link = (
-        f"<a href='/gradio_api/file={r.video_path_host}' target='_blank' style='color:#60a5fa;"
-        f"text-decoration:none;'>{r.rollout_id}</a>"
+        f"<a class='pg-drill-link' href='/gradio_api/file={r.video_path_host}' target='_blank'>"
+        f"{r.rollout_id}</a>"
         if r.video_path_host
-        else r.rollout_id
+        else f"<span class='pg-drill-link'>{r.rollout_id}</span>"
     )
 
     desc = (r.pass2_description or "—")[:160]
 
     return (
-        "<div style='display:grid;grid-template-columns:160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr;"
-        "gap:10px;padding:10px;align-items:start;border-bottom:1px solid #1e293b;'>"
+        f"<div class='pg-table__row' style='{_DRILL_COLS}align-items:start;padding:12px 10px;'>"
         f"<div>{img_html}</div>"
-        f"<div style='font-family:ui-monospace,monospace;font-size:12px;color:#cbd5e1;'>"
-        f"{mp4_link}</div>"
-        f"<div style='font-family:ui-monospace,monospace;font-size:11px;color:#cbd5e1;'>"
-        f"{expected} → {judged}</div>"
-        f"<div style='font-family:ui-monospace,monospace;font-size:11px;color:#94a3b8;'>"
-        f"{r.policy_kind}</div>"
-        f"<div><span style='display:inline-block;padding:2px 8px;border-radius:10px;"
-        f"background:{badge_color}33;color:#f1f5f9;font-size:10px;font-weight:700;"
-        f"text-transform:uppercase;letter-spacing:1px;'>{badge_text}</span></div>"
-        f"<div style='font-size:12px;color:#cbd5e1;line-height:1.4;'>{desc}</div>"
+        f"<div class='pg-table__cell-mono'>{mp4_link}</div>"
+        f"<div class='pg-table__cell-mono'>{expected} → {judged}</div>"
+        f"<div class='pg-table__cell-mono pg-table__cell-muted'>{r.policy_kind}</div>"
+        f"<div><span class='pg-match-badge {badge_class}'>{badge_text}</span></div>"
+        f"<div style='font-size:12px;color:{theme.INK_2};line-height:1.45;'>{desc}</div>"
         "</div>"
     )
 

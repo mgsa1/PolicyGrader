@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Judge calibration — Embodied Eval Orchestrator</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif; }
+  .app { max-width: 1400px; margin: 0 auto; padding: 18px 20px 60px; }
+  .tabnav { display: flex; gap: 0; border-bottom: 1px solid #e2e8f0; margin: 16px 0 20px; }
+  .tabnav a { padding: 10px 18px; font-size: 14px; color: #64748b; text-decoration: none; border-bottom: 2px solid transparent; }
+  .tabnav a.active { color: #0f172a; border-bottom-color: #0f172a; font-weight: 600; }
+  .tabnav a:hover { color: #0f172a; }
+  code { background: none; font-family: ui-monospace, monospace; font-size: 12px; }
+
+  /* ---- Banner ---- */
+  .banner { padding: 18px 24px; background: #0f172a; color: #f1f5f9; border-radius: 10px; }
+  .banner-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #1e293b; }
+  .banner-label { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.5px; }
+  .phase-pill { display: inline-block; padding: 4px 10px; border-radius: 14px; background: #fb923c22; color: #fb923c; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .metric-header { display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline; padding: 10px 0 6px 0; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  .metric-header .baseline { opacity: 0.75; }
+  .metric-row { display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline; padding: 8px 0; border-top: 1px solid #1e293b; }
+  .metric-row .lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; }
+  .metric-row .ours { font-size: 24px; font-weight: 600; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .metric-row .base { font-size: 24px; font-weight: 600; color: #cbd5e1; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .savings { margin-top: 10px; padding: 10px 14px; background: #15803d22; border: 1px solid #15803d44; border-radius: 8px; display: flex; justify-content: space-around; font-size: 14px; }
+  .savings b { color: #4ade80; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .savings .meta { color: #94a3b8; font-size: 12px; }
+  .footnote { margin-top: 8px; font-size: 11px; color: #64748b; text-align: center; }
+  .cal { color: #f59e0b; } .dep { color: #38bdf8; }
+
+  /* ---- Tab content ---- */
+  .tab-header {
+    padding: 14px 18px;
+    background: #0f172a;
+    border: 1px solid #f59e0b55;
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  .tab-header .eyebrow { font-size: 10px; color: #f59e0b; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
+  .tab-header .body { color: #e2e8f0; font-size: 14px; line-height: 1.55; }
+
+  /* Cohort pills */
+  .cohort-strip { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .cohort-pill { padding: 10px 16px; background: #1e293b; border-radius: 24px; display: flex; align-items: baseline; gap: 8px; border-left: 3px solid; }
+  .cohort-pill .key { font-size: 10px; text-transform: uppercase; letter-spacing: 1.4px; font-weight: 700; }
+  .cohort-pill .n { font-size: 20px; font-weight: 700; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .cohort-pill.cal { border-left-color: #f59e0b; }
+  .cohort-pill.cal .key { color: #f59e0b; }
+  .cohort-pill.dep { border-left-color: #38bdf8; }
+  .cohort-pill.dep .key { color: #38bdf8; }
+
+  .caption { font-size: 12px; color: #64748b; margin-bottom: 18px; line-height: 1.5; }
+
+  /* Binary panel */
+  .panel { padding: 18px; background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; border-radius: 10px; margin-bottom: 18px; }
+  .panel h4 { font-size: 11px; font-weight: 800; color: #c084fc; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 12px 0; }
+  .panel.pass2 h4 { color: #fb923c; }
+  .binary-body { display: flex; gap: 32px; align-items: flex-start; }
+  .confusion-2x2 { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px; width: 280px; }
+  .conf-label { color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; text-align: center; padding: 6px; }
+  .conf-label.side { writing-mode: sideways-lr; }
+  .conf-cell { color: #f1f5f9; padding: 18px; text-align: center; font-size: 22px; font-weight: 700; border-radius: 6px; font-variant-numeric: tabular-nums; border: 1px solid #334155; }
+  .conf-cell.correct-dim { background: rgba(16,185,129,0.25); }
+  .conf-cell.correct-strong { background: rgba(16,185,129,0.85); }
+  .conf-cell.wrong-dim { background: rgba(239,68,68,0.15); }
+  .conf-cell.wrong-mid { background: rgba(239,68,68,0.35); }
+
+  .stats-col { flex: 1; }
+  .stat-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid #1e293b; }
+  .stat-row .lbl { width: 88px; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  .stat-row .frac { font-size: 14px; color: #cbd5e1; font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
+  .stat-row .pct { font-size: 18px; font-weight: 700; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .stat-row .ci { color: #64748b; font-size: 11px; margin-left: 6px; }
+  .panel-caption { font-size: 11px; color: #64748b; margin-top: 10px; }
+
+  /* Heatmap */
+  .heatmap { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 20px 30px 40px; margin-bottom: 18px; height: 460px; position: relative; }
+  .heatmap-axes { position: absolute; inset: 60px 90px 40px 140px; }
+  .heatmap-title-x { position: absolute; top: 28px; left: 140px; right: 60px; text-align: center; font-size: 12px; color: #94a3b8; }
+  .heatmap-title-y { position: absolute; left: 14px; top: 50%; transform: translateY(-50%) rotate(-90deg); font-size: 12px; color: #94a3b8; transform-origin: center; }
+  .hm-grid { display: grid; }
+  .hm-cell { border: 1px solid #1e293b; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .hm-ylabel, .hm-xlabel { font-size: 11px; color: #cbd5e1; padding: 4px 6px; }
+  .hm-ylabel { text-align: right; font-family: ui-monospace, monospace; }
+  .hm-xlabel { text-align: center; transform: rotate(-30deg); transform-origin: center; font-family: ui-monospace, monospace; }
+  .rule-md { color: #475569; font-size: 12px; margin: 0 0 10px 0; font-style: italic; }
+  .rule-md b { color: #334155; font-style: normal; }
+
+  /* Per-label table */
+  .per-label { padding: 14px; background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; margin-bottom: 18px; color: #f1f5f9; }
+  .per-label h4 { font-size: 11px; font-weight: 800; color: #fb923c; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 10px 0; }
+  .tbl-head { display: grid; grid-template-columns: 1.6fr 0.7fr 0.9fr 1.2fr 1.2fr 0.6fr; gap: 8px; padding: 8px 12px; color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; border-bottom: 1px solid #334155; }
+  .tbl-row { display: grid; grid-template-columns: 1.6fr 0.7fr 0.9fr 1.2fr 1.2fr 0.6fr; gap: 8px; padding: 8px 12px; align-items: baseline; border-bottom: 1px solid #1e293b; }
+  .tbl-row .label-col { font-family: ui-monospace, monospace; font-size: 13px; color: #f1f5f9; font-weight: 600; }
+  .tbl-row .c { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; font-size: 12px; color: #cbd5e1; }
+  .tbl-row .pct { margin-left: 6px; color: #94a3b8; }
+  .small-chip { margin-left: 6px; font-size: 9px; color: #94a3b8; background: #334155; padding: 1px 5px; border-radius: 6px; text-transform: none; letter-spacing: 0; }
+  .muted { color: #94a3b8 !important; }
+
+  /* Drill-down */
+  .drill-head { margin: 22px 0 14px; }
+  .drill-head h3 { font-size: 16px; font-weight: 600; margin: 0 0 6px; }
+  .drill-head p { font-size: 13px; color: #64748b; margin: 0; }
+  .drill-row { display: flex; gap: 14px; margin-bottom: 12px; }
+  .drop { flex: 1; }
+  .drop label { display: block; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 4px; }
+  .drop select, .drop .select-like { width: 100%; padding: 8px 10px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; color: #0f172a; }
+  .filter-pill { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: #1e293b; color: #f1f5f9; border-radius: 6px; margin-bottom: 10px; }
+  .filter-pill .key { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  .filter-pill code { color: #fbbf24; font-size: 12px; }
+
+  .drill-table { padding: 14px; background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; color: #cbd5e1; }
+  .drill-table-head { display: grid; grid-template-columns: 160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr; gap: 10px; padding: 8px 10px; color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; border-bottom: 1px solid #334155; }
+  .drill-table-row { display: grid; grid-template-columns: 160px 1.4fr 1.4fr 0.9fr 0.9fr 2fr; gap: 10px; padding: 10px; align-items: start; border-bottom: 1px solid #1e293b; }
+  .kf-thumb { width: 140px; aspect-ratio: 7 / 4; border-radius: 4px; border: 1px solid #334155; position: relative; overflow: hidden; background: #1a2540; }
+  .kf-thumb svg { width: 100%; height: 100%; display: block; }
+  .clip { position: absolute; background: rgba(15,23,42,0.85); color: #f1f5f9; border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 13px; line-height: 1; }
+  .clip.tl { top: 6px; left: 6px; }
+  .clip.tr { top: 6px; right: 6px; }
+  .drill-table-row .rid-link { font-family: ui-monospace, monospace; font-size: 12px; color: #60a5fa; }
+  .drill-table-row .mono-sm { font-family: ui-monospace, monospace; font-size: 11px; color: #cbd5e1; }
+  .drill-table-row .pol { color: #94a3b8; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; color: #f1f5f9; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .badge.match { background: #15803d55; }
+  .badge.mis { background: #9a341255; }
+  .desc { font-size: 12px; color: #cbd5e1; line-height: 1.4; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Banner -->
+  <div class="banner">
+    <div class="banner-head">
+      <div class="banner-label">Live evaluation</div>
+      <span class="phase-pill">Phase 3: Judge</span>
+    </div>
+    <div class="metric-header">
+      <div></div><div>This pipeline</div><div class="baseline">Manual review baseline</div>
+    </div>
+    <div class="metric-row"><div class="lbl">Cost</div><div class="ours">$2.87</div><div class="base">$120.00</div></div>
+    <div class="metric-row"><div class="lbl">Wall time</div><div class="ours">11:32</div><div class="base">48:00</div></div>
+    <div class="metric-row">
+      <div class="lbl">Scenarios</div>
+      <div class="ours">32 <span style="font-size:13px;font-weight:500;color:#94a3b8;"><span class="cal">18 cal</span> + <span class="dep">14 dep</span></span></div>
+      <div class="base">32</div>
+    </div>
+    <div class="savings">
+      <div><span class="meta">Cost saved:</span> <b>$117.13</b> <span class="meta">(98%)</span></div>
+      <div><span class="meta">Time saved:</span> <b>36:28</b> <span class="meta">(76%)</span></div>
+    </div>
+    <div class="footnote">Cost baseline: $75/hr × 3 min/rollout (labor) · Time baseline: sum of video durations + 60 s/rollout (sequential review)</div>
+  </div>
+
+  <nav class="tabnav">
+    <a href="live.html">Live</a>
+    <a href="judge-calibration.html" class="active">Judge calibration</a>
+    <a href="deployment-findings.html">Deployment findings</a>
+  </nav>
+
+  <!-- Purpose banner -->
+  <div class="tab-header">
+    <div class="eyebrow">JUDGE CALIBRATION</div>
+    <div class="body">This tab measures the <b>judge</b>, not the policy. The numbers here come from rollouts where we injected a known failure, so we know the correct label. Policy findings live in the <b>Deployment findings</b> tab.</div>
+  </div>
+
+  <!-- Cohort strip -->
+  <div class="cohort-strip">
+    <div class="cohort-pill cal"><span class="key">Calibration rollouts</span><span class="n">18</span></div>
+    <div class="cohort-pill cal"><span class="key">In this tab</span><span class="n">17</span></div>
+    <div class="cohort-pill dep"><span class="key">Excluded (deployment, no GT)</span><span class="n">14</span></div>
+  </div>
+
+  <div class="caption">
+    <b>Pass-1</b>: binary pass/fail vs <code>env._check_success()</code>. <b>Pass-2</b>: taxonomy label vs the failure-injection parameter used in the scripted policy. Pretrained rollouts enter Pass-1 only.
+  </div>
+
+  <!-- Binary panel -->
+  <div class="panel">
+    <h4>Pass-1 — binary detector</h4>
+    <div class="binary-body">
+      <div class="confusion-2x2">
+        <div></div>
+        <div class="conf-label">Judged: pass</div>
+        <div class="conf-label">Judged: fail</div>
+        <div class="conf-label side">Actual: pass</div>
+        <div class="conf-cell correct-dim">4</div>
+        <div class="conf-cell wrong-dim">1</div>
+        <div class="conf-label side">Actual: fail</div>
+        <div class="conf-cell wrong-mid">2</div>
+        <div class="conf-cell correct-strong">10</div>
+      </div>
+      <div class="stats-col">
+        <div class="stat-row">
+          <div class="lbl">Precision</div>
+          <div class="frac">10/11</div>
+          <div class="pct">90.9%</div>
+          <div class="ci">95% CI [62.3 – 98.4]</div>
+        </div>
+        <div class="stat-row">
+          <div class="lbl">Recall</div>
+          <div class="frac">10/12</div>
+          <div class="pct">83.3%</div>
+          <div class="ci">95% CI [55.2 – 95.3]</div>
+        </div>
+        <div class="stat-row">
+          <div class="lbl">F1</div>
+          <div class="frac">—</div>
+          <div class="pct">0.87</div>
+        </div>
+        <div class="stat-row">
+          <div class="lbl">Accuracy</div>
+          <div class="frac">14/17</div>
+          <div class="pct">82.4%</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel-caption">Ground truth: <code>env._check_success()</code>. All rollouts participate — pretrained included.</div>
+  </div>
+
+  <div class="rule-md"><b>Pass-2 — multiclass confusion.</b> Rows=expected, cols=judged. Diagonal (green) = matches, off-diagonal (orange) = mis-labels.</div>
+
+  <!-- Heatmap -->
+  <div class="heatmap">
+    <div style="position:absolute;top:20px;left:140px;right:60px;text-align:center;color:#94a3b8;font-size:12px;">Judged label</div>
+    <div style="position:absolute;left:14px;top:240px;transform:rotate(-90deg);color:#94a3b8;font-size:12px;transform-origin:left top;">Expected label</div>
+    <!-- column headers -->
+    <div style="position:absolute;top:46px;left:140px;display:grid;grid-template-columns:repeat(5,1fr);gap:0;width:calc(100% - 200px);">
+      <div class="hm-xlabel">none</div>
+      <div class="hm-xlabel">approach_miss</div>
+      <div class="hm-xlabel">knock_off_table</div>
+      <div class="hm-xlabel">premature_release</div>
+      <div class="hm-xlabel">slip_during_lift</div>
+    </div>
+    <!-- grid 5x5 -->
+    <div style="position:absolute;top:90px;left:0;right:60px;bottom:50px;display:grid;grid-template-columns:140px repeat(5,1fr);grid-template-rows:repeat(5,1fr);gap:2px;">
+      <div class="hm-ylabel" style="align-self:center;">none</div>
+      <div class="hm-cell" style="background:#15803d;">4</div>
+      <div class="hm-cell" style="background:#9a3412aa;">1</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+
+      <div class="hm-ylabel" style="align-self:center;">approach_miss</div>
+      <div class="hm-cell" style="background:#9a341288;">1</div>
+      <div class="hm-cell" style="background:#15803d;">5</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#9a341255;">1</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+
+      <div class="hm-ylabel" style="align-self:center;">knock_off_table</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#15803daa;">3</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+
+      <div class="hm-ylabel" style="align-self:center;">premature_release</div>
+      <div class="hm-cell" style="background:#9a341255;">1</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#15803daa;">2</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+
+      <div class="hm-ylabel" style="align-self:center;">slip_during_lift</div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#1e293b;"></div>
+      <div class="hm-cell" style="background:#15803daa;">3</div>
+    </div>
+    <!-- row totals -->
+    <div style="position:absolute;top:90px;right:24px;bottom:50px;display:grid;grid-template-rows:repeat(5,1fr);align-items:center;color:#94a3b8;font-size:11px;font-weight:700;">
+      <div>5</div><div>7</div><div>3</div><div>3</div><div>3</div>
+    </div>
+  </div>
+
+  <!-- Per-label table -->
+  <div class="per-label">
+    <h4>Pass-2 — per-label breakdown</h4>
+    <div class="tbl-head">
+      <div>Label</div><div>Support</div><div>Predicted as</div><div>Precision</div><div>Recall</div><div>F1</div>
+    </div>
+    <div class="tbl-row">
+      <div class="label-col">none</div>
+      <div class="c">5</div><div class="c">6</div>
+      <div class="c">4/6<span class="pct">66.7%</span></div>
+      <div class="c">4/5<span class="pct">80.0%</span></div>
+      <div class="c">0.73</div>
+    </div>
+    <div class="tbl-row">
+      <div class="label-col">approach_miss</div>
+      <div class="c">7</div><div class="c">6</div>
+      <div class="c">5/6<span class="pct">83.3%</span></div>
+      <div class="c">5/7<span class="pct">71.4%</span></div>
+      <div class="c">0.77</div>
+    </div>
+    <div class="tbl-row">
+      <div class="label-col muted">knock_object_off_table<span class="small-chip">small sample</span></div>
+      <div class="c muted">3</div><div class="c muted">3</div>
+      <div class="c muted">3/3<span class="pct">100.0%</span></div>
+      <div class="c muted">3/3<span class="pct">100.0%</span></div>
+      <div class="c muted">1.00</div>
+    </div>
+    <div class="tbl-row">
+      <div class="label-col muted">premature_release<span class="small-chip">small sample</span></div>
+      <div class="c muted">3</div><div class="c muted">3</div>
+      <div class="c muted">2/3<span class="pct">66.7%</span></div>
+      <div class="c muted">2/3<span class="pct">66.7%</span></div>
+      <div class="c muted">0.67</div>
+    </div>
+    <div class="tbl-row">
+      <div class="label-col muted">slip_during_lift<span class="small-chip">small sample</span></div>
+      <div class="c muted">3</div><div class="c muted">3</div>
+      <div class="c muted">3/3<span class="pct">100.0%</span></div>
+      <div class="c muted">3/3<span class="pct">100.0%</span></div>
+      <div class="c muted">1.00</div>
+    </div>
+  </div>
+
+  <!-- Drill-down section -->
+  <div class="drill-head">
+    <h3>Drill into calibration rollouts</h3>
+    <p>Pick an expected/judged pair (or either alone) to see the calibration rollouts behind the number. Leave both blank to clear.</p>
+  </div>
+  <div class="drill-row">
+    <div class="drop">
+      <label>Expected label</label>
+      <div class="select-like">approach_miss ▾</div>
+    </div>
+    <div class="drop">
+      <label>Judged label</label>
+      <div class="select-like">(any) ▾</div>
+    </div>
+  </div>
+  <div class="filter-pill">
+    <span class="key">Filter active:</span>
+    <code>label=approach_miss (expected OR judged)</code>
+  </div>
+
+  <div class="drill-table">
+    <div class="drill-table-head">
+      <div>Keyframe</div><div>Rollout</div><div>Expected → Judged</div><div>Policy</div><div>Match</div><div>Pass-2 description</div>
+    </div>
+    <div class="drill-table-row">
+      <div>
+        <div class="kf-thumb">
+          <svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="55" y="54" width="40" height="16" fill="#475569"/><circle cx="120" cy="54" r="6" fill="#fbbf24"/><circle cx="120" cy="54" r="14" fill="none" stroke="#ef4444" stroke-width="2"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+        </div>
+      </div>
+      <div class="rid-link">rollout_0001</div>
+      <div class="mono-sm">approach_miss → approach_miss</div>
+      <div class="mono-sm pol">scripted</div>
+      <div><span class="badge match">match</span></div>
+      <div class="desc">Gripper descended ~2 cm off-center of the nut at frame 7; claw closed on empty air.</div>
+    </div>
+    <div class="drill-table-row">
+      <div>
+        <div class="kf-thumb">
+          <svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="50" y="54" width="40" height="16" fill="#475569"/><circle cx="70" cy="50" r="6" fill="#fbbf24"/><circle cx="70" cy="50" r="14" fill="none" stroke="#ef4444" stroke-width="2"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+        </div>
+      </div>
+      <div class="rid-link">rollout_0004</div>
+      <div class="mono-sm">approach_miss → approach_miss</div>
+      <div class="mono-sm pol">scripted</div>
+      <div><span class="badge match">match</span></div>
+      <div class="desc">Arm approached at a 15° angle offset, gripper landed to the left of the nut.</div>
+    </div>
+    <div class="drill-table-row">
+      <div>
+        <div class="kf-thumb">
+          <svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="60" y="54" width="40" height="16" fill="#475569"/><circle cx="78" cy="50" r="6" fill="#fbbf24"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+        </div>
+      </div>
+      <div class="rid-link">rollout_0011</div>
+      <div class="mono-sm">approach_miss → none</div>
+      <div class="mono-sm pol">scripted</div>
+      <div><span class="badge mis">mismatch</span></div>
+      <div class="desc">Judge read the rollout as success — near-miss on grasp but robot recovered and placed nut.</div>
+    </div>
+    <div class="drill-table-row">
+      <div>
+        <div class="kf-thumb">
+          <svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="58" y="54" width="42" height="16" fill="#475569"/><circle cx="82" cy="48" r="6" fill="#fbbf24"/><circle cx="82" cy="48" r="14" fill="none" stroke="#ef4444" stroke-width="2"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+        </div>
+      </div>
+      <div class="rid-link">rollout_0014</div>
+      <div class="mono-sm">none → approach_miss</div>
+      <div class="mono-sm pol">pretrained</div>
+      <div><span class="badge mis">mismatch</span></div>
+      <div class="desc">Clean pretrained rollout; judge over-called a tiny wobble near the nut as a missed approach.</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Live — Embodied Eval Orchestrator</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif; }
+  .app { max-width: 1400px; margin: 0 auto; padding: 18px 20px 60px; }
+  .tabnav { display: flex; gap: 0; border-bottom: 1px solid #e2e8f0; margin: 16px 0 20px; }
+  .tabnav a { padding: 10px 18px; font-size: 14px; color: #64748b; text-decoration: none; border-bottom: 2px solid transparent; }
+  .tabnav a.active { color: #0f172a; border-bottom-color: #0f172a; font-weight: 600; }
+  .tabnav a:hover { color: #0f172a; }
+  h3 { font-size: 14px; font-weight: 600; margin: 0 0 10px 0; color: #0f172a; }
+  .row { display: grid; grid-template-columns: 3fr 3fr 2fr; gap: 18px; }
+  @media (max-width: 1100px) { .row { grid-template-columns: 1fr; } }
+  .accordion { padding: 10px 14px; border: 1px solid #e2e8f0; background: #fff; border-radius: 8px; font-size: 13px; color: #475569; margin-bottom: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .accordion::before { content: "▸"; color: #94a3b8; }
+  code { background: none; font-family: ui-monospace, monospace; font-size: 12px; }
+  /* ---- Banner ---- */
+  .banner {
+    padding: 18px 24px;
+    background: #0f172a;
+    color: #f1f5f9;
+    border-radius: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  }
+  .banner-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 12px; border-bottom: 1px solid #1e293b;
+  }
+  .banner-label { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.5px; }
+  .phase-pill {
+    display: inline-block; padding: 4px 10px; border-radius: 14px;
+    background: #fb923c22; color: #fb923c;
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .metric-header {
+    display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline;
+    padding: 10px 0 6px 0; color: #94a3b8; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600;
+  }
+  .metric-header .baseline { opacity: 0.75; }
+  .metric-row {
+    display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline;
+    padding: 8px 0; border-top: 1px solid #1e293b;
+  }
+  .metric-row .lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; }
+  .metric-row .ours { font-size: 24px; font-weight: 600; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .metric-row .base { font-size: 24px; font-weight: 600; color: #cbd5e1; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .savings {
+    margin-top: 10px; padding: 10px 14px; background: #15803d22;
+    border: 1px solid #15803d44; border-radius: 8px;
+    display: flex; justify-content: space-around; font-size: 14px;
+  }
+  .savings b { color: #4ade80; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .savings .meta { color: #94a3b8; font-size: 12px; }
+  .footnote { margin-top: 8px; font-size: 11px; color: #64748b; text-align: center; }
+  .cal { color: #f59e0b; } .dep { color: #38bdf8; }
+
+  /* ---- Agent activity column ---- */
+  .section-header { margin: 28px 0 12px; }
+  .section-eyebrow { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .section-eyebrow .txt { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; white-space: nowrap; }
+  .section-eyebrow .rule { flex: 1; height: 1px; }
+  .section-title { color: #0f172a; font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+  .section-sub { color: #64748b; font-size: 12px; line-height: 1.5; }
+  .writes { margin-top: 6px; font-size: 11px; color: #64748b; }
+  .writes .key { text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  .chat-wrap { max-height: 620px; overflow-y: auto; padding: 4px; }
+  .msg { margin: 6px 0; padding: 10px 12px; background: #1e293b; color: #f1f5f9; border-left: 3px solid; border-radius: 4px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+  .thinking { margin: 4px 0; padding: 8px 12px; background: #0f172a; color: #94a3b8; border-left: 2px dashed; border-radius: 4px; font-style: italic; font-size: 12px; line-height: 1.45; }
+  .tool-use { margin: 6px 0; padding: 7px 12px; background: #1e293b; color: #fbbf24; border-left: 3px solid; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .tool-use .rid { color: inherit; font-size: 11px; margin-left: 8px; }
+  .tool-use .rid code { padding: 1px 5px; border-radius: 3px; }
+  .tool-result { margin: 2px 0 6px; padding: 6px 12px; background: #1e293b; color: #4ade80; border-left: 3px solid; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 11px; opacity: 0.85; }
+
+  /* phase colors */
+  .planner { --c: #60a5fa; }
+  .rollout { --c: #c084fc; }
+  .judge { --c: #fb923c; }
+  .report { --c: #4ade80; }
+  .phase-txt { color: var(--c); }
+  .phase-rule { background: linear-gradient(90deg, var(--c) 0%, transparent 100%); opacity: 0.4; }
+
+  /* ---- Current rollout column ---- */
+  .video-box { width: 100%; height: 400px; background: #0b1020; border-radius: 6px; border: 1px solid #1e293b; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .video-box svg { width: 100%; height: 100%; }
+  .video-overlay { position: absolute; bottom: 12px; left: 12px; font-family: ui-monospace, monospace; font-size: 11px; color: #f1f5f9; background: rgba(15,23,42,0.8); padding: 4px 8px; border-radius: 4px; }
+  .mp4-path { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11px; color: #64748b; }
+  .clip { background: rgba(15,23,42,0.85); color: #f1f5f9; border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 13px; line-height: 1; }
+  .gallery { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .thumb { aspect-ratio: 16 / 10; border-radius: 4px; background: #0f172a; position: relative; border: 1px solid #1e293b; overflow: hidden; }
+  .thumb svg { width: 100%; height: 100%; }
+  .paths-panel { margin-top: 10px; max-height: 220px; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+  .path-row { display: flex; align-items: center; gap: 6px; }
+  .path-name { font-family: ui-monospace, monospace; font-size: 10px; color: #64748b; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- /memories tree ---- */
+  .tree { max-height: 640px; overflow-y: auto; padding: 10px 4px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; }
+  .file-row { padding: 3px 8px; font-family: ui-monospace, monospace; font-size: 12px; color: #334155; display: flex; gap: 8px; }
+  .file-row .size { opacity: 0.5; min-width: 60px; text-align: right; }
+  .file-row.dir { color: #60a5fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================ Banner ================ -->
+  <div class="banner">
+    <div class="banner-head">
+      <div class="banner-label">Live evaluation</div>
+      <span class="phase-pill">Phase 3: Judge</span>
+    </div>
+    <div class="metric-header">
+      <div></div>
+      <div>This pipeline</div>
+      <div class="baseline">Manual review baseline</div>
+    </div>
+    <div class="metric-row"><div class="lbl">Cost</div><div class="ours">$2.87</div><div class="base">$120.00</div></div>
+    <div class="metric-row"><div class="lbl">Wall time</div><div class="ours">11:32</div><div class="base">48:00</div></div>
+    <div class="metric-row">
+      <div class="lbl">Scenarios</div>
+      <div class="ours">32 <span style="font-size:13px;font-weight:500;color:#94a3b8;"><span class="cal">18 cal</span> + <span class="dep">14 dep</span></span></div>
+      <div class="base">32</div>
+    </div>
+    <div class="savings">
+      <div><span class="meta">Cost saved:</span> <b>$117.13</b> <span class="meta">(98%)</span></div>
+      <div><span class="meta">Time saved:</span> <b>36:28</b> <span class="meta">(76%)</span></div>
+    </div>
+    <div class="footnote">Cost baseline: $75/hr × 3 min/rollout (labor) · Time baseline: sum of video durations + 60 s/rollout (sequential review)</div>
+  </div>
+
+  <!-- ================ Tab nav ================ -->
+  <nav class="tabnav">
+    <a href="live.html" class="active">Live</a>
+    <a href="judge-calibration.html">Judge calibration</a>
+    <a href="deployment-findings.html">Deployment findings</a>
+  </nav>
+
+  <div class="accordion">What is this tool doing?</div>
+
+  <div class="row">
+    <!-- ============ Agent activity ============ -->
+    <div>
+      <h3>Agent activity</h3>
+      <div class="chat-wrap">
+
+        <!-- phase 1 divider -->
+        <div class="section-header planner">
+          <div class="section-eyebrow">
+            <div class="txt phase-txt">Phase 1: Planner</div>
+            <div class="rule phase-rule"></div>
+          </div>
+          <div class="section-title">Planner</div>
+          <div class="section-sub">Decides which scenarios to run, which failures to inject, and what the success criteria are. No simulation yet — pure design.</div>
+          <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">plan.md</code> · <code class="phase-txt" style="opacity:0.8;font-size:11px;">test_matrix.csv</code></div>
+        </div>
+        <div class="msg planner" style="border-left-color: var(--c);">I'll build a 32-scenario matrix: 18 calibration rollouts (scripted IK picker with injected failures — known ground truth), 14 deployment rollouts (pretrained BC-RNN on NutAssemblySquare). Failure knobs vary over action_noise, angle_offset, premature_close, grip_scale.</div>
+        <div class="thinking planner" style="border-left-color: var(--c);">Considering the trade-off between coverage and judge-trust sample size: a 2/3 calibration mix means the Judge-calibration tab will have enough labeled cells for per-label support &ge; 3 on at least 4 taxonomy categories…</div>
+        <div class="tool-use planner" style="border-left-color: var(--c);">▶ <b>write_file</b>(path=<code style="background:var(--c);opacity:0.22;">/memories/plan.md</code>, bytes=1942)</div>
+        <div class="tool-use planner" style="border-left-color: var(--c);">▶ <b>write_file</b>(path=<code style="background:var(--c);opacity:0.22;">/memories/test_matrix.csv</code>, rows=32)</div>
+
+        <!-- phase 2 -->
+        <div class="section-header rollout">
+          <div class="section-eyebrow">
+            <div class="txt phase-txt">Phase 2: Rollout</div>
+            <div class="rule phase-rule"></div>
+          </div>
+          <div class="section-title">Rollout worker</div>
+          <div class="section-sub">Runs every row of the test matrix in MuJoCo + robosuite. Each scenario produces a short mp4 of the robot attempting the task.</div>
+          <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">rollouts/*.mp4</code></div>
+        </div>
+        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='NutAssemblySquare', policy='scripted', seed=42)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
+        <div class="tool-result rollout" style="border-left-color: var(--c); opacity: 0.85;">◀ rollout → {"rollout_id":"rollout_0001","success":false,"steps":284,"ground_truth_label":"approach_miss"}</div>
+        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='NutAssemblySquare', policy='pretrained', seed=7)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0002</code></span></div>
+        <div class="tool-result rollout" style="border-left-color: var(--c); opacity: 0.85;">◀ rollout → {"rollout_id":"rollout_0002","success":true,"steps":312}</div>
+
+        <!-- phase 3 -->
+        <div class="section-header judge">
+          <div class="section-eyebrow">
+            <div class="txt phase-txt">Phase 3: Judge</div>
+            <div class="rule phase-rule"></div>
+          </div>
+          <div class="section-title">Vision judge</div>
+          <div class="section-sub">Watches every rollout video twice. Pass-1: cheap binary pass/fail. Pass-2 (only on failures): high-res frames, picks a failure label, points at the visual evidence.</div>
+          <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">findings.jsonl</code></div>
+        </div>
+        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>coarse</b>(rollout_id='rollout_0001', n_frames=16)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
+        <div class="tool-result judge" style="border-left-color: var(--c); opacity: 0.85;">◀ coarse → {"verdict":"fail","failure_frame_range":[5,9]}</div>
+        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>fine</b>(rollout_id='rollout_0001', window=[5,9])<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
+        <div class="msg judge" style="border-left-color: var(--c);">I can see the gripper descending ~2 cm off-center of the nut at frame 7 (point: 1284, 908). The claw closes on empty air before the nut is engaged — this is textbook <b>approach_miss</b>.</div>
+        <div class="tool-result judge" style="border-left-color: var(--c); opacity: 0.85;">◀ fine → {"taxonomy_label":"approach_miss","point":[1284,908]}</div>
+        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>coarse</b>(rollout_id='rollout_0003', n_frames=16)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0003</code></span></div>
+
+      </div>
+    </div>
+
+    <!-- ============ Current rollout + gallery ============ -->
+    <div>
+      <h3>Current rollout</h3>
+      <div class="video-box">
+        <svg viewBox="0 0 640 400" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="skyLive" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#1a2540" />
+              <stop offset="100%" stop-color="#0f1626" />
+            </linearGradient>
+          </defs>
+          <rect width="640" height="400" fill="url(#skyLive)" />
+          <!-- table -->
+          <path d="M 40 280 L 600 280 L 620 340 L 20 340 Z" fill="#334155" />
+          <rect x="180" y="220" width="280" height="60" fill="#475569" rx="2" />
+          <!-- robot arm -->
+          <g stroke="#94a3b8" stroke-width="10" fill="none" stroke-linecap="round">
+            <path d="M 540 70 L 480 150 L 380 180 L 320 220" />
+            <circle cx="540" cy="70" r="16" fill="#64748b" />
+          </g>
+          <!-- gripper -->
+          <g transform="translate(320,220)">
+            <rect x="-18" y="-4" width="36" height="8" fill="#cbd5e1" />
+            <rect x="-16" y="4" width="6" height="18" fill="#cbd5e1" />
+            <rect x="10" y="4" width="6" height="18" fill="#cbd5e1" />
+          </g>
+          <!-- square nut (missed, to the right) -->
+          <rect x="340" y="240" width="22" height="22" fill="#fbbf24" stroke="#f59e0b" stroke-width="2" />
+          <circle cx="351" cy="251" r="4" fill="#0f172a" />
+          <!-- pointing annotation -->
+          <circle cx="351" cy="251" r="22" fill="none" stroke="#ef4444" stroke-width="3" />
+          <text x="360" y="236" fill="#ef4444" font-size="11" font-weight="700">approach_miss</text>
+        </svg>
+        <div class="video-overlay">rollout_0001 · frame 142 / 284</div>
+      </div>
+      <div class="mp4-path">
+        <span>Current mp4:</span>
+        <button class="clip" title="Copy current mp4 path">📎</button>
+      </div>
+
+      <h3 style="margin-top: 22px;">All rollouts</h3>
+      <div class="gallery">
+        <!-- mini rollout thumbs -->
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="60" y="56" width="40" height="14" fill="#475569"/><circle cx="110" cy="40" r="10" fill="#ef4444"/></svg></div>
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="58" y="54" width="40" height="16" fill="#475569"/><circle cx="80" cy="52" r="5" fill="#fbbf24"/></svg></div>
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="55" y="54" width="40" height="16" fill="#475569"/><circle cx="74" cy="46" r="5" fill="#fbbf24"/></svg></div>
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="55" y="54" width="40" height="16" fill="#475569"/><circle cx="120" cy="54" r="5" fill="#fbbf24"/><circle cx="120" cy="54" r="14" fill="none" stroke="#ef4444" stroke-width="2"/></svg></div>
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="55" y="52" width="42" height="18" fill="#475569"/><circle cx="78" cy="48" r="5" fill="#fbbf24"/></svg></div>
+        <div class="thumb"><svg viewBox="0 0 160 100"><rect width="160" height="100" fill="#1a2540"/><path d="M 8 70 L 152 70 L 156 88 L 4 88 Z" fill="#334155"/><rect x="50" y="54" width="40" height="16" fill="#475569"/><circle cx="76" cy="60" r="5" fill="#fbbf24"/></svg></div>
+      </div>
+      <div class="paths-panel">
+        <div class="path-row"><span class="path-name">rollout_0001.mp4</span><button class="clip">📎</button></div>
+        <div class="path-row"><span class="path-name">rollout_0002.mp4</span><button class="clip">📎</button></div>
+        <div class="path-row"><span class="path-name">rollout_0003.mp4</span><button class="clip">📎</button></div>
+        <div class="path-row"><span class="path-name">rollout_0004.mp4</span><button class="clip">📎</button></div>
+        <div class="path-row"><span class="path-name">rollout_0005.mp4</span><button class="clip">📎</button></div>
+        <div class="path-row"><span class="path-name">rollout_0006.mp4</span><button class="clip">📎</button></div>
+      </div>
+    </div>
+
+    <!-- ============ /memories tree ============ -->
+    <div>
+      <h3>/memories/ tree</h3>
+      <div class="tree">
+        <div class="file-row"><span class="size">1.9 KB</span><span>plan.md</span></div>
+        <div class="file-row"><span class="size">3.2 KB</span><span>test_matrix.csv</span></div>
+        <div class="file-row"><span class="size">0.8 KB</span><span>taxonomy.md</span></div>
+        <div class="file-row"><span class="size">12.4 KB</span><span>findings.jsonl</span></div>
+        <div class="file-row dir"><span class="size"></span><span>rollouts/</span></div>
+        <div class="file-row"><span class="size">820.1 KB</span><span>rollouts/rollout_0001.mp4</span></div>
+        <div class="file-row"><span class="size">640.2 KB</span><span>rollouts/rollout_0001.json</span></div>
+        <div class="file-row"><span class="size">911.6 KB</span><span>rollouts/rollout_0002.mp4</span></div>
+        <div class="file-row"><span class="size">655.8 KB</span><span>rollouts/rollout_0002.json</span></div>
+        <div class="file-row"><span class="size">790.4 KB</span><span>rollouts/rollout_0003.mp4</span></div>
+        <div class="file-row"><span class="size">642.3 KB</span><span>rollouts/rollout_0003.json</span></div>
+        <div class="file-row dir"><span class="size"></span><span>notes/</span></div>
+        <div class="file-row"><span class="size">0.6 KB</span><span>notes/planner_rationale.md</span></div>
+        <div class="file-row"><span class="size">1.1 KB</span><span>notes/judge_drift_log.md</span></div>
+        <div class="file-row dir"><span class="size"></span><span>keyframes/</span></div>
+        <div class="file-row"><span class="size">88.7 KB</span><span>keyframes/rollout_0001.png</span></div>
+        <div class="file-row"><span class="size">79.3 KB</span><span>keyframes/rollout_0004.png</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

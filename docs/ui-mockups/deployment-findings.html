@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Deployment findings — Embodied Eval Orchestrator</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif; }
+  .app { max-width: 1400px; margin: 0 auto; padding: 18px 20px 60px; }
+  .tabnav { display: flex; gap: 0; border-bottom: 1px solid #e2e8f0; margin: 16px 0 20px; }
+  .tabnav a { padding: 10px 18px; font-size: 14px; color: #64748b; text-decoration: none; border-bottom: 2px solid transparent; }
+  .tabnav a.active { color: #0f172a; border-bottom-color: #0f172a; font-weight: 600; }
+  .tabnav a:hover { color: #0f172a; }
+  code { background: none; font-family: ui-monospace, monospace; font-size: 12px; }
+
+  /* Banner */
+  .banner { padding: 18px 24px; background: #0f172a; color: #f1f5f9; border-radius: 10px; }
+  .banner-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #1e293b; }
+  .banner-label { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.5px; }
+  .phase-pill { display: inline-block; padding: 4px 10px; border-radius: 14px; background: #fb923c22; color: #fb923c; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .metric-header { display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline; padding: 10px 0 6px 0; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  .metric-header .baseline { opacity: 0.75; }
+  .metric-row { display: grid; grid-template-columns: 140px 1fr 1fr; align-items: baseline; padding: 8px 0; border-top: 1px solid #1e293b; }
+  .metric-row .lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; }
+  .metric-row .ours { font-size: 24px; font-weight: 600; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .metric-row .base { font-size: 24px; font-weight: 600; color: #cbd5e1; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .savings { margin-top: 10px; padding: 10px 14px; background: #15803d22; border: 1px solid #15803d44; border-radius: 8px; display: flex; justify-content: space-around; font-size: 14px; }
+  .savings b { color: #4ade80; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .savings .meta { color: #94a3b8; font-size: 12px; }
+  .footnote { margin-top: 8px; font-size: 11px; color: #64748b; text-align: center; }
+  .cal { color: #f59e0b; } .dep { color: #38bdf8; }
+
+  /* Judge trust banner */
+  .trust {
+    padding: 14px 18px; background: #0f172a;
+    border: 1px solid #f59e0b66; border-left: 4px solid #f59e0b;
+    border-radius: 8px; margin-bottom: 14px;
+  }
+  .trust-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .trust-eyebrow { font-size: 10px; color: #f59e0b; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; }
+  .trust-sub { font-size: 11px; color: #94a3b8; }
+  .trust-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; font-size: 13px; color: #cbd5e1; line-height: 1.5; font-family: ui-monospace, monospace; }
+  .trust-key { color: #94a3b8; }
+  .trust-foot { margin-top: 10px; font-size: 12px; color: #cbd5e1; font-style: italic; }
+
+  /* Sub-tabs */
+  .subtabs { display: flex; gap: 0; border-bottom: 1px solid #e2e8f0; margin: 20px 0 16px; }
+  .subtabs a { padding: 8px 14px; font-size: 13px; color: #64748b; text-decoration: none; border-bottom: 2px solid transparent; }
+  .subtabs a.active { color: #0f172a; border-bottom-color: #38bdf8; font-weight: 600; }
+
+  .subtab-desc { color: #475569; font-size: 13px; line-height: 1.55; margin-bottom: 18px; }
+  .subtab-desc b { color: #0f172a; }
+
+  /* Cluster cards */
+  .card {
+    margin: 16px 0; padding: 18px; background: #fff; border: 1px solid #e2e8f0;
+    border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .card-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 12px;
+  }
+  .card-head h3 { margin: 0; font-size: 18px; font-family: ui-monospace, monospace; color: #1e293b; }
+  .card-head .meta { font-size: 14px; color: #475569; }
+  .breakdown { margin-bottom: 14px; }
+  .chip-tax {
+    display: inline-block; padding: 3px 9px; margin: 2px 4px 2px 0;
+    background: #e0e7ff; color: #3730a3; border-radius: 12px; font-size: 12px;
+  }
+  .chip-judge {
+    display: inline-block; padding: 2px 7px; margin-left: 6px;
+    background: #f59e0b22; color: #f59e0b; border-radius: 8px;
+    font-size: 10px; font-weight: 600; font-family: ui-monospace, monospace; letter-spacing: 0.3px;
+  }
+  .chip-judge.uncal { background: #64748b22; color: #64748b; }
+
+  .thumbs { display: flex; flex-wrap: wrap; gap: 0; }
+  .thumb { display: inline-block; margin: 4px; vertical-align: top; width: 180px; }
+  .thumb a { display: block; text-decoration: none; color: inherit; }
+  .thumb-inner { position: relative; border-radius: 6px; overflow: hidden; border: 1px solid #cbd5e1; }
+  .thumb-inner svg { width: 180px; height: 112px; display: block; }
+  .clip { position: absolute; background: rgba(15,23,42,0.85); color: #f1f5f9; border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 13px; line-height: 1; }
+  .clip.tl { top: 6px; left: 6px; }
+  .clip.tr { top: 6px; right: 6px; }
+  .pop-chip {
+    position: absolute; bottom: 6px; left: 6px;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .pop-chip .dot { font-size: 8px; }
+  .pop-chip.cal { background: #f59e0bdd; color: #fff; }
+  .pop-chip.dep { background: #38bdf8dd; color: #fff; }
+  .thumb .rid { font-family: ui-monospace, monospace; font-size: 11px; text-align: center; margin-top: 3px; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Banner -->
+  <div class="banner">
+    <div class="banner-head">
+      <div class="banner-label">Live evaluation</div>
+      <span class="phase-pill">Phase 3: Judge</span>
+    </div>
+    <div class="metric-header">
+      <div></div><div>This pipeline</div><div class="baseline">Manual review baseline</div>
+    </div>
+    <div class="metric-row"><div class="lbl">Cost</div><div class="ours">$2.87</div><div class="base">$120.00</div></div>
+    <div class="metric-row"><div class="lbl">Wall time</div><div class="ours">11:32</div><div class="base">48:00</div></div>
+    <div class="metric-row">
+      <div class="lbl">Scenarios</div>
+      <div class="ours">32 <span style="font-size:13px;font-weight:500;color:#94a3b8;"><span class="cal">18 cal</span> + <span class="dep">14 dep</span></span></div>
+      <div class="base">32</div>
+    </div>
+    <div class="savings">
+      <div><span class="meta">Cost saved:</span> <b>$117.13</b> <span class="meta">(98%)</span></div>
+      <div><span class="meta">Time saved:</span> <b>36:28</b> <span class="meta">(76%)</span></div>
+    </div>
+    <div class="footnote">Cost baseline: $75/hr × 3 min/rollout (labor) · Time baseline: sum of video durations + 60 s/rollout (sequential review)</div>
+  </div>
+
+  <nav class="tabnav">
+    <a href="live.html">Live</a>
+    <a href="judge-calibration.html">Judge calibration</a>
+    <a href="deployment-findings.html" class="active">Deployment findings</a>
+  </nav>
+
+  <!-- Judge trust banner -->
+  <div class="trust">
+    <div class="trust-head">
+      <span class="trust-eyebrow">JUDGE TRUST</span>
+      <span class="trust-sub">pulled from 18 calibration rollouts</span>
+    </div>
+    <div class="trust-grid">
+      <div class="trust-key">Binary detection</div>
+      <div>precision <b>10/11</b> · 90.9%  ·  recall <b>10/12</b> · 83.3%</div>
+      <div class="trust-key">Per-label average</div>
+      <div>precision <b>0.86</b>   ·   recall <b>0.84</b></div>
+      <div class="trust-key">Coverage</div>
+      <div><b>4</b> of 7 taxonomy labels have support ≥ 3</div>
+    </div>
+    <div class="trust-foot">
+      Findings below are <b>calibrated estimates</b>. Each failure label is decorated with its calibration precision where available.
+    </div>
+  </div>
+
+  <!-- Sub-tabs -->
+  <div class="subtabs">
+    <a href="#" class="active">By label</a>
+    <a href="#">By condition</a>
+  </div>
+
+  <div class="subtab-desc">
+    <b>Each card</b> = one Pass-2 taxonomy label seen across all judged failures. Each rollout in the card carries its population chip (calibration vs deployment). Click a keyframe to open the source mp4.
+  </div>
+
+  <!-- Cluster: approach_miss -->
+  <div class="card">
+    <div class="card-head">
+      <h3>approach_miss</h3>
+      <div class="meta"><b>7</b> rollouts · <b>54%</b> of all failures</div>
+    </div>
+    <div class="breakdown">
+      <span class="chip-tax">high action noise (≥0.1) · <b>3</b> (43%)</span>
+      <span class="chip-tax">angle perturbation (≠0°) · <b>2</b> (29%)</span>
+      <span class="chip-tax">pretrained · NutAssemblySquare · <b>2</b> (29%)</span>
+    </div>
+    <div class="thumbs">
+      <!-- 4 thumbs -->
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="62" y="60" width="48" height="18" fill="#475569"/><circle cx="132" cy="62" r="7" fill="#fbbf24"/><circle cx="132" cy="62" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0001</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="60" y="60" width="48" height="18" fill="#475569"/><circle cx="72" cy="56" width="6" r="7" fill="#fbbf24"/><circle cx="72" cy="56" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0004</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="60" y="62" width="50" height="16" fill="#475569"/><circle cx="90" cy="54" r="7" fill="#fbbf24"/><circle cx="90" cy="54" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0006</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="58" y="60" width="50" height="18" fill="#475569"/><circle cx="110" cy="60" r="7" fill="#fbbf24"/><circle cx="110" cy="60" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip dep"><span class="dot">●</span>Deployment</span>
+        </div>
+        <div class="rid">rollout_0019</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="60" y="60" width="50" height="18" fill="#475569"/><circle cx="74" cy="58" r="7" fill="#fbbf24"/><circle cx="74" cy="58" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip dep"><span class="dot">●</span>Deployment</span>
+        </div>
+        <div class="rid">rollout_0023</div>
+      </a></div>
+    </div>
+  </div>
+
+  <!-- Cluster: slip_during_lift -->
+  <div class="card">
+    <div class="card-head">
+      <h3>slip_during_lift</h3>
+      <div class="meta"><b>3</b> rollouts · <b>23%</b> of all failures</div>
+    </div>
+    <div class="breakdown">
+      <span class="chip-tax">low grip scale (&lt;0.7) · <b>3</b> (100%)</span>
+    </div>
+    <div class="thumbs">
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="60" y="60" width="48" height="18" fill="#475569"/><circle cx="90" cy="40" r="7" fill="#fbbf24"/><circle cx="90" cy="40" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0009</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="62" y="60" width="48" height="18" fill="#475569"/><circle cx="88" cy="44" r="7" fill="#fbbf24"/><circle cx="88" cy="44" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0012</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="60" y="60" width="48" height="18" fill="#475569"/><circle cx="90" cy="48" r="7" fill="#fbbf24"/><circle cx="90" cy="48" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0017</div>
+      </a></div>
+    </div>
+  </div>
+
+  <!-- Cluster: knock_object_off_table -->
+  <div class="card">
+    <div class="card-head">
+      <h3>knock_object_off_table</h3>
+      <div class="meta"><b>3</b> rollouts · <b>23%</b> of all failures</div>
+    </div>
+    <div class="breakdown">
+      <span class="chip-tax">high action noise (≥0.1) · <b>3</b> (100%)</span>
+    </div>
+    <div class="thumbs">
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="62" y="60" width="50" height="18" fill="#475569"/><circle cx="158" cy="92" r="7" fill="#fbbf24"/><circle cx="158" cy="92" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0007</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="62" y="60" width="50" height="18" fill="#475569"/><circle cx="20" cy="90" r="7" fill="#fbbf24"/><circle cx="20" cy="90" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0013</div>
+      </a></div>
+      <div class="thumb"><a href="#">
+        <div class="thumb-inner">
+          <svg viewBox="0 0 180 112"><rect width="180" height="112" fill="#1a2540"/><path d="M 10 78 L 170 78 L 176 100 L 4 100 Z" fill="#334155"/><rect x="62" y="60" width="50" height="18" fill="#475569"/><circle cx="164" cy="96" r="7" fill="#fbbf24"/><circle cx="164" cy="96" r="16" fill="none" stroke="#ef4444" stroke-width="3"/></svg>
+          <button class="clip tl">📎</button><button class="clip tr">📎</button>
+          <span class="pop-chip cal"><span class="dot">●</span>Calibration</span>
+        </div>
+        <div class="rid">rollout_0018</div>
+      </a></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

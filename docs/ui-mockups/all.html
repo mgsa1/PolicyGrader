@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>All views — Embodied Eval Orchestrator UI Mockups</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #0b1020; color: #e6edf7; font-family: -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif; }
+  .divider {
+    padding: 40px 32px 18px;
+    border-top: 1px solid #22304e;
+    background: #0b1020;
+  }
+  .divider:first-child { border-top: none; padding-top: 28px; }
+  .divider h2 { margin: 0 0 4px 0; font-size: 22px; font-weight: 700; }
+  .divider p { margin: 0; font-size: 13px; color: #8895ad; }
+  .view { width: 100%; border: 0; display: block; background: #f8fafc; }
+  .toc {
+    position: sticky; top: 0; z-index: 10;
+    background: #0b1020; border-bottom: 1px solid #22304e;
+    padding: 12px 32px; display: flex; gap: 24px; align-items: center;
+    font-size: 13px;
+  }
+  .toc b { font-weight: 700; color: #e6edf7; }
+  .toc a { color: #8ea0bf; text-decoration: none; }
+  .toc a:hover { color: #e6edf7; }
+</style>
+</head>
+<body>
+  <div class="toc">
+    <b>UI Mockups</b>
+    <a href="#live">Live</a>
+    <a href="#cal">Judge calibration</a>
+    <a href="#dep">Deployment findings</a>
+    <a href="index.html" style="margin-left:auto;">← back to index</a>
+  </div>
+
+  <div class="divider" id="live">
+    <h2>1 · Live</h2>
+    <p>Agent activity / current rollout / <code>/memories/</code> tree. Phase 3: Judge is active.</p>
+  </div>
+  <iframe class="view" src="live.html" style="height: 1400px;"></iframe>
+
+  <div class="divider" id="cal">
+    <h2>2 · Judge calibration</h2>
+    <p>Measures the judge against injected ground truth. Cohort &rarr; binary panel &rarr; multiclass confusion &rarr; per-label P/R/F1 &rarr; drill-down.</p>
+  </div>
+  <iframe class="view" src="judge-calibration.html" style="height: 2200px;"></iframe>
+
+  <div class="divider" id="dep">
+    <h2>3 · Deployment findings</h2>
+    <p>Applies the calibrated judge to pretrained-policy rollouts. Judge trust banner + cluster cards.</p>
+  </div>
+  <iframe class="view" src="deployment-findings.html" style="height: 1800px;"></iframe>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Embodied Eval Orchestrator — UI Mockups</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0b1020;
+    color: #e6edf7;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 60px 32px; }
+  h1 { font-size: 28px; font-weight: 700; margin: 0 0 6px 0; }
+  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 40px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card {
+    background: #111a30;
+    border: 1px solid #22304e;
+    border-radius: 12px;
+    padding: 24px;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: #60a5fa; }
+  .card h2 { margin: 0 0 8px 0; font-size: 18px; font-weight: 600; }
+  .card p { margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+  .card .tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.3px;
+    margin-bottom: 14px;
+  }
+  .tag.live { background: #fb923c22; color: #fb923c; }
+  .tag.cal { background: #f59e0b22; color: #f59e0b; }
+  .tag.dep { background: #38bdf822; color: #38bdf8; }
+  .note {
+    margin-top: 36px;
+    padding: 14px 18px;
+    background: #0f172a;
+    border-left: 3px solid #60a5fa;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.55;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>UI mockups — Embodied Eval Orchestrator</h1>
+  <div class="sub">Static HTML views of the three key pages in the Gradio app. Each page is self-contained — drop any one file into a design tool (Claude Design, Lovable, v0) to iterate on the visual design.</div>
+
+  <div class="grid">
+    <a class="card" href="live.html">
+      <span class="tag live">Phase 3 · Judge</span>
+      <h2>Live</h2>
+      <p>Agent-activity stream on the left, current rollout video in the middle, <code>/memories/</code> tree on the right. The banner on top is the &ldquo;this pipeline vs manual review&rdquo; comparison strip.</p>
+    </a>
+    <a class="card" href="judge-calibration.html">
+      <span class="tag cal">Calibration</span>
+      <h2>Judge calibration</h2>
+      <p>Measures the judge against injected ground truth. Cohort pills &rarr; binary 2&times;2 confusion &rarr; multiclass heatmap &rarr; per-label P/R/F1 &rarr; drill-down.</p>
+    </a>
+    <a class="card" href="deployment-findings.html">
+      <span class="tag dep">Deployment</span>
+      <h2>Deployment findings</h2>
+      <p>Applies the calibrated judge to pretrained-policy rollouts. Top banner quotes judge trust; cluster cards group failures by taxonomy label or by condition.</p>
+    </a>
+    <a class="card" href="all.html">
+      <span class="tag" style="background:#4ade8022;color:#4ade80;">All in one</span>
+      <h2>All views, scrollable</h2>
+      <p>Every view stacked on a single long page. Easiest for screenshotting the whole product in one shot.</p>
+    </a>
+  </div>
+
+  <div class="note">
+    <b>Design intent</b> — This is a one-line positioning app: <i>robot manipulation evals, hours to minutes</i>. The banner is the demo hero; everything below is evidence. Populations (calibration amber / deployment blue) thread through every chip and accent.
+  </div>
+</div>
+</body>
+</html>

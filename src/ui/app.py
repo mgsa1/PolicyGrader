@@ -36,6 +36,7 @@ from src.costing import (
     format_duration,
 )
 from src.runtime_state import CHAT_JSONL, RUNTIME_JSON
+from src.ui import theme
 from src.ui.metrics_view import (
     EMPTY_FILTER,
     DrillFilter,
@@ -49,8 +50,6 @@ from src.ui.metrics_view import (
     render_static_blocks,
 )
 from src.ui.synthesis import (
-    CALIBRATION_COLOR,
-    DEPLOYMENT_COLOR,
     Cluster,
     ScoredRollout,
     cluster_by_condition,
@@ -65,12 +64,12 @@ from src.ui.synthesis import (
 
 # Color per agent role/phase, used throughout chat blocks + headers.
 PHASE_COLORS = {
-    "BEGIN PHASE 1: PLANNER": "#60a5fa",  # blue — designs the test suite
-    "BEGIN PHASE 2: ROLLOUT": "#c084fc",  # purple — runs the simulator
-    "BEGIN PHASE 3: JUDGE": "#fb923c",  # orange — watches the videos
-    "BEGIN PHASE 4: REPORT": "#4ade80",  # green — synthesizes findings
+    "BEGIN PHASE 1: PLANNER": theme.PLANNER,
+    "BEGIN PHASE 2: ROLLOUT": theme.ROLLOUT,
+    "BEGIN PHASE 3: JUDGE": theme.JUDGE,
+    "BEGIN PHASE 4: REPORT": theme.REPORT,
 }
-DEFAULT_PHASE_COLOR = "#94a3b8"  # slate — for "starting" / "complete" / unknown
+DEFAULT_PHASE_COLOR = theme.PHASE_NEUTRAL
 
 # Plain-language explainer per phase: (short title, one-sentence explainer,
 # list of artifacts produced). Shown when the phase marker arrives so a viewer
@@ -136,8 +135,24 @@ def _read_chat(mirror_root: Path, limit: int = 200) -> list[dict[str, Any]]:
     return out
 
 
+def _topbar_html() -> str:
+    """Brand + tagline + session chip — the always-on header above the banner."""
+    return (
+        "<div class='pg-topbar'>"
+        "<div class='pg-topbar__brand'>"
+        "<div class='pg-topbar__logo'>P</div>"
+        "<div>"
+        "<div class='pg-topbar__wordmark'>PolicyGrader</div>"
+        "<div class='pg-topbar__tagline'>Robot manipulation evals, hours to minutes</div>"
+        "</div>"
+        "</div>"
+        "<div class='pg-topbar__session'>live session</div>"
+        "</div>"
+    )
+
+
 def _banner_html(mirror_root: Path) -> str:
-    """Render the top banner: side-by-side columns + savings row.
+    """Hero section with 3 metric cards + savings strip + baseline footnote.
 
     Cost column compares pipeline cost vs flat $75/hr × 3 min/rollout (labor
     accounting). Time column compares pipeline wall time vs sum-of-video-
@@ -164,88 +179,72 @@ def _banner_html(mirror_root: Path) -> str:
     phase_color = PHASE_COLORS.get(phase, DEFAULT_PHASE_COLOR)
     phase_short = _phase_short_name(phase)
 
-    scenarios_breakdown = (
-        f"{n} "
-        f"<span style='font-size:13px;font-weight:500;color:#94a3b8;'>"
-        f"<span style='color:{CALIBRATION_COLOR};'>{n_cal} cal</span>"
-        f" + <span style='color:{DEPLOYMENT_COLOR};'>{n_dep} dep</span></span>"
+    scenarios_sub = (
+        f"<span style='color:{theme.CAL};font-weight:500;'>{n_cal} cal</span>"
+        f" <span style='color:{theme.INK_4};'>+</span> "
+        f"<span style='color:{theme.DEP};font-weight:500;'>{n_dep} dep</span>"
     )
-    metric_row_html = (
-        _metric_row("Cost", format_cost(cost), format_cost(baseline_cost))
-        + _metric_row("Wall time", format_duration(elapsed), format_duration(baseline_time))
-        + _metric_row("Scenarios", scenarios_breakdown, str(n))
+    metrics = (
+        _metric_card("Cost", format_cost(cost), f"baseline {format_cost(baseline_cost)}")
+        + _metric_card(
+            "Wall time", format_duration(elapsed), f"baseline {format_duration(baseline_time)}"
+        )
+        + _metric_card("Scenarios", str(n), scenarios_sub, sub_is_html=True)
     )
 
-    return f"""
-<div style="padding:18px 24px;background:#0f172a;color:#f1f5f9;border-radius:10px;
-            font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;">
-  <div style="display:flex;align-items:center;justify-content:space-between;
-              padding-bottom:12px;border-bottom:1px solid #1e293b;">
-    <div style="font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:1.5px;">
-      Live evaluation
-    </div>
-    <div>
-      <span style="display:inline-block;padding:4px 10px;border-radius:14px;
-                   background:{phase_color}22;color:{phase_color};
-                   font-size:12px;font-weight:600;text-transform:uppercase;
-                   letter-spacing:1px;">{phase_short}</span>
-    </div>
-  </div>
-
-  <div style="display:grid;grid-template-columns:140px 1fr 1fr;align-items:baseline;
-              padding:10px 0 6px 0;color:#94a3b8;font-size:11px;
-              text-transform:uppercase;letter-spacing:1.2px;font-weight:600;">
-    <div></div>
-    <div>This pipeline</div>
-    <div style="opacity:0.75;">Manual review baseline</div>
-  </div>
-
-  {metric_row_html}
-
-  {_savings_row(cost_savings, cost_save_pct, time_savings, time_save_pct)}
-
-  <div style="margin-top:8px;font-size:11px;color:#64748b;text-align:center;">
-    Cost baseline: ${BASELINE_HOURLY_RATE_USD:.0f}/hr × 3 min/rollout (labor)  ·
-    Time baseline: sum of video durations + 60 s/rollout (sequential review)
-  </div>
-</div>
-""".strip()
-
-
-_TABULAR = "font-variant-numeric:tabular-nums;"
-
-
-def _metric_row(label: str, ours: str, base: str) -> str:
-    """One row of the banner comparison table — aligned via CSS grid."""
     return (
-        '<div style="display:grid;grid-template-columns:140px 1fr 1fr;'
-        'align-items:baseline;padding:8px 0;border-top:1px solid #1e293b;">'
-        f'<div style="font-size:11px;color:#94a3b8;text-transform:uppercase;'
-        f'letter-spacing:1.2px;">{label}</div>'
-        f'<div style="font-size:24px;font-weight:600;color:#f1f5f9;{_TABULAR}">{ours}</div>'
-        f'<div style="font-size:24px;font-weight:600;color:#cbd5e1;{_TABULAR}'
-        f'opacity:0.85;">{base}</div>'
+        "<div class='pg-hero'>"
+        "<div style='display:flex;align-items:baseline;justify-content:space-between;gap:16px;'>"
+        "<div>"
+        "<div class='pg-hero__eyebrow'>Live evaluation</div>"
+        "<h1 class='pg-hero__headline'>This pipeline vs manual review</h1>"
+        "<div class='pg-hero__subhead'>"
+        "Agent-run robot-manipulation evals, measured against the baseline a "
+        "human would spend."
+        "</div>"
+        "</div>"
+        f"<span class='pg-chip' style='background:{phase_color}1a;color:{phase_color};"
+        f"border-color:{phase_color}55;font-weight:600;text-transform:uppercase;"
+        "letter-spacing:0.06em;'>"
+        f"{phase_short}</span>"
+        "</div>"
+        f"<div class='pg-metric-grid'>{metrics}</div>"
+        f"{_savings_row(cost_savings, cost_save_pct, time_savings, time_save_pct)}"
+        "<div class='pg-hero__footnote'>"
+        f"Cost baseline: ${BASELINE_HOURLY_RATE_USD:.0f}/hr × 3 min/rollout (labor)  ·  "
+        "Time baseline: sum of video durations + 60 s/rollout (sequential review)"
+        "</div>"
+        "</div>"
+    )
+
+
+def _metric_card(label: str, value: str, sub: str, *, sub_is_html: bool = False) -> str:
+    """One metric card in the hero grid. `sub` is a baseline-comparison line."""
+    sub_html = sub if sub_is_html else sub
+    return (
+        "<div class='pg-metric'>"
+        f"<div class='pg-metric__label'>{label}</div>"
+        f"<div class='pg-metric__value'>{value}</div>"
+        f"<div class='pg-metric__base'>{sub_html}</div>"
         "</div>"
     )
 
 
 def _savings_row(cost_saved: float, cost_pct: float, time_saved: float, time_pct: float) -> str:
-    """Green-tinted strip at the bottom of the banner: cost saved + time saved."""
+    """Green-tinted strip at the bottom of the hero: cost saved + time saved."""
     cost_str = format_cost(cost_saved)
     time_str = format_duration(time_saved)
     return (
-        '<div style="margin-top:10px;padding:10px 14px;background:#15803d22;'
-        "border:1px solid #15803d44;border-radius:8px;display:flex;"
-        'justify-content:space-around;font-size:14px;">'
+        "<div class='pg-savings'>"
         "<div>"
-        '<span style="color:#94a3b8;">Cost saved:</span> '
-        f'<b style="color:#4ade80;font-size:18px;{_TABULAR}">{cost_str}</b> '
-        f'<span style="color:#94a3b8;font-size:12px;">({cost_pct:.0f}%)</span>'
+        "<span class='pg-savings__muted'>Cost saved:</span> "
+        f"<b>{cost_str}</b> "
+        f"<span class='pg-savings__muted'>({cost_pct:.0f}%)</span>"
         "</div>"
         "<div>"
-        '<span style="color:#94a3b8;">Time saved:</span> '
-        f'<b style="color:#4ade80;font-size:18px;{_TABULAR}">{time_str}</b> '
-        f'<span style="color:#94a3b8;font-size:12px;">({time_pct:.0f}%)</span>'
+        "<span class='pg-savings__muted'>Time saved:</span> "
+        f"<b>{time_str}</b> "
+        f"<span class='pg-savings__muted'>({time_pct:.0f}%)</span>"
         "</div>"
         "</div>"
     )
@@ -270,14 +269,10 @@ def _phase_short_name(phase: str) -> str:
 
 
 def _chat_html(mirror_root: Path) -> str:
-    """Render the chat pane: dark theme, phase-color-coded, with phase explainers."""
+    """Render the chat pane: phase-color-accented, with phase explainers."""
     entries = _read_chat(mirror_root)
     if not entries:
-        return (
-            "<div style='padding:40px;text-align:center;color:#94a3b8;font-style:italic;'>"
-            "Waiting for the agent to start…"
-            "</div>"
-        )
+        return "<div class='pg-chat__empty'>Waiting for the agent to start…</div>"
 
     current_phase = "starting"
     blocks: list[str] = []
@@ -290,13 +285,11 @@ def _chat_html(mirror_root: Path) -> str:
         color = PHASE_COLORS.get(current_phase, DEFAULT_PHASE_COLOR)
         blocks.append(_chat_block(kind, e, color))
 
-    return (
-        "<div style='max-height:600px;overflow-y:auto;padding:4px;'>" + "".join(blocks) + "</div>"
-    )
+    return "<div class='pg-chat'>" + "".join(blocks) + "</div>"
 
 
 def _phase_explainer_card(marker: str) -> str:
-    """Render a phase header with plain-language explanation of what's about to happen."""
+    """Typographic section divider for a new phase — eyebrow + title + subtitle + outputs."""
     color = PHASE_COLORS.get(marker, DEFAULT_PHASE_COLOR)
     explainer = PHASE_EXPLAINERS.get(marker)
     title: str
@@ -311,35 +304,25 @@ def _phase_explainer_card(marker: str) -> str:
     outputs_html = ""
     if outputs:
         files = " · ".join(
-            f"<code style='color:{color};opacity:0.8;background:none;font-size:11px;'>"
-            f"{_escape(o)}</code>"
-            for o in outputs
+            f"<code style='color:{color};background:none;'>{_escape(o)}</code>" for o in outputs
         )
         outputs_html = (
-            f"<div style='margin-top:6px;font-size:11px;color:#64748b;'>"
-            f"<span style='text-transform:uppercase;letter-spacing:1.2px;"
-            f"font-weight:600;'>Writes:</span> {files}</div>"
+            f"<div class='pg-chat__phase-writes'>"
+            f"<strong style='color:{color};'>Writes:</strong> {files}</div>"
         )
 
-    # Typographic section divider, NOT a chat block. No background, no box.
-    # Uppercase eyebrow + tinted rule to the right so the eye reads it as
-    # "new section starting" rather than "another message".
-    return f"""
-<div style="margin:28px 0 12px 0;">
-  <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px;">
-    <div style="font-size:11px;font-weight:800;color:{color};text-transform:uppercase;
-                letter-spacing:2.5px;white-space:nowrap;">
-      {_escape(short)}
-    </div>
-    <div style="flex:1;height:1px;
-                background:linear-gradient(90deg,{color}66 0%,transparent 100%);"></div>
-  </div>
-  <div style="color:#e2e8f0;font-size:15px;font-weight:600;
-              margin-bottom:3px;">{_escape(title)}</div>
-  <div style="color:#94a3b8;font-size:12px;line-height:1.5;">{_escape(subtitle)}</div>
-  {outputs_html}
-</div>
-""".strip()
+    return (
+        "<div class='pg-chat__phase-hd'>"
+        "<div class='pg-chat__phase-eyebrow'>"
+        f"<div class='pg-chat__phase-label' style='color:{color};'>{_escape(short)}</div>"
+        "<div class='pg-chat__phase-rule' style='"
+        f"background:linear-gradient(90deg,{color}66 0%,transparent 100%);'></div>"
+        "</div>"
+        f"<div class='pg-chat__phase-title'>{_escape(title)}</div>"
+        f"<div class='pg-chat__phase-sub'>{_escape(subtitle)}</div>"
+        f"{outputs_html}"
+        "</div>"
+    )
 
 
 def _chat_block(kind: str, entry: dict[str, Any], color: str) -> str:
@@ -347,17 +330,15 @@ def _chat_block(kind: str, entry: dict[str, Any], color: str) -> str:
     if kind == "agent_message":
         text = str(entry.get("text", ""))
         return (
-            f"<div style='margin:6px 0;padding:10px 12px;background:#1e293b;"
-            f"color:#f1f5f9;border-left:3px solid {color};border-radius:4px;"
-            f"white-space:pre-wrap;font-size:13px;line-height:1.5;'>"
+            "<div class='pg-chat__block' "
+            f"style='border-left:3px solid {color};white-space:pre-wrap;'>"
             f"{_escape(text)}</div>"
         )
     if kind == "agent_thinking":
         text = str(entry.get("text", ""))
         return (
-            f"<div style='margin:4px 0;padding:8px 12px;background:#0f172a;"
-            f"color:#94a3b8;border-left:2px dashed {color}66;border-radius:4px;"
-            f"font-style:italic;font-size:12px;white-space:pre-wrap;line-height:1.45;'>"
+            "<div class='pg-chat__block pg-chat__block--thinking' "
+            f"style='border-left-color:{color}88;white-space:pre-wrap;'>"
             f"{_escape(text[:600])}</div>"
         )
     if kind == "tool_use":
@@ -373,27 +354,25 @@ def _chat_block(kind: str, entry: dict[str, Any], color: str) -> str:
                 f"{_escape(rid)}</code></span>"
             )
         return (
-            f"<div style='margin:6px 0;padding:7px 12px;background:#1e293b;"
-            f"color:#fbbf24;border-left:3px solid {color};border-radius:4px;"
-            f"font-family:ui-monospace,monospace;font-size:12px;'>"
+            "<div class='pg-chat__block pg-chat__block--tool' "
+            f"style='border-left:3px solid {color};color:{theme.INK_1};'>"
             f"▶ <b>{_escape(tool)}</b>({_escape(args_str)}){rid_link}</div>"
         )
     if kind == "tool_result":
         tool = entry.get("tool", "?")
         payload = str(entry.get("payload", ""))[:300]
         return (
-            f"<div style='margin:2px 0 6px 0;padding:6px 12px;background:#1e293b;"
-            f"color:#4ade80;border-left:3px solid {color}66;border-radius:4px;"
-            f"font-family:ui-monospace,monospace;font-size:11px;opacity:0.85;'>"
-            f"◀ {_escape(tool)} → {_escape(payload)}</div>"
+            "<div class='pg-chat__block pg-chat__block--result' "
+            f"style='border-left:3px solid {color}66;color:{theme.OK};'>"
+            f"◀ {_escape(tool)} → <span style='color:{theme.INK_3};'>"
+            f"{_escape(payload)}</span></div>"
         )
     if kind == "tool_error":
         tool = entry.get("tool", "?")
         err = str(entry.get("error", ""))
         return (
-            f"<div style='margin:2px 0 6px 0;padding:6px 12px;background:#7f1d1d;"
-            f"color:#fecaca;border-left:3px solid #dc2626;border-radius:4px;"
-            f"font-family:ui-monospace,monospace;font-size:12px;'>"
+            "<div class='pg-chat__block pg-chat__block--error' "
+            f"style='border-left:3px solid {theme.ERR};'>"
             f"✗ {_escape(tool)}: {_escape(err)}</div>"
         )
     return ""
@@ -421,12 +400,15 @@ def _current_video_path_html(mirror_root: Path) -> str:
     path = _current_video_path(mirror_root)
     if path is None:
         return (
-            "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:4px;'>"
+            f"<div style='font-size:11px;color:{theme.INK_4};font-style:italic;margin-top:4px;'>"
             "(no rollout selected yet)</div>"
         )
     return (
-        "<div style='display:flex;align-items:center;gap:8px;margin-top:4px;'>"
-        "<span style='font-size:11px;color:#94a3b8;'>Current mp4:</span>"
+        "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;'>"
+        f"<span style='font-size:11px;color:{theme.INK_3};"
+        "text-transform:uppercase;letter-spacing:0.08em;font-weight:500;'>"
+        "Current mp4</span>"
+        f"<span class='pg-kbd'>{Path(path).name}</span>"
         f"{copy_button(path, kind='mp4', inline=True)}"
         "</div>"
     )
@@ -437,20 +419,18 @@ def _rollout_paths_panel_html(mirror_root: Path) -> str:
     paths = _rollout_paths(mirror_root)
     if not paths:
         return (
-            "<div style='font-size:11px;color:#64748b;font-style:italic;margin-top:6px;'>"
+            f"<div style='font-size:11px;color:{theme.INK_4};font-style:italic;margin-top:6px;'>"
             "(no rollout videos on disk yet)</div>"
         )
     chips = "".join(
-        f"<div style='display:flex;align-items:center;gap:6px;'>"
-        f"<span style='font-family:ui-monospace,monospace;font-size:10px;color:#94a3b8;"
-        f"max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' "
-        f"title='{Path(p).name}'>{Path(p).name}</span>"
+        "<div style='display:flex;align-items:center;gap:6px;'>"
+        f"<span class='pg-kbd' title='{Path(p).name}'>{Path(p).name}</span>"
         f"{copy_button(p, kind='mp4', inline=True)}"
-        f"</div>"
+        "</div>"
         for p in paths[:30]
     )
     overflow = (
-        f"<div style='font-size:10px;color:#64748b;margin-top:4px;'>"
+        f"<div style='font-size:10px;color:{theme.INK_4};margin-top:4px;'>"
         f"showing 30 newest of {len(paths)}</div>"
         if len(paths) > 30
         else ""
@@ -491,7 +471,7 @@ def _metrics_blocks(mirror_root: Path) -> tuple[str, str, str, str]:
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
         empty = (
-            "<div style='padding:40px;text-align:center;color:#94a3b8;font-style:italic;'>"
+            "<div class='pg-empty'>"
             "Metrics appear once the orchestrator has run rollouts AND the judge has finished."
             "</div>"
         )
@@ -533,12 +513,9 @@ def _filter_status_html(f: DrillFilter) -> str:
     if not f.is_active:
         return ""
     return (
-        "<div style='display:flex;gap:10px;align-items:center;padding:8px 12px;"
-        "background:#1e293b;border-radius:6px;'>"
-        "<span style='font-size:11px;color:#94a3b8;text-transform:uppercase;"
-        "letter-spacing:1.2px;font-weight:600;'>Filter active:</span>"
-        f"<code style='color:#fbbf24;font-size:12px;background:none;'>"
-        f"{_escape(f.label_text())}</code>"
+        "<div class='pg-filter-pill'>"
+        "<span class='pg-filter-pill__label'>Filter active:</span>"
+        f"<span class='pg-filter-pill__value'>{_escape(f.label_text())}</span>"
         "</div>"
     )
 
@@ -546,7 +523,7 @@ def _filter_status_html(f: DrillFilter) -> str:
 def _files_list(mirror_root: Path) -> str:
     """Render a compact list of non-mp4 artifacts in mirror_root."""
     if not mirror_root.exists():
-        return "<p style='opacity:0.6'><i>(no artifacts yet)</i></p>"
+        return "<div class='pg-empty pg-empty--small'>(no artifacts yet)</div>"
     rows: list[str] = []
     for p in sorted(mirror_root.rglob("*")):
         if p.is_dir() or p.suffix == ".mp4":
@@ -554,13 +531,13 @@ def _files_list(mirror_root: Path) -> str:
         rel = p.relative_to(mirror_root)
         size_kb = p.stat().st_size / 1024
         rows.append(
-            f"<div style='padding:3px 0;font-family:ui-monospace,monospace;font-size:12px;'>"
-            f"<span style='opacity:0.5;'>{size_kb:>6.1f} KB</span>  "
+            "<div class='pg-filelist__row'>"
+            f"<span class='pg-filelist__size'>{size_kb:>6.1f} KB</span>  "
             f"<span>{rel}</span></div>"
         )
     if not rows:
-        return "<p style='opacity:0.6'><i>(no artifacts yet)</i></p>"
-    return "<div style='max-height:600px;overflow-y:auto;'>" + "".join(rows) + "</div>"
+        return "<div class='pg-empty pg-empty--small'>(no artifacts yet)</div>"
+    return "<div class='pg-filelist'>" + "".join(rows) + "</div>"
 
 
 def _cluster_card_html(
@@ -577,8 +554,6 @@ def _cluster_card_html(
     n = len(cluster.rollouts)
     pct = (n / total_failures * 100) if total_failures else 0.0
 
-    # Breakdown row: top contributors first, formatted as "label N (XX%)" plus
-    # a calibration-precision chip if this looks like a label name (taxonomy).
     breakdown_chips = ""
     if cluster.breakdown:
         chips = []
@@ -592,16 +567,12 @@ def _cluster_card_html(
             if looks_like_label:
                 cal_chip = render_calibration_chip(label, cal_stats)
             chips.append(
-                "<span style='display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;"
-                f"background:#e0e7ff;color:#3730a3;border-radius:12px;font-size:12px;'>"
+                "<span class='pg-cluster-card__breakdown-chip'>"
                 f"{_escape(label)} · <b>{count}</b> ({sub_pct:.0f}%)</span>"
                 f"{cal_chip}"
             )
         breakdown_chips = "".join(chips)
 
-    # Keyframe grid: PNG per rollout that has video. Click the thumb to open
-    # the source mp4. Two paperclip overlays per thumbnail (PNG/mp4 paths)
-    # plus a population chip in the bottom-left corner.
     thumbs = ""
     for r in cluster.rollouts:
         kf = keyframes.get(r.rollout_id)
@@ -612,46 +583,33 @@ def _cluster_card_html(
         overlays = copy_button(kf, kind="png", anchor="top-left")
         if r.video_path_host:
             overlays += copy_button(r.video_path_host, kind="mp4", anchor="top-right")
-        # Population chip overlaid bottom-left over the thumb.
-        pop_chip = (
-            f"<div style='position:absolute;bottom:6px;left:6px;'>"
-            f"{population_chip(r, compact=True)}</div>"
-        )
+        pop_chip = f"<div class='pg-thumb__pop'>{population_chip(r, compact=True)}</div>"
         thumbs += (
-            "<div style='display:inline-block;margin:4px;vertical-align:top;width:180px;'>"
-            f"<a href='{mp4_url}' target='_blank' "
-            "style='display:block;text-decoration:none;color:inherit;'>"
-            "<div style='position:relative;'>"
-            f"<img src='{kf_url}' style='width:180px;height:auto;display:block;"
-            "border-radius:6px;border:1px solid #cbd5e1;'/>"
+            "<div class='pg-thumb'>"
+            f"<a href='{mp4_url}' target='_blank'>"
+            "<div class='pg-thumb__media'>"
+            f"<img src='{kf_url}'/>"
             f"{overlays}{pop_chip}"
             "</div>"
-            "<div style='font-family:ui-monospace,monospace;font-size:11px;"
-            f"text-align:center;margin-top:3px;opacity:0.85;'>{_escape(r.rollout_id)}</div>"
+            f"<div class='pg-thumb__id'>{_escape(r.rollout_id)}</div>"
             "</a>"
             "</div>"
         )
     if not thumbs:
-        thumbs = (
-            "<p style='opacity:0.6;font-style:italic;'>(no keyframes — videos not on host yet)</p>"
-        )
+        thumbs = "<p class='pg-thumb__empty'>(no keyframes — videos not on host yet)</p>"
 
-    return f"""
-<div style='margin:16px 0;padding:18px;background:#ffffff;border:1px solid #e2e8f0;
-            border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);'>
-  <div style='display:flex;align-items:baseline;justify-content:space-between;
-              border-bottom:1px solid #f1f5f9;padding-bottom:10px;margin-bottom:12px;'>
-    <h3 style='margin:0;font-size:18px;font-family:ui-monospace,monospace;color:#1e293b;'>
-      {_escape(cluster.name)}
-    </h3>
-    <div style='font-size:14px;color:#475569;'>
-      <b>{n}</b> rollouts · <b>{pct:.0f}%</b> of all failures
-    </div>
-  </div>
-  <div style='margin-bottom:14px;'>{breakdown_chips}</div>
-  <div style='display:flex;flex-wrap:wrap;'>{thumbs}</div>
-</div>
-""".strip()
+    return (
+        "<div class='pg-cluster-card'>"
+        "<div class='pg-cluster-card__head'>"
+        f"<h3 class='pg-cluster-card__title'>{_escape(cluster.name)}</h3>"
+        "<div class='pg-cluster-card__count'>"
+        f"<b>{n}</b> rollouts · <b>{pct:.0f}%</b> of all failures"
+        "</div>"
+        "</div>"
+        f"<div class='pg-cluster-card__breakdown'>{breakdown_chips}</div>"
+        f"<div class='pg-cluster-card__thumbs'>{thumbs}</div>"
+        "</div>"
+    )
 
 
 def _synthesis_html(mirror_root: Path, mode: str) -> str:
@@ -659,16 +617,16 @@ def _synthesis_html(mirror_root: Path, mode: str) -> str:
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
         return (
-            "<p style='opacity:0.6'><i>No dispatch_log.jsonl yet. Synthesis appears once "
-            "the orchestrator has run at least one rollout + judge cycle.</i></p>"
+            "<div class='pg-empty'>No dispatch_log.jsonl yet. Synthesis appears once "
+            "the orchestrator has run at least one rollout + judge cycle.</div>"
         )
 
     keyframes = render_all_keyframes(rollouts, mirror_root)
     total_failures = sum(1 for r in rollouts if r.judged_failure)
     if total_failures == 0:
         return (
-            "<p style='opacity:0.6'><i>No judged failures yet — Pass-1 hasn't flagged "
-            "any rollout as fail.</i></p>"
+            "<div class='pg-empty'>No judged failures yet — Pass-1 hasn't flagged "
+            "any rollout as fail.</div>"
         )
 
     cal_stats = per_label_calibration(rollouts)
@@ -742,10 +700,7 @@ def _phase_progress_html(mirror_root: Path) -> str:
         ),
         _phase_chip("Phase 4: Report", "BEGIN PHASE 4: REPORT", _state(3), None, None),
     ]
-    return (
-        "<div style='display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;"
-        "padding:14px 0 4px 0;'>" + "".join(chips) + "</div>"
-    )
+    return "<div class='pg-phase-grid'>" + "".join(chips) + "</div>"
 
 
 def _phase_chip(
@@ -759,26 +714,19 @@ def _phase_chip(
     """One phase tile with title, status, and optional progress bar + sub-line."""
     color = PHASE_COLORS.get(marker, DEFAULT_PHASE_COLOR)
 
+    # Active + complete tint the card with the phase color; pending stays neutral.
     if state == "complete":
-        bg = f"{color}1f"
-        border = color
-        status_chip = (
-            f"<span style='color:{color};font-size:10px;font-weight:700;"
-            "text-transform:uppercase;letter-spacing:1.5px;'>✓ complete</span>"
+        bg_style = f"background:{color}12;border-left-color:{color};"
+        status_html = (
+            f"<span class='pg-phase-chip__status' style='color:{color};'>✓ complete</span>"
         )
     elif state == "active":
-        bg = f"{color}33"
-        border = color
-        status_chip = (
-            f"<span style='color:{color};font-size:10px;font-weight:700;"
-            "text-transform:uppercase;letter-spacing:1.5px;'>● active</span>"
-        )
+        bg_style = f"background:{color}1a;border-left-color:{color};"
+        status_html = f"<span class='pg-phase-chip__status' style='color:{color};'>● active</span>"
     else:
-        bg = "#1e293b"
-        border = "#334155"
-        status_chip = (
-            "<span style='color:#64748b;font-size:10px;font-weight:700;"
-            "text-transform:uppercase;letter-spacing:1.5px;'>○ pending</span>"
+        bg_style = f"border-left-color:{theme.LINE_2};"
+        status_html = (
+            f"<span class='pg-phase-chip__status' style='color:{theme.INK_4};'>○ pending</span>"
         )
 
     bar_html = ""
@@ -787,40 +735,25 @@ def _phase_chip(
         if total and total > 0:
             pct = min(100, int(done / total * 100))
             bar_html = (
-                "<div style='margin-top:8px;height:6px;background:#0f172a;"
-                "border-radius:3px;overflow:hidden;'>"
-                f"<div style='width:{pct}%;height:100%;background:{color};"
-                "transition:width 0.3s ease;'></div></div>"
+                "<div class='pg-progress'>"
+                f"<div class='pg-progress__fill' style='width:{pct}%;background:{color};'></div>"
+                "</div>"
             )
-            counter_html = (
-                f"<div style='margin-top:4px;font-size:11px;color:#cbd5e1;"
-                f"font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;'>"
-                f"{done} / {total}</div>"
-            )
+            counter_html = f"<div class='pg-phase-chip__counter'>{done} / {total}</div>"
         else:
-            counter_html = (
-                f"<div style='margin-top:4px;font-size:11px;color:#cbd5e1;"
-                f"font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;'>"
-                f"{done} done</div>"
-            )
-    sub_html = (
-        f"<div style='margin-top:3px;font-size:10px;color:#94a3b8;"
-        f"font-family:ui-monospace,monospace;'>{sub}</div>"
-        if sub
-        else ""
-    )
+            counter_html = f"<div class='pg-phase-chip__counter'>{done} done</div>"
+    sub_html = f"<div class='pg-phase-chip__sub'>{sub}</div>" if sub else ""
 
     return (
-        f"<div style='padding:10px 12px;background:{bg};border:1px solid {border}55;"
-        f"border-left:3px solid {border};border-radius:6px;'>"
-        f"<div style='display:flex;align-items:baseline;justify-content:space-between;'>"
-        f"<div style='color:#f1f5f9;font-size:12px;font-weight:600;'>{title}</div>"
-        f"{status_chip}"
-        f"</div>"
+        f"<div class='pg-phase-chip' style='{bg_style}'>"
+        "<div class='pg-phase-chip__head'>"
+        f"<div class='pg-phase-chip__title'>{title}</div>"
+        f"{status_html}"
+        "</div>"
         f"{bar_html}"
         f"{counter_html}"
         f"{sub_html}"
-        f"</div>"
+        "</div>"
     )
 
 
@@ -849,21 +782,16 @@ def _live_gallery_html(mirror_root: Path) -> str:
     cards = [_live_gallery_card(p, by_id.get(p.stem)) for p in mp4s[:30]]
 
     overflow = (
-        f"<div style='font-size:11px;color:#64748b;margin-top:8px;text-align:center;'>"
-        f"showing 30 newest of {len(mp4s)}</div>"
+        f"<div class='pg-gallery-more'>showing 30 newest of {len(mp4s)}</div>"
         if len(mp4s) > 30
         else ""
     )
-    return (
-        "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));"
-        "gap:14px;margin-top:6px;'>" + "".join(cards) + "</div>" + overflow
-    )
+    return "<div class='pg-gallery-grid'>" + "".join(cards) + "</div>" + overflow
 
 
 def _live_gallery_empty() -> str:
     return (
-        "<div style='padding:24px;text-align:center;color:#64748b;font-style:italic;"
-        "border:1px dashed #334155;border-radius:8px;margin-top:6px;'>"
+        "<div class='pg-gallery-empty'>"
         "No rollouts yet. The first one will appear here when Phase 2 starts."
         "</div>"
     )
@@ -882,38 +810,30 @@ def _live_gallery_card(mp4: Path, scored: ScoredRollout | None) -> str:
     meta_html = ""
     if scored is not None:
         pop_html = (
-            "<div style='position:absolute;bottom:6px;left:6px;'>"
-            f"{population_chip(scored, compact=True)}"
-            "</div>"
+            f"<div class='pg-gallery-card__pop'>{population_chip(scored, compact=True)}</div>"
         )
         success_str = (
-            "<span style='color:#4ade80;'>✓ success</span>"
+            "<span class='pg-gallery-card__success-ok'>✓ success</span>"
             if scored.success
-            else "<span style='color:#fb923c;'>✗ failed</span>"
+            else "<span class='pg-gallery-card__success-fail'>✗ failed</span>"
         )
         meta_html = (
-            "<div style='display:flex;justify-content:space-between;align-items:baseline;"
-            "margin-top:6px;font-size:11px;'>"
-            f"<span style='color:#94a3b8;font-family:ui-monospace,monospace;'>"
-            f"{_escape(scored.env_name)}</span>"
+            "<div class='pg-gallery-card__meta'>"
+            f"<span class='pg-gallery-card__env'>{_escape(scored.env_name)}</span>"
             f"{success_str}"
             "</div>"
         )
 
     overlay = copy_button(mp4, kind="mp4", anchor="top-right")
     return (
-        "<div style='background:#1e293b;border:1px solid #334155;border-radius:8px;"
-        "overflow:hidden;'>"
-        "<div style='position:relative;'>"
-        f"<video src='{mp4_url}' preload='metadata' muted loop playsinline "
-        "style='width:100%;height:auto;display:block;'></video>"
+        "<div class='pg-gallery-card'>"
+        "<div class='pg-gallery-card__media'>"
+        f"<video src='{mp4_url}' preload='metadata' muted loop playsinline></video>"
         f"{overlay}"
         f"{pop_html}"
         "</div>"
-        "<div style='padding:8px 10px 10px 10px;'>"
-        f"<a href='{mp4_url}' target='_blank' "
-        "style='font-family:ui-monospace,monospace;font-size:12px;color:#cbd5e1;"
-        f"text-decoration:none;'>{_escape(rid)}</a>"
+        "<div class='pg-gallery-card__body'>"
+        f"<a class='pg-gallery-card__id' href='{mp4_url}' target='_blank'>{_escape(rid)}</a>"
         f"{meta_html}"
         "</div>"
         "</div>"
@@ -923,17 +843,14 @@ def _live_gallery_card(mp4: Path, scored: ScoredRollout | None) -> str:
 def _read_dashboard_intro_html() -> str:
     """The 'How to read this dashboard' accordion content."""
     return (
-        "<div style='padding:14px 18px;background:#0f172a;border:1px solid #1e293b;"
-        "border-radius:8px;color:#cbd5e1;font-size:13px;line-height:1.6;'>"
-        "<p style='margin:0 0 10px 0;'><b style='color:"
-        f"{CALIBRATION_COLOR};'>Calibration.</b> A portion of rollouts use a "
-        "scripted picker with deliberately-injected failures. Because we caused "
-        "the failure, we know the correct label. We measure the judge against "
-        "those — that's what the <b>Judge calibration</b> tab is for.</p>"
-        "<p style='margin:0 0 10px 0;'><b style='color:"
-        f"{DEPLOYMENT_COLOR};'>Deployment.</b> The rest of the rollouts use a "
-        "real policy (today: a pretrained BC-RNN). The judge labels those "
-        "without a safety net.</p>"
+        "<div class='pg-card' style='padding:16px 20px;font-size:14px;line-height:1.6;'>"
+        f"<p style='margin:0 0 10px 0;'><b style='color:{theme.CAL};'>Calibration.</b> "
+        "A portion of rollouts use a scripted picker with deliberately-injected failures. "
+        "Because we caused the failure, we know the correct label. We measure the judge "
+        "against those — that's what the <b>Judge calibration</b> tab is for.</p>"
+        f"<p style='margin:0 0 10px 0;'><b style='color:{theme.DEP};'>Deployment.</b> "
+        "The rest of the rollouts use a real policy (today: a pretrained BC-RNN). "
+        "The judge labels those without a safety net.</p>"
         "<p style='margin:0;'>The <b>Deployment findings</b> tab applies the "
         "calibrated judge to the deployment rollouts and cites its calibration "
         "precision alongside each finding.</p>"
@@ -974,7 +891,8 @@ def build_app(mirror_root: Path) -> gr.Blocks:
     def synth_by_condition() -> str:
         return _synthesis_html(mirror_root, "condition")
 
-    with gr.Blocks(title="Embodied Eval Orchestrator") as app:
+    with gr.Blocks(title="PolicyGrader") as app:
+        gr.HTML(value=_topbar_html())
         banner_html = gr.HTML(value=banner())
         progress_html = gr.HTML(value=_phase_progress_html(mirror_root))
 
@@ -1149,11 +1067,14 @@ def main() -> None:
 
     mirror_root = args.mirror_root.resolve()
     app = build_app(mirror_root)
+    # Theme + CSS live on launch() in Gradio 6. The light base gets overridden
+    # almost entirely by our .pg-* classes in theme.CSS — the Soft theme just
+    # provides a clean starting point for Gradio's own inputs/dropdowns/etc.
     app.launch(
         server_port=args.port,
         inbrowser=True,
-        theme=gr.themes.Soft(),
-        css=".gradio-container {max-width: 1400px !important;}",
+        theme=gr.themes.Soft(primary_hue="blue", neutral_hue="gray"),
+        css=theme.CSS,
         allowed_paths=[str(mirror_root)],
     )
 

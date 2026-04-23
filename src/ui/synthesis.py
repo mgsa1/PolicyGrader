@@ -30,6 +30,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from src.agents.tools import DISPATCH_LOG
+from src.ui import theme
 from src.vision.fine_pass import FINE_LONG_EDGE_PX
 from src.vision.frames import read_frames, resize_long_edge, sample_indices
 
@@ -42,11 +43,10 @@ POINT_DOT_OUTLINE_WIDTH = 4
 # The dashboard distinguishes two populations of rollouts everywhere:
 #   - Calibration: scripted policy + injected failure (ground truth known)
 #   - Deployment: pretrained / real policy (no ground truth label)
-# These two colors thread through every chip, banner, and accent so a viewer
-# can tell at a glance which population something belongs to. NOT the phase
-# colors (those mean planner/rollout/judge/report) — different axis.
-CALIBRATION_COLOR = "#f59e0b"  # amber
-DEPLOYMENT_COLOR = "#38bdf8"  # steel blue
+# Re-exported from theme so callers that want the raw hex (e.g. Plotly) can
+# still reach for them; the CSS-class path (`pg-chip--cal/--dep`) is preferred.
+CALIBRATION_COLOR = theme.CAL
+DEPLOYMENT_COLOR = theme.DEP
 CALIBRATION_LABEL = "Calibration"
 DEPLOYMENT_LABEL = "Deployment"
 
@@ -126,15 +126,12 @@ def copy_button(
         }.get(kind, "Copy path")
     title = html_escape(f"{tooltip}: {p_str}")
 
+    classes = ["pg-icon-btn"]
     if anchor and not inline:
-        pos_css = {
-            "top-right": "position:absolute;top:6px;right:6px;",
-            "top-left": "position:absolute;top:6px;left:6px;",
-            "bottom-right": "position:absolute;bottom:6px;right:6px;",
-            "bottom-left": "position:absolute;bottom:6px;left:6px;",
-        }.get(anchor, "position:absolute;top:6px;right:6px;")
+        classes.append("pg-icon-btn--anchored")
+        classes.append(f"pg-icon-btn--{anchor}")
     else:
-        pos_css = "display:inline-flex;align-items:center;vertical-align:middle;margin-left:6px;"
+        classes.append("pg-icon-btn--inline")
 
     return (
         f'<button onclick="event.preventDefault();event.stopPropagation();'
@@ -142,11 +139,7 @@ def copy_button(
         f"this.innerHTML='{js_check}';"
         f"setTimeout(()=>this.innerHTML='{js_icon}',900)\" "
         f"title='{title}' "
-        f"style='{pos_css}"
-        f"background:rgba(15,23,42,0.85);color:#f1f5f9;"
-        f"border:1px solid rgba(255,255,255,0.22);border-radius:4px;"
-        f"padding:3px 5px;cursor:pointer;line-height:0;"
-        f"backdrop-filter:blur(4px);'>{icon}</button>"
+        f"class='{' '.join(classes)}'>{icon}</button>"
     )
 
 
@@ -216,27 +209,18 @@ def population_chip(rollout: ScoredRollout, *, compact: bool = False) -> str:
     label to compare against.
     """
     if rollout.population == "calibration":
-        color = CALIBRATION_COLOR
+        modifier = "cal"
         kind_label = CALIBRATION_LABEL
         sub = f"expected: {rollout.ground_truth_label}"
     else:
-        color = DEPLOYMENT_COLOR
+        modifier = "dep"
         kind_label = DEPLOYMENT_LABEL
         policy = "BC-RNN" if rollout.policy_kind == "pretrained" else rollout.policy_kind
         sub = f"{policy} · no GT"
-    sub_html = (
-        ""
-        if compact
-        else (
-            f"<span style='color:#94a3b8;font-size:10px;margin-left:6px;'>{html_escape(sub)}</span>"
-        )
-    )
+    sub_html = "" if compact else f"<span class='pg-chip__sub'>{html_escape(sub)}</span>"
     return (
-        "<span style='display:inline-flex;align-items:center;gap:4px;"
-        f"padding:2px 8px;background:{color}22;color:{color};border-radius:10px;"
-        f"font-size:10px;font-weight:700;text-transform:uppercase;"
-        "letter-spacing:1px;font-family:-apple-system,system-ui,sans-serif;'>"
-        f"<span style='font-size:8px;'>●</span>{kind_label}{sub_html}"
+        f"<span class='pg-chip pg-chip--{modifier}'>"
+        f"<span class='pg-chip__dot'>●</span>{kind_label}{sub_html}"
         "</span>"
     )
 
