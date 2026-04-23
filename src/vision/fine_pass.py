@@ -24,7 +24,7 @@ from src.constants import OPUS_MODEL_ID
 from src.costing import CostTracker
 from src.schemas import Pass2Annotation
 from src.sim.scripted import FailureMode
-from src.vision.frames import encode_png_b64, read_frames, resize_long_edge, sample_indices
+from src.vision.frames import encode_jpeg_b64, read_frames, resize_long_edge, sample_indices
 
 FINE_NUM_FRAMES = 14  # denser temporal coverage of the failure window
 FINE_LONG_EDGE_PX = 2576
@@ -149,8 +149,8 @@ def _build_image_blocks(
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/png",
-                    "data": encode_png_b64(frame),
+                    "media_type": "image/jpeg",
+                    "data": encode_jpeg_b64(frame),
                 },
             }
         )

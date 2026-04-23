@@ -60,3 +60,18 @@ def encode_png_b64(frame: np.ndarray[Any, Any]) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
+
+
+def encode_jpeg_b64(frame: np.ndarray[Any, Any], quality: int = 88) -> str:
+    """Encode a HxWx3 uint8 frame as base64-encoded JPEG.
+
+    Robot sim frames are natural-ish images (smooth lighting, uniform
+    backgrounds) — JPEG at quality 88 is visually indistinguishable from PNG
+    but 5-10x smaller, which matters for the Pass-2 fine pass (14 × 2576 px
+    frames per request; PNG blows through the 32 MB payload cap, JPEG fits
+    easily).
+    """
+    img = Image.fromarray(frame)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return base64.standard_b64encode(buf.getvalue()).decode("ascii")
