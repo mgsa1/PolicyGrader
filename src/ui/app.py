@@ -39,17 +39,26 @@ from src.runtime_state import CHAT_JSONL, RUNTIME_JSON
 from src.ui.metrics_view import (
     EMPTY_FILTER,
     DrillFilter,
+    judge_trust,
+    per_label_calibration,
+    render_calibration_chip,
     render_drill_down,
     render_heatmap_figure,
+    render_judge_calibration_header,
+    render_judge_trust_banner,
     render_static_blocks,
 )
 from src.ui.synthesis import (
+    CALIBRATION_COLOR,
+    DEPLOYMENT_COLOR,
     Cluster,
     cluster_by_condition,
     cluster_by_label,
+    cohort_split,
     compute_metrics,
     load_scored_rollouts,
     paperclip_button,
+    population_chip,
     render_all_keyframes,
 )
 
@@ -140,6 +149,7 @@ def _banner_html(mirror_root: Path) -> str:
     phase = str(rt.get("phase", "idle"))
 
     rollouts = load_scored_rollouts(mirror_root)
+    n_cal, n_dep = cohort_split(rollouts)
     durations = [estimated_video_duration_s(r.env_name, r.steps_taken or None) for r in rollouts]
     baseline_time = (
         baseline_time_seconds_for_videos(durations) if durations else baseline_seconds_for(n)
@@ -153,10 +163,16 @@ def _banner_html(mirror_root: Path) -> str:
     phase_color = PHASE_COLORS.get(phase, DEFAULT_PHASE_COLOR)
     phase_short = _phase_short_name(phase)
 
+    scenarios_breakdown = (
+        f"{n} "
+        f"<span style='font-size:13px;font-weight:500;color:#94a3b8;'>"
+        f"<span style='color:{CALIBRATION_COLOR};'>{n_cal} cal</span>"
+        f" + <span style='color:{DEPLOYMENT_COLOR};'>{n_dep} dep</span></span>"
+    )
     metric_row_html = (
         _metric_row("Cost", format_cost(cost), format_cost(baseline_cost))
         + _metric_row("Wall time", format_duration(elapsed), format_duration(baseline_time))
-        + _metric_row("Scenarios", str(n), str(n))
+        + _metric_row("Scenarios", scenarios_breakdown, str(n))
     )
 
     return f"""
@@ -546,28 +562,45 @@ def _files_list(mirror_root: Path) -> str:
     return "<div style='max-height:600px;overflow-y:auto;'>" + "".join(rows) + "</div>"
 
 
-def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[str, Path]) -> str:
-    """Render one cluster card: name, count + %, breakdown row, keyframe grid."""
+def _cluster_card_html(
+    cluster: Cluster,
+    total_failures: int,
+    keyframes: dict[str, Path],
+    cal_stats: dict[str, Any],
+) -> str:
+    """Render one cluster card: name, count + %, breakdown row, keyframe grid.
+
+    `cal_stats` is the per-label calibration map (label -> LabelStats) — used
+    to attach a 'judge P = X' chip on each label in the breakdown row.
+    """
     n = len(cluster.rollouts)
     pct = (n / total_failures * 100) if total_failures else 0.0
 
-    # Breakdown row: top contributors first, formatted as "label N (XX%)"
+    # Breakdown row: top contributors first, formatted as "label N (XX%)" plus
+    # a calibration-precision chip if this looks like a label name (taxonomy).
     breakdown_chips = ""
     if cluster.breakdown:
         chips = []
         for label, count in sorted(cluster.breakdown.items(), key=lambda kv: -kv[1]):
             sub_pct = (count / n * 100) if n else 0.0
+            cal_chip = ""
+            # Attach calibration chip only for things that look like taxonomy
+            # labels (simple identifiers like 'approach_miss' or 'none', not
+            # condition strings like 'high action noise (≥0.1)').
+            looks_like_label = "_" in label or label == "none"
+            if looks_like_label:
+                cal_chip = render_calibration_chip(label, cal_stats)
             chips.append(
-                f"<span style='display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;"
+                "<span style='display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;"
                 f"background:#e0e7ff;color:#3730a3;border-radius:12px;font-size:12px;'>"
                 f"{_escape(label)} · <b>{count}</b> ({sub_pct:.0f}%)</span>"
+                f"{cal_chip}"
             )
         breakdown_chips = "".join(chips)
 
     # Keyframe grid: PNG per rollout that has video. Click the thumb to open
-    # the source mp4. Two paperclip overlays per thumbnail: top-right copies
-    # the mp4 path, top-left copies the keyframe PNG path. Both buttons block
-    # the parent link's click so they don't accidentally open the mp4.
+    # the source mp4. Two paperclip overlays per thumbnail (PNG/mp4 paths)
+    # plus a population chip in the bottom-left corner.
     thumbs = ""
     for r in cluster.rollouts:
         kf = keyframes.get(r.rollout_id)
@@ -580,6 +613,11 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
             overlays += paperclip_button(
                 r.video_path_host, tooltip="Copy source mp4 path", anchor="top-right"
             )
+        # Population chip overlaid bottom-left over the thumb.
+        pop_chip = (
+            f"<div style='position:absolute;bottom:6px;left:6px;'>"
+            f"{population_chip(r, compact=True)}</div>"
+        )
         thumbs += (
             "<div style='display:inline-block;margin:4px;vertical-align:top;width:180px;'>"
             f"<a href='{mp4_url}' target='_blank' "
@@ -587,7 +625,7 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
             "<div style='position:relative;'>"
             f"<img src='{kf_url}' style='width:180px;height:auto;display:block;"
             "border-radius:6px;border:1px solid #cbd5e1;'/>"
-            f"{overlays}"
+            f"{overlays}{pop_chip}"
             "</div>"
             "<div style='font-family:ui-monospace,monospace;font-size:11px;"
             f"text-align:center;margin-top:3px;opacity:0.85;'>{_escape(r.rollout_id)}</div>"
@@ -634,9 +672,37 @@ def _synthesis_html(mirror_root: Path, mode: str) -> str:
             "any rollout as fail.</i></p>"
         )
 
+    cal_stats = per_label_calibration(rollouts)
     clusters = cluster_by_label(rollouts) if mode == "label" else cluster_by_condition(rollouts)
-    cards = [_cluster_card_html(c, total_failures, keyframes) for c in clusters]
+    cards = [_cluster_card_html(c, total_failures, keyframes, cal_stats) for c in clusters]
     return "".join(cards)
+
+
+def _judge_trust_html(mirror_root: Path) -> str:
+    """Top-of-tab Judge Trust banner for the Deployment findings tab."""
+    rollouts = load_scored_rollouts(mirror_root)
+    return render_judge_trust_banner(judge_trust(rollouts))
+
+
+def _read_dashboard_intro_html() -> str:
+    """The 'How to read this dashboard' accordion content."""
+    return (
+        "<div style='padding:14px 18px;background:#0f172a;border:1px solid #1e293b;"
+        "border-radius:8px;color:#cbd5e1;font-size:13px;line-height:1.6;'>"
+        "<p style='margin:0 0 10px 0;'><b style='color:"
+        f"{CALIBRATION_COLOR};'>Calibration.</b> A portion of rollouts use a "
+        "scripted picker with deliberately-injected failures. Because we caused "
+        "the failure, we know the correct label. We measure the judge against "
+        "those — that's what the <b>Judge calibration</b> tab is for.</p>"
+        "<p style='margin:0 0 10px 0;'><b style='color:"
+        f"{DEPLOYMENT_COLOR};'>Deployment.</b> The rest of the rollouts use a "
+        "real policy (today: a pretrained BC-RNN). The judge labels those "
+        "without a safety net.</p>"
+        "<p style='margin:0;'>The <b>Deployment findings</b> tab applies the "
+        "calibrated judge to the deployment rollouts and cites its calibration "
+        "precision alongside each finding.</p>"
+        "</div>"
+    )
 
 
 def build_app(mirror_root: Path) -> gr.Blocks:
@@ -676,31 +742,37 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         banner_html = gr.HTML(value=banner())
 
         with gr.Tabs():
-            with gr.Tab("Live"), gr.Row():
-                with gr.Column(scale=3):
-                    gr.Markdown("### Agent activity")
-                    chat_html = gr.HTML(value=chat())
-                with gr.Column(scale=3):
-                    gr.Markdown("### Current rollout")
-                    current_video_player = gr.Video(
-                        value=current_video(),
-                        autoplay=True,
-                        loop=True,
-                        height=400,
-                    )
-                    current_video_path_html = gr.HTML(value=_current_video_path_html(mirror_root))
-                    gr.Markdown("### All rollouts")
-                    rollout_gallery = gr.Gallery(
-                        value=rollouts(),
-                        columns=3,
-                        height=300,
-                        object_fit="contain",
-                    )
-                    rollout_paths_html = gr.HTML(value=_rollout_paths_panel_html(mirror_root))
-                with gr.Column(scale=2):
-                    gr.Markdown("### /memories/ tree")
-                    files_html = gr.HTML(value=files())
-            with gr.Tab("Metrics"):
+            with gr.Tab("Live"):
+                with gr.Accordion("What is this tool doing?", open=False):
+                    gr.HTML(value=_read_dashboard_intro_html())
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        gr.Markdown("### Agent activity")
+                        chat_html = gr.HTML(value=chat())
+                    with gr.Column(scale=3):
+                        gr.Markdown("### Current rollout")
+                        current_video_player = gr.Video(
+                            value=current_video(),
+                            autoplay=True,
+                            loop=True,
+                            height=400,
+                        )
+                        current_video_path_html = gr.HTML(
+                            value=_current_video_path_html(mirror_root)
+                        )
+                        gr.Markdown("### All rollouts")
+                        rollout_gallery = gr.Gallery(
+                            value=rollouts(),
+                            columns=3,
+                            height=300,
+                            object_fit="contain",
+                        )
+                        rollout_paths_html = gr.HTML(value=_rollout_paths_panel_html(mirror_root))
+                    with gr.Column(scale=2):
+                        gr.Markdown("### /memories/ tree")
+                        files_html = gr.HTML(value=files())
+            with gr.Tab("Judge calibration"):
+                gr.HTML(value=render_judge_calibration_header())
                 _initial_blocks = metrics_blocks()
                 metrics_cohort_html = gr.HTML(value=_initial_blocks[0])
                 metrics_caption_html = gr.HTML(value=_initial_blocks[1])
@@ -713,9 +785,9 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                 metrics_per_label_html = gr.HTML(value=_initial_blocks[3])
 
                 gr.Markdown(
-                    "### Drill into rollouts\n"
+                    "### Drill into calibration rollouts\n"
                     "Pick an expected/judged pair (or either alone) to see the "
-                    "rollouts behind the number. Leave both blank to clear."
+                    "calibration rollouts behind the number. Leave both blank to clear."
                 )
                 _initial_labels = _heatmap_labels(mirror_root)
                 with gr.Row():
@@ -733,21 +805,27 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                     )
                 metrics_filter_status = gr.HTML(value="")
                 metrics_drill_html = gr.HTML(value=drill(EMPTY_FILTER))
-            with gr.Tab("Failure synthesis · by label"):
-                gr.Markdown(
-                    "**Each card** = one Pass-2 taxonomy label seen across all "
-                    "judged failures. Chips inside show which **conditions** "
-                    "drove that label. Click a keyframe to open the source mp4."
-                )
-                synth_label_html = gr.HTML(value=synth_by_label())
-            with gr.Tab("Failure synthesis · by condition"):
-                gr.Markdown(
-                    "**Each card** = one perturbation condition (or env+policy "
-                    "combination for pretrained). Chips inside show which "
-                    "**Pass-2 labels** that condition produced. Click a keyframe "
-                    "to open the source mp4."
-                )
-                synth_condition_html = gr.HTML(value=synth_by_condition())
+            with gr.Tab("Deployment findings"):
+                # Banner sits above the sub-tabs so a viewer landing here sees
+                # judge-trust info before any cluster card.
+                deployment_trust_html = gr.HTML(value=_judge_trust_html(mirror_root))
+                with gr.Tabs():
+                    with gr.Tab("By label"):
+                        gr.Markdown(
+                            "**Each card** = one Pass-2 taxonomy label seen across "
+                            "all judged failures. Each rollout in the card carries "
+                            "its population chip (calibration vs deployment). "
+                            "Click a keyframe to open the source mp4."
+                        )
+                        synth_label_html = gr.HTML(value=synth_by_label())
+                    with gr.Tab("By condition"):
+                        gr.Markdown(
+                            "**Each card** = one perturbation condition (or env+policy "
+                            "combination for deployment rollouts). Chips inside show "
+                            "which Pass-2 labels that condition produced — each "
+                            "decorated with its calibration precision where available."
+                        )
+                        synth_condition_html = gr.HTML(value=synth_by_condition())
 
         # Fast-refresh outputs: banner + chat + current video. These are cheap
         # to recompute (small JSON reads, a directory listing).
@@ -779,6 +857,10 @@ def build_app(mirror_root: Path) -> gr.Blocks:
         heavy_timer.tick(fn=heatmap, outputs=metrics_heatmap)
         heavy_timer.tick(fn=synth_by_label, outputs=synth_label_html)
         heavy_timer.tick(fn=synth_by_condition, outputs=synth_condition_html)
+        heavy_timer.tick(
+            fn=lambda: _judge_trust_html(mirror_root),
+            outputs=deployment_trust_html,
+        )
 
         # Dropdown changes → drill-down filter. (gr.Plot in Gradio 6 only emits
         # .change, not .select, so cell clicks aren't wired; a pair of label

@@ -26,9 +26,12 @@ from src.metrics import LabeledRollout, LabelStats
 from src.metrics import compute as compute_label_metrics
 from src.sim.scripted import FailureMode
 from src.ui.synthesis import (
+    CALIBRATION_COLOR,
+    DEPLOYMENT_COLOR,
     KEYFRAMES_DIR_NAME,
     JudgeMetrics,
     ScoredRollout,
+    html_escape,
     paperclip_button,
 )
 
@@ -41,22 +44,21 @@ WILSON_Z_95 = 1.96  # 95% Wilson CI z-score; no scipy required
 
 @dataclass(frozen=True)
 class CohortCounts:
-    """The denominators every percentage on this tab is divided by."""
+    """The calibration / deployment denominators that frame this tab."""
 
-    total: int
-    binary_scored: int  # rollouts that received a Pass-1 verdict
-    label_scored: int  # rollouts that have ground-truth label (scripted)
-    excluded_pretrained: int  # pretrained rollouts (label ground truth unknown)
+    n_calibration: int  # rollouts with injected ground-truth label
+    n_calibration_with_findings: int  # of those, ones the judge has finished
+    n_deployment: int  # rollouts with no ground-truth label (pretrained etc.)
 
 
 def cohort_counts(rollouts: list[ScoredRollout]) -> CohortCounts:
+    n_cal = sum(1 for r in rollouts if r.ground_truth_label)
+    n_cal_done = sum(1 for r in rollouts if r.ground_truth_label and r.pass1_verdict is not None)
+    n_dep = len(rollouts) - n_cal
     return CohortCounts(
-        total=len(rollouts),
-        binary_scored=sum(1 for r in rollouts if r.pass1_verdict is not None),
-        label_scored=sum(1 for r in rollouts if r.ground_truth_label),
-        excluded_pretrained=sum(
-            1 for r in rollouts if r.policy_kind == "pretrained" and not r.ground_truth_label
-        ),
+        n_calibration=n_cal,
+        n_calibration_with_findings=n_cal_done,
+        n_deployment=n_dep,
     )
 
 
@@ -136,14 +138,14 @@ def _used_labels(metrics: JudgeMetrics_label, order: list[FailureMode]) -> list[
 
 
 def render_cohort_strip(counts: CohortCounts) -> str:
+    """Three-pill cohort strip: calibration / in-this-tab / excluded(deployment)."""
     pills = [
-        ("Total", counts.total),
-        ("Binary-scored", counts.binary_scored),
-        ("Label-scored", counts.label_scored),
-        ("Excluded (pretrained)", counts.excluded_pretrained),
+        ("Calibration rollouts", counts.n_calibration, CALIBRATION_COLOR),
+        ("In this tab", counts.n_calibration_with_findings, CALIBRATION_COLOR),
+        ("Excluded (deployment, no GT)", counts.n_deployment, DEPLOYMENT_COLOR),
     ]
     chips: list[str] = []
-    for label, n in pills:
+    for label, n, accent in pills:
         small = n > 0 and n < SMALL_SAMPLE_THRESHOLD
         small_chip = (
             "<span style='margin-left:8px;font-size:10px;color:#94a3b8;background:#334155;"
@@ -153,14 +155,14 @@ def render_cohort_strip(counts: CohortCounts) -> str:
             else ""
         )
         chips.append(
-            f"<div style='padding:10px 16px;background:#1e293b;border-radius:24px;"
-            f"display:flex;align-items:baseline;gap:8px;'>"
-            f"<span style='font-size:10px;color:#94a3b8;text-transform:uppercase;"
-            f"letter-spacing:1.4px;font-weight:600;'>{label}</span>"
+            "<div style='padding:10px 16px;background:#1e293b;border-radius:24px;"
+            f"display:flex;align-items:baseline;gap:8px;border-left:3px solid {accent};'>"
+            f"<span style='font-size:10px;color:{accent};text-transform:uppercase;"
+            f"letter-spacing:1.4px;font-weight:700;'>{label}</span>"
             f"<span style='font-size:20px;font-weight:700;color:#f1f5f9;"
             f"font-variant-numeric:tabular-nums;'>{n}</span>"
             f"{small_chip}"
-            f"</div>"
+            "</div>"
         )
     return (
         "<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;'>"
@@ -179,6 +181,198 @@ def render_caption() -> str:
         "<b>Pass-2</b>: taxonomy label vs the failure-injection parameter used in the "
         "scripted policy. Pretrained rollouts enter Pass-1 only."
         "</div>"
+    )
+
+
+def render_judge_calibration_header() -> str:
+    """Framed purpose-line strip at the top of the Judge calibration tab.
+
+    A viewer who reads only this strip + the cohort pills below should
+    already understand what the tab is and is not.
+    """
+    return (
+        "<div style='padding:14px 18px;background:#0f172a;"
+        f"border:1px solid {CALIBRATION_COLOR}55;border-left:4px solid {CALIBRATION_COLOR};"
+        "border-radius:8px;margin-bottom:14px;'>"
+        f"<div style='font-size:10px;color:{CALIBRATION_COLOR};font-weight:800;"
+        "text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;'>"
+        "JUDGE CALIBRATION</div>"
+        "<div style='color:#e2e8f0;font-size:14px;line-height:1.55;'>"
+        "This tab measures the <b>judge</b>, not the policy. The numbers here "
+        "come from rollouts where we injected a known failure, so we know the "
+        "correct label. Policy findings live in the <b>Deployment findings</b> tab."
+        "</div></div>"
+    )
+
+
+# ---- Judge trust summary (used by the Deployment-findings header banner) ---------
+
+
+@dataclass(frozen=True)
+class JudgeTrust:
+    """Compact summary of judge calibration for the Deployment findings banner."""
+
+    n_calibration: int
+    binary_precision_correct: int
+    binary_precision_n: int
+    binary_recall_correct: int
+    binary_recall_n: int
+    per_label_precision_avg: float | None  # None if no labels with support
+    per_label_recall_avg: float | None
+    n_labels_with_support: int  # taxonomy labels with cal support >= 3
+    total_taxonomy_labels: int
+
+
+def judge_trust(rollouts: list[ScoredRollout]) -> JudgeTrust:
+    """Summarize judge calibration for the trust banner."""
+    binary = compute_label_metrics([])  # placeholder; replaced below if there's data
+    labeled = to_labeled_rollouts(rollouts)
+    label_metrics = compute_label_metrics(labeled)
+
+    # Binary precision/recall (pass-vs-fail) on calibration rollouts.
+    tp = fp = fn = tn = 0
+    for r in rollouts:
+        if r.population != "calibration" or r.pass1_verdict is None:
+            continue
+        env_failed = not r.success
+        judge_failed = r.judged_failure
+        if env_failed and judge_failed:
+            tp += 1
+        elif not env_failed and judge_failed:
+            fp += 1
+        elif env_failed and not judge_failed:
+            fn += 1
+        else:
+            tn += 1
+
+    # Per-label precision/recall averaged across labels with support >= 3.
+    qual_labels = [s for s in label_metrics.per_label if (s.tp + s.fn) >= 3 or (s.tp + s.fp) >= 3]
+    avg_p = sum(s.precision for s in qual_labels) / len(qual_labels) if qual_labels else None
+    avg_r = sum(s.recall for s in qual_labels) / len(qual_labels) if qual_labels else None
+
+    n_cal = sum(1 for r in rollouts if r.population == "calibration")
+    n_taxonomy_total = len([m for m in FailureMode if m != FailureMode.NONE])
+
+    _ = binary  # quiet the unused warning above
+    return JudgeTrust(
+        n_calibration=n_cal,
+        binary_precision_correct=tp,
+        binary_precision_n=tp + fp,
+        binary_recall_correct=tp,
+        binary_recall_n=tp + fn,
+        per_label_precision_avg=avg_p,
+        per_label_recall_avg=avg_r,
+        n_labels_with_support=len(qual_labels),
+        total_taxonomy_labels=n_taxonomy_total,
+    )
+
+
+def render_judge_trust_banner(trust: JudgeTrust) -> str:
+    """The 'how much to trust these findings' banner at the top of Deployment findings."""
+    if trust.n_calibration == 0:
+        return (
+            "<div style='padding:14px 18px;background:#0f172a;"
+            f"border:1px solid {DEPLOYMENT_COLOR}55;border-left:4px solid {DEPLOYMENT_COLOR};"
+            "border-radius:8px;margin-bottom:14px;'>"
+            f"<div style='font-size:10px;color:{DEPLOYMENT_COLOR};font-weight:800;"
+            "text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;'>"
+            "JUDGE TRUST · uncalibrated run</div>"
+            "<div style='color:#e2e8f0;font-size:13px;line-height:1.55;'>"
+            "No calibration rollouts in this run. Judge outputs below are "
+            "<b>uncalibrated</b> — treat as directional, not measured."
+            "</div></div>"
+        )
+
+    bp = trust.binary_precision_correct
+    bp_n = trust.binary_precision_n
+    br = trust.binary_recall_correct
+    br_n = trust.binary_recall_n
+    bp_pct = (bp / bp_n * 100) if bp_n else 0.0
+    br_pct = (br / br_n * 100) if br_n else 0.0
+    avg_p = (
+        f"<b>{trust.per_label_precision_avg:.2f}</b>"
+        if trust.per_label_precision_avg is not None
+        else "<span style='opacity:0.6'>(no labels with support ≥3)</span>"
+    )
+    avg_r = (
+        f"<b>{trust.per_label_recall_avg:.2f}</b>"
+        if trust.per_label_recall_avg is not None
+        else "<span style='opacity:0.6'>—</span>"
+    )
+
+    return (
+        "<div style='padding:14px 18px;background:#0f172a;"
+        f"border:1px solid {CALIBRATION_COLOR}66;border-left:4px solid {CALIBRATION_COLOR};"
+        "border-radius:8px;margin-bottom:14px;'>"
+        f"<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:10px;'>"
+        f"<span style='font-size:10px;color:{CALIBRATION_COLOR};font-weight:800;"
+        "text-transform:uppercase;letter-spacing:2px;'>JUDGE TRUST</span>"
+        f"<span style='font-size:11px;color:#94a3b8;'>"
+        f"pulled from {trust.n_calibration} calibration rollouts</span></div>"
+        "<div style='display:grid;grid-template-columns:auto 1fr;gap:6px 18px;"
+        "font-size:13px;color:#cbd5e1;line-height:1.5;font-family:ui-monospace,monospace;'>"
+        "<div style='color:#94a3b8;'>Binary detection</div>"
+        f"<div>precision <b>{bp}/{bp_n}</b> · {bp_pct:.1f}%  ·  "
+        f"recall <b>{br}/{br_n}</b> · {br_pct:.1f}%</div>"
+        "<div style='color:#94a3b8;'>Per-label average</div>"
+        f"<div>precision {avg_p}   ·   recall {avg_r}</div>"
+        "<div style='color:#94a3b8;'>Coverage</div>"
+        f"<div><b>{trust.n_labels_with_support}</b> of "
+        f"{trust.total_taxonomy_labels} taxonomy labels have support ≥ 3</div>"
+        "</div>"
+        "<div style='margin-top:10px;font-size:12px;color:#cbd5e1;font-style:italic;'>"
+        "Findings below are <b>calibrated estimates</b>. Each failure label is "
+        "decorated with its calibration precision where available."
+        "</div></div>"
+    )
+
+
+# ---- Per-label calibration precision lookup (used to decorate deployment findings) ----
+
+
+def per_label_calibration(rollouts: list[ScoredRollout]) -> dict[str, LabelStats]:
+    """Map taxonomy label → its LabelStats from the calibration subset.
+
+    Used by the Deployment findings tab to attach 'judge P = X' chips to
+    deployment-finding label counts.
+    """
+    labeled = to_labeled_rollouts(rollouts)
+    metrics = compute_label_metrics(labeled)
+    return {s.label.value: s for s in metrics.per_label}
+
+
+def render_calibration_chip(label: str, stats: dict[str, LabelStats]) -> str:
+    """Return a 'judge P = X' chip for a given label, or 'uncalibrated' if support<3.
+
+    Tooltip mentions the calibration source so the viewer can trace it back.
+    """
+    s = stats.get(label)
+    if s is None:
+        text = "uncalibrated"
+        title = "No calibration rollouts have this expected label."
+        color = "#64748b"
+    else:
+        support = s.tp + s.fn
+        if support < 3:
+            text = "uncalibrated"
+            title = (
+                f"Only {support} calibration rollouts with injected label "
+                f"'{label}' — too few to publish a precision."
+            )
+            color = "#64748b"
+        else:
+            text = f"judge P = {s.precision:.2f}"
+            title = (
+                f"Based on {support} calibration rollouts with injected label "
+                f"'{label}'. See Judge calibration tab."
+            )
+            color = CALIBRATION_COLOR
+    return (
+        f"<span title='{html_escape(title)}' "
+        f"style='display:inline-block;padding:2px 7px;margin-left:6px;"
+        f"background:{color}22;color:{color};border-radius:8px;font-size:10px;"
+        "font-weight:600;font-family:ui-monospace,monospace;letter-spacing:0.3px;'>"
+        f"{text}</span>"
     )
 
 

@@ -17,8 +17,9 @@ from tests.test_synthesis import _scored
 class TestCohortCounts:
     def test_empty(self) -> None:
         c = cohort_counts([])
-        assert c.total == 0 and c.binary_scored == 0
-        assert c.label_scored == 0 and c.excluded_pretrained == 0
+        assert c.n_calibration == 0
+        assert c.n_calibration_with_findings == 0
+        assert c.n_deployment == 0
 
     def test_mixed(self) -> None:
         rollouts = [
@@ -29,10 +30,18 @@ class TestCohortCounts:
             _scored("p0", pass1="fail", pass2_label="approach_miss", policy_kind="pretrained"),
         ]
         c = cohort_counts(rollouts)
-        assert c.total == 3
-        assert c.binary_scored == 3  # all three got a pass1 verdict
-        assert c.label_scored == 2  # only the two scripted with ground truth
-        assert c.excluded_pretrained == 1
+        assert c.n_calibration == 2  # s0, s1 have ground truth
+        assert c.n_calibration_with_findings == 2  # both have pass1 verdicts
+        assert c.n_deployment == 1  # p0
+
+    def test_calibration_pending_judge(self) -> None:
+        # Calibration rollout exists but judge hasn't run yet → not in tab.
+        rollouts = [
+            _scored("s0", pass1=None, pass2_label=None, ground_truth_label="approach_miss"),
+        ]
+        c = cohort_counts(rollouts)
+        assert c.n_calibration == 1
+        assert c.n_calibration_with_findings == 0
 
 
 class TestWilsonCI:

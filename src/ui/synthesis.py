@@ -38,6 +38,18 @@ THUMBNAIL_LONG_EDGE_PX = 384
 POINT_DOT_RADIUS_PX = 16
 POINT_DOT_OUTLINE_WIDTH = 4
 
+# ---- Population palette ---------------------------------------------------------
+# The dashboard distinguishes two populations of rollouts everywhere:
+#   - Calibration: scripted policy + injected failure (ground truth known)
+#   - Deployment: pretrained / real policy (no ground truth label)
+# These two colors thread through every chip, banner, and accent so a viewer
+# can tell at a glance which population something belongs to. NOT the phase
+# colors (those mean planner/rollout/judge/report) — different axis.
+CALIBRATION_COLOR = "#f59e0b"  # amber
+DEPLOYMENT_COLOR = "#38bdf8"  # steel blue
+CALIBRATION_LABEL = "Calibration"
+DEPLOYMENT_LABEL = "Deployment"
+
 
 # ---- Tiny shared HTML helpers -----------------------------------------------------
 # Both src/ui/app.py and src/ui/metrics_view.py render keyframe + mp4 paths and
@@ -129,6 +141,50 @@ class ScoredRollout:
     def judged_failure(self) -> bool:
         """True if the judge said this rollout failed (Pass-1 = fail)."""
         return self.pass1_verdict == "fail"
+
+    @property
+    def population(self) -> str:
+        """'calibration' if injected ground truth exists, else 'deployment'."""
+        return "calibration" if self.ground_truth_label else "deployment"
+
+
+def population_chip(rollout: ScoredRollout, *, compact: bool = False) -> str:
+    """Render the calibration/deployment chip for a rollout.
+
+    Calibration chip shows the injected ground-truth label.
+    Deployment chip shows the policy + 'no GT' so it's clear there's no
+    label to compare against.
+    """
+    if rollout.population == "calibration":
+        color = CALIBRATION_COLOR
+        kind_label = CALIBRATION_LABEL
+        sub = f"expected: {rollout.ground_truth_label}"
+    else:
+        color = DEPLOYMENT_COLOR
+        kind_label = DEPLOYMENT_LABEL
+        policy = "BC-RNN" if rollout.policy_kind == "pretrained" else rollout.policy_kind
+        sub = f"{policy} · no GT"
+    sub_html = (
+        ""
+        if compact
+        else (
+            f"<span style='color:#94a3b8;font-size:10px;margin-left:6px;'>{html_escape(sub)}</span>"
+        )
+    )
+    return (
+        "<span style='display:inline-flex;align-items:center;gap:4px;"
+        f"padding:2px 8px;background:{color}22;color:{color};border-radius:10px;"
+        f"font-size:10px;font-weight:700;text-transform:uppercase;"
+        "letter-spacing:1px;font-family:-apple-system,system-ui,sans-serif;'>"
+        f"<span style='font-size:8px;'>●</span>{kind_label}{sub_html}"
+        "</span>"
+    )
+
+
+def cohort_split(rollouts: list[ScoredRollout]) -> tuple[int, int]:
+    """Return (n_calibration, n_deployment)."""
+    n_cal = sum(1 for r in rollouts if r.population == "calibration")
+    return n_cal, len(rollouts) - n_cal
 
 
 @dataclass(frozen=True)
