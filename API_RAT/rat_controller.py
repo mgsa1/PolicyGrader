@@ -9,18 +9,15 @@ Controls:
     E          strafe right
 
 MuJoCo's native viewer hijacks several letter keys as render-flag
-hotkeys (W = wireframe, D = depth, A = actuator vis, S = skin vis,
-K = skybox, O = shadow, L = reflection, etc.), and those are handled
-in the C++ layer before any Python callback can see them. The safe
-set of non-hijacked keys for gameplay is tiny — E, Q, U, V, Y, and
-the arrow keys — so movement lives on the arrows and strafe on Q/E.
+hotkeys (W = wireframe, D = depth, A = actuator vis, etc.), handled
+in C++ before any Python callback sees them. So movement lives on
+the arrows, strafe on Q/E.
 
-Translation uses direct-force motors with damping compensation: while
-a movement key is held we apply `m*accel + c*v_along_axis`, which
-gives a *constant* acceleration (linear speed ramp) up to the max
-speed — no spamming keys, just hold. Release = zero force, joint
-damping handles the icy coast. Knockback impulses from the broom pass
-through unresisted, so the player-vs-broom dynamic stays dramatic.
+Movement model (standard video-game feel, not ice):
+  • Hold an arrow: constant acceleration up to max speed.
+  • Release: strong brake on the unheld axis stops the rat in ~0.2 s.
+  • Broom hit: a 1.2 s "stun slide" window bypasses the brake so the
+    rat actually flies — player still has partial input control.
 
 Yaw is a velocity servo so aiming snaps to stop on release.
 """
@@ -33,13 +30,17 @@ import time
 import mujoco
 import numpy as np
 
-# RC-car feel: snappy ramp to max speed (~0.5 s), brisk turn rate, modest
-# coast when released.
 MOVE_ACCEL = 10.0
 STRAFE_ACCEL = 6.0
 MAX_FORWARD = 5.0
 MAX_STRAFE = 3.5
 YAW_RATE = 4.0
+# Brake force per (m/s) of unwanted velocity. With m_eff ~ 0.255 kg this
+# stops the rat in ~150 ms from full speed when no input is held.
+BRAKE_COEF = 8.0
+# After a broom hit the brake is muted for this long so the fling reads
+# as a real knock-back, not an instant snap-back.
+STUN_SLIDE_DURATION = 1.2
 
 # macOS's default key auto-repeat has a long initial delay (~500 ms)
 # before it fires subsequent repeat events. Use a dynamic timeout: treat
@@ -76,6 +77,9 @@ class RatController:
         # event, auto-repeat is active — switch that key to the tight
         # KEY_HOLD_REPEAT timeout.
         self.in_repeat: dict[int, bool] = {}
+        # Set by main.py whenever the broom touches the rat: while time
+        # < stun_until, skip the braking force so the fling actually flies.
+        self.stun_until = 0.0
 
     def on_key(self, key: int) -> None:
         now = time.monotonic()
@@ -115,34 +119,50 @@ class RatController:
         fwd_x, fwd_y = cos_y, sin_y
         strafe_x, strafe_y = -sin_y, cos_y
 
+        # Decompose velocity into rat-local forward / strafe components so we
+        # can push or brake each axis independently.
+        vel_fwd = cur_vx * fwd_x + cur_vy * fwd_y
+        vel_str = cur_vx * strafe_x + cur_vy * strafe_y
+
+        stunned = time.monotonic() < self.stun_until
+
         fx = 0.0
         fy = 0.0
 
+        # --- Forward / backward axis ---
         if forward != 0:
-            vel_along = cur_vx * fwd_x + cur_vy * fwd_y
-            signed_speed = forward * vel_along  # positive while moving with input
+            signed_speed = forward * vel_fwd
             if signed_speed < MAX_FORWARD:
-                # F = m * a  (desired acceleration) + damping compensation
-                # (c*v in the forward direction). Yields a *constant* accel.
                 push = forward * (self.m_eff * MOVE_ACCEL)
-                damp_comp_x = self.damp_x * vel_along * fwd_x
-                damp_comp_y = self.damp_y * vel_along * fwd_y
+                damp_comp_x = self.damp_x * vel_fwd * fwd_x
+                damp_comp_y = self.damp_y * vel_fwd * fwd_y
                 fx += push * fwd_x + damp_comp_x
                 fy += push * fwd_y + damp_comp_y
+        elif not stunned:
+            brake = -BRAKE_COEF * vel_fwd
+            fx += brake * fwd_x
+            fy += brake * fwd_y
 
+        # --- Strafe axis ---
         if strafe != 0:
-            vel_along_s = cur_vx * strafe_x + cur_vy * strafe_y
-            signed_s = strafe * vel_along_s
+            signed_s = strafe * vel_str
             if signed_s < MAX_STRAFE:
                 push = strafe * (self.m_eff * STRAFE_ACCEL)
-                damp_comp_x = self.damp_x * vel_along_s * strafe_x
-                damp_comp_y = self.damp_y * vel_along_s * strafe_y
+                damp_comp_x = self.damp_x * vel_str * strafe_x
+                damp_comp_y = self.damp_y * vel_str * strafe_y
                 fx += push * strafe_x + damp_comp_x
                 fy += push * strafe_y + damp_comp_y
+        elif not stunned:
+            brake = -BRAKE_COEF * vel_str
+            fx += brake * strafe_x
+            fy += brake * strafe_y
 
         self.data.ctrl[self.act_fx] = fx
         self.data.ctrl[self.act_fy] = fy
         self.data.ctrl[self.act_vyaw] = turn * YAW_RATE
+
+    def mark_broom_hit(self) -> None:
+        self.stun_until = time.monotonic() + STUN_SLIDE_DURATION
 
     def position(self) -> np.ndarray:
         return np.array(self.data.xpos[self.rat_body_id])

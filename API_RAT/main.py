@@ -99,6 +99,7 @@ def main() -> None:
         data.mocap_pos[broom_mocap_id] = data.xpos[hand_body]
         data.mocap_quat[broom_mocap_id] = data.xquat[hand_body]
         rat.clear_input()
+        rat.stun_until = 0.0
         robot.reaction_timer = 0.0
         robot.lunge_state = "idle"
         robot.lunge_cooldown = 0.0
@@ -226,6 +227,9 @@ def main() -> None:
                         contact_dv_y = dv_y - actuator_dv_y
                         data.qvel[rat.dofadr_x] += PUSHBACK_BOOST * contact_dv_x
                         data.qvel[rat.dofadr_y] += PUSHBACK_BOOST * contact_dv_y
+                        # Let the rat slide through the brake for a moment
+                        # so the hit actually reads as a fling.
+                        rat.mark_broom_hit()
 
                     sim_accum -= sim_dt
                     steps_this_frame += 1
@@ -291,7 +295,7 @@ def print_banner() -> None:
     print("  You are the rat. Steal the ANTHROPIC_API_KEY box.")
     print("  ↑/↓ move  |  ←/→ turn  |  Q/E strafe  |  R reset")
     print("  (MuJoCo's viewer reserves W, A, S, D for debug toggles — avoid them.)")
-    print("  Floor is ice. Broom is fast. Good luck.")
+    print("  Broom is fast. Grab the cheese. Good luck.")
     print("=" * 52)
     print()
 

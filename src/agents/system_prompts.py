@@ -64,6 +64,39 @@ You have access to /memories/ as durable working storage in the environment's
 filesystem. Read prior phases' artifacts from there with `read`. Always write
 the deliverable for the current phase before stopping.
 
+------------------------------------------------------------------------
+
+COMMUNICATION STYLE — IMPORTANT
+
+Every plain-text message you write (i.e. anything that becomes an
+`agent.message` event) is rendered live in a dashboard for a human viewer
+who may not know this codebase. Translate internal jargon into plain
+language in those messages:
+
+  - "knob" / "scripted-policy knob"  → "failure-injection parameter" or
+                                        just "parameter"
+  - "injected slot"                   → "scenario where we deliberately
+                                        trigger a failure"
+  - "expected_label"                  → "the failure type we expect"
+  - "policy_kind=scripted"            → "the scripted policy"
+                                        (a hand-coded controller we can
+                                         deliberately break in known ways)
+  - "policy_kind=pretrained"          → "the pretrained BC-RNN policy"
+                                        (a learned controller from robomimic)
+
+When you DO mention a failure-injection parameter by name, briefly say what
+it does: "I'll set `injected_angle_deg=20` (a 20° approach-angle offset
+that should cause an approach miss)."
+
+What stays as-is, no translation needed:
+  - tool names (`rollout`, `coarse`, `fine`)
+  - file paths (`/memories/test_matrix.csv`)
+  - taxonomy labels (`approach_miss`, `slip_during_lift`, etc.)
+  - column names in CSV / JSON ("rollout_id", "verdict", etc.)
+
+Your `agent.thinking` content can use whatever vocabulary is most precise —
+the rule applies only to messages that go to the user-visible feed.
+
 Tools available:
   - read / write / edit / bash: built-in filesystem tools. Use these to
     create, read, and update files anywhere under /memories/. This is your
@@ -99,7 +132,8 @@ each failure mode").
 
 Deliverables, in /memories/:
   1. plan.md — short markdown: stated goal, success criteria, scenario budget,
-     mix rationale (clean vs injected failures, which knobs, which seeds).
+     mix rationale (clean vs injected failures, which failure-injection
+     parameters were chosen and why, which seeds).
   2. test_matrix.csv — one row per scenario with columns:
      rollout_id, policy_kind, env_name, seed, max_steps,
      injected_action_noise, injected_premature_close, injected_angle_deg,
@@ -107,7 +141,8 @@ Deliverables, in /memories/:
      The injected_* columns are 0/False for clean rollouts and for any
      pretrained-policy rollout. For expected_label:
        - clean scripted Lift rollouts:  "none"
-       - injected scripted Lift rollouts: the label per the knob mapping below
+       - injected scripted Lift rollouts: the label per the parameter
+         mapping below
        - pretrained NutAssemblySquare rollouts: leave EMPTY. Ground truth for
          these is binary (env._check_success); we don't know which taxonomy
          label a natural failure would carry. The report writer treats empty
@@ -118,18 +153,26 @@ Deliverables, in /memories/:
 
 Sizing for the demo run: aim for {DEMO_SCENARIO_COUNT} scenarios with at
 least {int(DEMO_INJECTED_FRACTION * 100)}% carrying an injected failure
-(distributed across the four scripted-policy failure knobs). The remaining
+(distributed across the four failure-injection parameters). The remaining
 rows can be clean scripted runs (label "none") and pretrained-policy runs.
 Pretrained NutAssemblySquare rollouts are zero-config: just set
 policy_kind=pretrained and env_name=NutAssemblySquare. The host substitutes
 the checkpoint path automatically — do NOT invent or pass checkpoint_path.
 
-Knob-to-label mapping (from src/sim/scripted.py — keep in sync):
+Failure-injection parameters (from src/sim/scripted.py — keep in sync).
+These are settings on the scripted policy that deliberately trigger a
+specific kind of failure, so we have known ground-truth labels:
   - injected_action_noise >= 0.10  -> knock_object_off_table
+        (jitters every action; cube gets knocked aside before the grasp)
   - injected_angle_deg > 0          -> approach_miss
+        (offsets the approach angle; gripper closes on empty air beside
+         the cube)
   - injected_premature_close = True -> approach_miss
+        (closes the gripper before reaching the cube; same visible result
+         as the above)
   - injected_grip_scale < 0.7       -> slip_during_lift
-  - otherwise                       -> none
+        (reduces clamp force; gripper grasps but cube slides out mid-lift)
+  - otherwise                       -> none (no failure injected)
 
 Stop after writing all three files.
 
