@@ -13,6 +13,7 @@ from src.ui.synthesis import (
     ScoredRollout,
     cluster_by_condition,
     cluster_by_label,
+    compute_metrics,
     load_scored_rollouts,
 )
 
@@ -26,6 +27,7 @@ def _scored(
     knobs: dict[str, Any] | None = None,
     policy_kind: str = "scripted",
     env_name: str = "Lift",
+    ground_truth_label: str | None = None,
 ) -> ScoredRollout:
     base_knobs = {
         "injected_action_noise": 0.0,
@@ -41,7 +43,8 @@ def _scored(
         policy_kind=policy_kind,
         seed=0,
         success=success,
-        ground_truth_label=None,
+        steps_taken=42,
+        ground_truth_label=ground_truth_label,
         injection_knobs=base_knobs,
         pass1_verdict=pass1,
         pass1_failure_frame_range=(3, 13) if pass1 == "fail" else None,
@@ -139,6 +142,67 @@ class TestClusterByCondition:
         assert len(noise_cluster.rollouts) == 3
         assert noise_cluster.breakdown["knock_object_off_table"] == 2
         assert noise_cluster.breakdown["approach_miss"] == 1
+
+
+class TestComputeMetrics:
+    def test_perfect_pass1(self) -> None:
+        # 2 clean (env=success, judge=pass) + 2 fail (env=fail, judge=fail).
+        rollouts = [
+            _scored("c0", success=True, pass1="pass", pass2_label=None),
+            _scored("c1", success=True, pass1="pass", pass2_label=None),
+            _scored("f0", success=False, pass1="fail", pass2_label="approach_miss"),
+            _scored("f1", success=False, pass1="fail", pass2_label="slip_during_lift"),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.pass1_tp == 2
+        assert m.pass1_fp == 0
+        assert m.pass1_fn == 0
+        assert m.pass1_tn == 2
+        assert m.pass1_precision == 1.0
+        assert m.pass1_recall == 1.0
+
+    def test_pass1_false_positives(self) -> None:
+        # Judge cried wolf on a clean rollout.
+        rollouts = [
+            _scored("c0", success=True, pass1="fail", pass2_label="approach_miss"),
+            _scored("f0", success=False, pass1="fail", pass2_label="approach_miss"),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.pass1_tp == 1
+        assert m.pass1_fp == 1
+        assert m.pass1_precision == 0.5
+        assert m.pass1_recall == 1.0
+
+    def test_pass2_label_accuracy(self) -> None:
+        rollouts = [
+            _scored(
+                "f0",
+                success=False,
+                pass1="fail",
+                pass2_label="approach_miss",
+                ground_truth_label="approach_miss",  # match
+            ),
+            _scored(
+                "f1",
+                success=False,
+                pass1="fail",
+                pass2_label="approach_miss",
+                ground_truth_label="slip_during_lift",  # mismatch
+            ),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.pass2_labeled == 2
+        assert m.pass2_correct == 1
+        assert m.pass2_label_accuracy == 0.5
+
+    def test_pass2_accuracy_none_when_no_ground_truth(self) -> None:
+        # All rollouts pretrained — no ground truth label.
+        rollouts = [
+            _scored("p0", success=False, pass1="fail", pass2_label="approach_miss"),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.pass2_labeled == 0
+        assert m.pass2_label_accuracy is None
 
 
 class TestLoadScoredRollouts:

@@ -34,15 +34,21 @@ import mujoco
 import numpy as np
 
 # RC-car feel: snappy ramp to max speed (~0.5 s), brisk turn rate, modest
-# coast when released. Spam-proof key hold (300 ms) so if GLFW's auto-
-# repeat on macOS is slow, the controls don't stutter.
+# coast when released.
 MOVE_ACCEL = 10.0
 STRAFE_ACCEL = 6.0
 MAX_FORWARD = 5.0
 MAX_STRAFE = 3.5
 YAW_RATE = 4.0
 
-KEY_HOLD_TIMEOUT = 0.3
+# macOS's default key auto-repeat has a long initial delay (~500 ms)
+# before it fires subsequent repeat events. Use a dynamic timeout: treat
+# the key as held for up to KEY_HOLD_INITIAL after the first press so
+# the rat doesn't stall during that gap, then tighten to KEY_HOLD_REPEAT
+# once we see a second event (= auto-repeat is running, release detection
+# becomes snappy again).
+KEY_HOLD_INITIAL = 0.7
+KEY_HOLD_REPEAT = 0.08
 
 
 class RatController:
@@ -66,13 +72,30 @@ class RatController:
         self.damp_x = float(model.dof_damping[self.dofadr_x])
         self.damp_y = float(model.dof_damping[self.dofadr_y])
         self.last_seen: dict[int, float] = {}
+        # When we see a key arrive again within REPEAT window of the prior
+        # event, auto-repeat is active — switch that key to the tight
+        # KEY_HOLD_REPEAT timeout.
+        self.in_repeat: dict[int, bool] = {}
 
     def on_key(self, key: int) -> None:
-        self.last_seen[key] = time.monotonic()
+        now = time.monotonic()
+        prev = self.last_seen.get(key, 0.0)
+        if prev and now - prev < KEY_HOLD_INITIAL:
+            self.in_repeat[key] = True
+        else:
+            self.in_repeat[key] = False
+        self.last_seen[key] = now
 
     def _held(self, *keys: int) -> bool:
         now = time.monotonic()
-        return any((now - self.last_seen.get(k, 0.0)) < KEY_HOLD_TIMEOUT for k in keys)
+        for k in keys:
+            last = self.last_seen.get(k, 0.0)
+            if not last:
+                continue
+            timeout = KEY_HOLD_REPEAT if self.in_repeat.get(k, False) else KEY_HOLD_INITIAL
+            if now - last < timeout:
+                return True
+        return False
 
     def step(self) -> None:
         import glfw
@@ -126,3 +149,4 @@ class RatController:
 
     def clear_input(self) -> None:
         self.last_seen.clear()
+        self.in_repeat.clear()

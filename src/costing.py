@@ -70,7 +70,7 @@ class CostTracker:
 
 
 def baseline_cost_for(n_rollouts: int) -> float:
-    """Manual-review baseline cost: $50/hr × 3 min/rollout × N."""
+    """Manual-review baseline cost: $75/hr × 3 min/rollout × N."""
     hours = n_rollouts * BASELINE_SECONDS_PER_ROLLOUT / 3600
     return hours * BASELINE_HOURLY_RATE_USD
 
@@ -78,6 +78,34 @@ def baseline_cost_for(n_rollouts: int) -> float:
 def baseline_seconds_for(n_rollouts: int) -> int:
     """Manual-review baseline wall time if a single reviewer works sequentially."""
     return n_rollouts * BASELINE_SECONDS_PER_ROLLOUT
+
+
+# Per-rollout review overhead beyond just watching: scrubbing back, reading
+# notes, jotting a label. 60s is a sympathetic single-pass estimate.
+BASELINE_REVIEW_OVERHEAD_S = 60
+
+
+def estimated_video_duration_s(env_name: str, steps_taken: int | None = None) -> float:
+    """Estimate a rollout video's playback duration in seconds.
+
+    Uses steps_taken when provided (each rollout records at the env's
+    control frequency, default 20 Hz, plus our 1 s post-success hold).
+    Falls back to a per-env max if steps_taken is unknown.
+    """
+    if steps_taken is not None and steps_taken > 0:
+        return steps_taken / 20.0 + 1.0  # +1s for the post-success hold
+    if env_name == "NutAssemblySquare":
+        return 20.0  # 400 max_steps / 20 Hz
+    return 10.0  # Lift default (200 max_steps / 20 Hz)
+
+
+def baseline_time_seconds_for_videos(durations_s: list[float]) -> float:
+    """Time baseline = sum of clip durations + BASELINE_REVIEW_OVERHEAD_S per clip.
+
+    Closer to a real reviewer's wall time than the flat 3 min/rollout cost
+    baseline — they only need to watch each clip once + take a note.
+    """
+    return sum(d + BASELINE_REVIEW_OVERHEAD_S for d in durations_s)
 
 
 def format_duration(seconds: float) -> str:

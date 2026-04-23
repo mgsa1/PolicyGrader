@@ -51,7 +51,7 @@ def main() -> None:
 
     hand_body = model.body("hand").id
     broom_body = model.body("broom").id
-    key_box_body = model.body("ANTHROPIC_API_KEY").id
+    key_box_body = model.body("key_cheese").id
     rat_cam_id = model.camera("rat_cam").id
     intro_cam_id = model.camera("intro_cam").id
     broom_mocap_id = int(model.body_mocapid[broom_body])
@@ -129,9 +129,10 @@ def main() -> None:
         ) as viewer:
             viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
             viewer.cam.fixedcamid = intro_cam_id
-            # Rendering cost controls: no per-body text labels (those render
-            # 3D text for every body every frame), no debug visualizations.
-            viewer.opt.label = mujoco.mjtLabel.mjLABEL_NONE
+            # Render-cost controls: use SITE labels — the scene has exactly
+            # one site ("ANTHROPIC_API_KEY" above the cheese), so only that
+            # text renders. Cheaper than BODY labels (~15 names per frame).
+            viewer.opt.label = mujoco.mjtLabel.mjLABEL_SITE
             for flag in (
                 mujoco.mjtVisFlag.mjVIS_INERTIA,
                 mujoco.mjtVisFlag.mjVIS_JOINT,

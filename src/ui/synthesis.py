@@ -57,6 +57,7 @@ class ScoredRollout:
     policy_kind: str
     seed: int
     success: bool
+    steps_taken: int
     ground_truth_label: str | None
     injection_knobs: dict[str, Any]
     pass1_verdict: str | None  # "pass" / "fail" / None if no coarse run
@@ -76,6 +77,76 @@ class ScoredRollout:
     def judged_failure(self) -> bool:
         """True if the judge said this rollout failed (Pass-1 = fail)."""
         return self.pass1_verdict == "fail"
+
+
+@dataclass(frozen=True)
+class JudgeMetrics:
+    """Pass-1 binary + Pass-2 label numbers, computed from dispatch_log_jsonl."""
+
+    n_total: int
+    n_with_ground_truth: int  # rollouts where env knows the truth (scripted)
+    pass1_tp: int  # judge=fail, env=fail
+    pass1_fp: int  # judge=fail, env=success
+    pass1_fn: int  # judge=pass, env=fail
+    pass1_tn: int  # judge=pass, env=success
+    pass2_correct: int  # pass2_label == ground_truth_label, only on labeled rows
+    pass2_labeled: int  # rollouts that got a Pass-2 label AND have ground truth
+
+    @property
+    def pass1_precision(self) -> float:
+        denom = self.pass1_tp + self.pass1_fp
+        return self.pass1_tp / denom if denom else 0.0
+
+    @property
+    def pass1_recall(self) -> float:
+        denom = self.pass1_tp + self.pass1_fn
+        return self.pass1_tp / denom if denom else 0.0
+
+    @property
+    def pass2_label_accuracy(self) -> float | None:
+        if self.pass2_labeled == 0:
+            return None
+        return self.pass2_correct / self.pass2_labeled
+
+
+def compute_metrics(rollouts: list[ScoredRollout]) -> JudgeMetrics:
+    """Compute Pass-1 binary precision/recall + Pass-2 label accuracy."""
+    tp = fp = fn = tn = 0
+    pass2_correct = 0
+    pass2_labeled = 0
+    n_with_gt = 0
+
+    for r in rollouts:
+        if r.pass1_verdict is None:
+            continue  # judge never ran; skip
+        env_failed = not r.success
+        judge_failed = r.judged_failure
+        if env_failed and judge_failed:
+            tp += 1
+        elif not env_failed and judge_failed:
+            fp += 1
+        elif env_failed and not judge_failed:
+            fn += 1
+        else:
+            tn += 1
+
+        if r.ground_truth_label is not None and r.ground_truth_label != "":
+            n_with_gt += 1
+            if r.pass2_label is not None:
+                pass2_labeled += 1
+                if r.pass2_label == r.ground_truth_label:
+                    pass2_correct += 1
+
+    return JudgeMetrics(
+        n_total=len(rollouts),
+        n_with_ground_truth=n_with_gt,
+        pass1_tp=tp,
+        pass1_fp=fp,
+        pass1_fn=fn,
+        pass1_tn=tn,
+        pass2_correct=pass2_correct,
+        pass2_labeled=pass2_labeled,
+    )
 
 
 @dataclass(frozen=True)
@@ -142,6 +213,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
                 policy_kind=str(args.get("policy_kind", "")),
                 seed=int(args.get("seed", 0)),
                 success=bool(result.get("success", False)),
+                steps_taken=int(result.get("steps_taken", 0)),
                 ground_truth_label=result.get("ground_truth_label"),
                 injection_knobs=knobs,
                 pass1_verdict=coarse.get("verdict"),

@@ -74,7 +74,7 @@ class RobotController:
         self.rat_body_id = model.body("rat").id
         self.rat_x_qveladr = int(model.jnt_dofadr[model.joint("rat_x").id])
         self.rat_y_qveladr = int(model.jnt_dofadr[model.joint("rat_y").id])
-        self.key_box_pos = np.array(data.xpos[model.body("ANTHROPIC_API_KEY").id], copy=True)
+        self.key_box_pos = np.array(data.xpos[model.body("key_cheese").id], copy=True)
 
         self.target_j1 = 0.0
         self.reaction_timer = 0.0

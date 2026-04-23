@@ -28,7 +28,17 @@
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0"/>
 
     <material name="wall_mat" rgba="0.55 0.58 0.62 1"/>
-    <material name="key_box_mat" rgba="0.94 0.78 0.2 1" specular="0.4" shininess="0.3"/>
+    <material name="key_box_mat" rgba="1.0 0.84 0.2 1" specular="0.4" shininess="0.3"/>
+
+    <!-- Cheese wedge: triangular prism via convex-hull-from-vertices. -->
+    <mesh name="cheese" vertex="
+      -0.11 -0.08  0
+       0.11 -0.08  0
+       0     0.12  0
+      -0.11 -0.08  0.10
+       0.11 -0.08  0.10
+       0     0.12  0.10
+    "/>
     <material name="broom_handle_mat" rgba="0.62 0.42 0.22 1"/>
     <material name="broom_bristles_mat" rgba="0.9 0.75 0.35 1"/>
     <material name="rat_fur" rgba="0.55 0.47 0.39 1"/>
@@ -58,12 +68,15 @@
     <geom name="pedestal" type="cylinder" size="0.22 0.1" pos="0 0 0.05"
           material="pedestal_mat" contype="0" conaffinity="0"/>
 
-    <!-- The prize. Body is named so the viewer label toggle (key 'B') shows
-         ANTHROPIC_API_KEY floating above the box. -->
-    <body name="ANTHROPIC_API_KEY" pos="0.4 0 0.09">
-      <geom name="key_box_geom" type="box" size="0.09 0.09 0.09"
+    <!-- The prize: a wedge of cheese. A named site ~30 cm above it renders
+         as "ANTHROPIC_API_KEY" text once the viewer's label mode is set to
+         mjLABEL_SITE (and since it's the only site in the model, no other
+         labels appear). -->
+    <body name="key_cheese" pos="0.4 0 0">
+      <geom name="key_cheese_geom" type="mesh" mesh="cheese"
             material="key_box_mat" mass="0.3"
             friction="0.6 0.01 0.0001"/>
+      <site name="ANTHROPIC_API_KEY" pos="0 0 0.35" size="0.02"/>
     </body>
 
     <!-- broom: mocap body, kinematically pinned to Franka hand each step.
