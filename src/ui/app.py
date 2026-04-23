@@ -520,9 +520,11 @@ def _cluster_card_html(cluster: Cluster, total_failures: int, keyframes: dict[st
         kf = keyframes.get(r.rollout_id)
         if kf is None:
             continue
-        # Gradio serves files from the working dir via /file= URL prefix.
-        kf_url = f"/file={kf}"
-        mp4_url = f"/file={r.video_path_host}" if r.video_path_host else "#"
+        # Gradio 6 serves static files under /gradio_api/file=<abs_path>,
+        # and only for paths in the app's `allowed_paths`. The launcher in
+        # scripts/run_ui.py passes mirror_root into allowed_paths.
+        kf_url = f"/gradio_api/file={kf}"
+        mp4_url = f"/gradio_api/file={r.video_path_host}" if r.video_path_host else "#"
         thumbs += (
             f"<a href='{mp4_url}' target='_blank' style='display:inline-block;margin:4px;"
             f"text-decoration:none;color:inherit;'>"
@@ -766,12 +768,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7860, help="Port to bind the Gradio server to.")
     args = parser.parse_args()
 
-    app = build_app(args.mirror_root.resolve())
+    mirror_root = args.mirror_root.resolve()
+    app = build_app(mirror_root)
     app.launch(
         server_port=args.port,
         inbrowser=True,
         theme=gr.themes.Soft(),
         css=".gradio-container {max-width: 1400px !important;}",
+        allowed_paths=[str(mirror_root)],
     )
 
 

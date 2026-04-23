@@ -37,6 +37,7 @@ def main() -> int:
         inbrowser=True,
         theme=gr.themes.Soft(),
         css=".gradio-container {max-width: 1400px !important;}",
+        allowed_paths=[str(mirror_root)],
     )
     return 0
 

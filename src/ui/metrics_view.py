@@ -648,7 +648,7 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
 
     kf = keyframes.get(r.rollout_id)
     img_html = (
-        f"<img src='/file={kf}' style='width:140px;height:auto;border-radius:4px;"
+        f"<img src='/gradio_api/file={kf}' style='width:140px;height:auto;border-radius:4px;"
         f"border:1px solid #334155;'/>"
         if kf is not None
         else "<div style='width:140px;height:80px;background:#1e293b;border-radius:4px;"
@@ -657,7 +657,7 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
     )
 
     mp4_link = (
-        f"<a href='/file={r.video_path_host}' target='_blank' style='color:#60a5fa;"
+        f"<a href='/gradio_api/file={r.video_path_host}' target='_blank' style='color:#60a5fa;"
         f"text-decoration:none;'>{r.rollout_id}</a>"
         if r.video_path_host
         else r.rollout_id
