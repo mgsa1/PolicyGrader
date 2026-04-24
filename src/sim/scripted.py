@@ -69,18 +69,26 @@ NOISE_GAIN = 8.0
 
 
 class FailureMode(StrEnum):
+    """Visually-distinct failure modes the judge emits on Lift.
+
+    Collapsed from the previous 10-label taxonomy: the fine-grained
+    distinctions (scratch vs knock vs approach_miss; slip vs premature_release)
+    were below the pixel+frame-rate resolution of the judge and were the main
+    driver of multiclass confusion. The new axis is OUTCOME, not mechanism.
+    """
+
     NONE = "none"
-    APPROACH_MISS = "approach_miss"
-    GRIPPER_NEVER_OPENED = "gripper_never_opened"
-    CUBE_SCRATCHED_BUT_NOT_MOVED = "cube_scratched_but_not_moved"
-    PREMATURE_RELEASE = "premature_release"
-    SLIP_DURING_LIFT = "slip_during_lift"
-    KNOCK_OBJECT_OFF_TABLE = "knock_object_off_table"
-    GRIPPER_COLLISION = "gripper_collision"
-    # Retained in the closed set for future multi-task re-expansion. Not
-    # reachable on Lift (single object, no insertion).
-    WRONG_OBJECT_SELECTED = "wrong_object_selected"
-    INSERTION_MISALIGNMENT = "insertion_misalignment"
+    # Policy never secured the cube — fingers close on empty air, or graze /
+    # knock the cube without grasping it. Subsumes the old approach_miss,
+    # knock_object_off_table, cube_scratched_but_not_moved, gripper_collision.
+    MISSED_APPROACH = "missed_approach"
+    # Policy secured the cube but lost it during the lift — fingers opening
+    # mid-lift OR the cube sliding out of a weak grip. Subsumes the old
+    # slip_during_lift and premature_release.
+    GRIPPER_SLIPPED = "gripper_slipped"
+    # Fingers were closed when they should have been open — hand arrives at the
+    # cube already pinched shut and cannot grasp. Was gripper_never_opened.
+    GRIPPER_NOT_OPEN = "gripper_not_open"
     OTHER = "other"
 
 

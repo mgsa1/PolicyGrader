@@ -189,8 +189,9 @@ def _hero_left(
         '<h1 class="pg-hero-headline">Robot eval review,<br/>'
         "<em>hours to minutes.</em></h1>"
         '<div class="pg-hero-sub">'
-        f"An Opus 4.7 agent designed the test suite, ran <b>{n}</b> rollouts, "
-        f"watched every failure in a single dense-frame CoT pass, and {agree}"
+        f"Four Opus 4.7 Managed Agents designed the test suite, ran "
+        f"<b>{n}</b> rollouts, watched every failure in a single dense-frame "
+        f"pass, and {agree}"
         "</div>"
         '<div class="pg-hero-chiprow">'
         f"{cal_chip}{dep_chip}{pr_chip}"

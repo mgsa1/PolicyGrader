@@ -148,11 +148,7 @@ def _trust_for(run: str) -> str:
 
 
 def _findings_label_for(run: str) -> str:
-    return findings.cluster_cards_html(_as_path(run), "label")
-
-
-def _findings_condition_for(run: str) -> str:
-    return findings.cluster_cards_html(_as_path(run), "condition")
+    return findings.cluster_cards_html(_as_path(run))
 
 
 def _findings_table_for(run: str) -> str:
@@ -308,25 +304,15 @@ def build_app(runs_root: Path) -> gr.Blocks:
             with gr.Tab("Deployment findings"):
                 dep_scope_html = gr.HTML(value=chrome.scope_strip_html(initial_path, "deployment"))
                 trust_html = gr.HTML(value=chrome.judge_trust_banner_html(initial_path))
-                with gr.Tabs():
-                    with gr.Tab("By label"):
-                        gr.Markdown(
-                            "**Each card** = one judge taxonomy label seen across "
-                            "all failed rollouts. Each rollout in the card carries "
-                            "its population chip (calibration vs deployment). "
-                            "Click a keyframe to open the source mp4."
-                        )
-                        findings_label_html = gr.HTML(
-                            value=findings.cluster_cards_html(initial_path, "label")
-                        )
-                    with gr.Tab("By condition"):
-                        gr.Markdown(
-                            "**Each card** = one perturbation condition (or env+policy "
-                            "combination for deployment rollouts)."
-                        )
-                        findings_condition_html = gr.HTML(
-                            value=findings.cluster_cards_html(initial_path, "condition")
-                        )
+                gr.Markdown(
+                    "**Each card** = one judge taxonomy label seen across "
+                    "all failed rollouts. Each rollout in the card carries "
+                    "its population chip (calibration vs deployment). "
+                    "Click a keyframe to open the source mp4."
+                )
+                findings_label_html = gr.HTML(
+                    value=findings.cluster_cards_html(initial_path)
+                )
                 gr.Markdown("### All deployment rollouts")
                 findings_table_html = gr.HTML(value=findings.rollout_table_html(initial_path))
 
@@ -406,9 +392,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
         heavy.tick(fn=_dep_scope_for, inputs=[selected_run], outputs=dep_scope_html)
         heavy.tick(fn=_trust_for, inputs=[selected_run], outputs=trust_html)
         heavy.tick(fn=_findings_label_for, inputs=[selected_run], outputs=findings_label_html)
-        heavy.tick(
-            fn=_findings_condition_for, inputs=[selected_run], outputs=findings_condition_html
-        )
         heavy.tick(fn=_findings_table_for, inputs=[selected_run], outputs=findings_table_html)
 
         # Refresh the picker's choices AND auto-switch to the most-recent run if
@@ -555,8 +538,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 blocks[2],
                 chrome.scope_strip_html(p, "deployment"),
                 chrome.judge_trust_banner_html(p),
-                findings.cluster_cards_html(p, "label"),
-                findings.cluster_cards_html(p, "condition"),
+                findings.cluster_cards_html(p),
                 findings.rollout_table_html(p),
                 calibration.drill_html(p, EMPTY_FILTER),
                 calibration.matrix_html(p),
@@ -584,7 +566,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 dep_scope_html,
                 trust_html,
                 findings_label_html,
-                findings_condition_html,
                 findings_table_html,
                 drill_html,
                 cm_html,

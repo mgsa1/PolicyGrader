@@ -156,7 +156,7 @@
           <div class="section-sub">Decides which scenarios to run, which failures to inject, and what the success criteria are. No simulation yet — pure design.</div>
           <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">plan.md</code> · <code class="phase-txt" style="opacity:0.8;font-size:11px;">test_matrix.csv</code></div>
         </div>
-        <div class="msg planner" style="border-left-color: var(--c);">I'll build a 32-scenario matrix: 18 calibration rollouts (scripted IK picker with injected failures — known ground truth), 14 deployment rollouts (pretrained BC-RNN on NutAssemblySquare). Failure knobs vary over action_noise, angle_offset, premature_close, grip_scale.</div>
+        <div class="msg planner" style="border-left-color: var(--c);">I'll build a 32-scenario matrix: 18 calibration rollouts (scripted IK picker with injected failures — human-labeled ground truth), 14 deployment rollouts (pretrained BC-RNN on Lift under cube_xy_jitter_m=0.15 m). Failure knobs vary over action_noise, angle_offset, premature_close, grip_scale.</div>
         <div class="thinking planner" style="border-left-color: var(--c);">Considering the trade-off between coverage and judge-trust sample size: a 2/3 calibration mix means the Judge-calibration tab will have enough labeled cells for per-label support &ge; 3 on at least 4 taxonomy categories…</div>
         <div class="tool-use planner" style="border-left-color: var(--c);">▶ <b>write_file</b>(path=<code style="background:var(--c);opacity:0.22;">/memories/plan.md</code>, bytes=1942)</div>
         <div class="tool-use planner" style="border-left-color: var(--c);">▶ <b>write_file</b>(path=<code style="background:var(--c);opacity:0.22;">/memories/test_matrix.csv</code>, rows=32)</div>
@@ -171,9 +171,9 @@
           <div class="section-sub">Runs every row of the test matrix in MuJoCo + robosuite. Each scenario produces a short mp4 of the robot attempting the task.</div>
           <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">rollouts/*.mp4</code></div>
         </div>
-        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='NutAssemblySquare', policy='scripted', seed=42)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
-        <div class="tool-result rollout" style="border-left-color: var(--c); opacity: 0.85;">◀ rollout → {"rollout_id":"rollout_0001","success":false,"steps":284,"ground_truth_label":"approach_miss"}</div>
-        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='NutAssemblySquare', policy='pretrained', seed=7)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0002</code></span></div>
+        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='Lift', policy='scripted', seed=42)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
+        <div class="tool-result rollout" style="border-left-color: var(--c); opacity: 0.85;">◀ rollout → {"rollout_id":"rollout_0001","success":false,"steps":284}</div>
+        <div class="tool-use rollout" style="border-left-color: var(--c);">▶ <b>rollout</b>(env_name='Lift', policy='pretrained', seed=7, cube_xy_jitter_m=0.15)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0002</code></span></div>
         <div class="tool-result rollout" style="border-left-color: var(--c); opacity: 0.85;">◀ rollout → {"rollout_id":"rollout_0002","success":true,"steps":312}</div>
 
         <!-- phase 3 -->
@@ -183,15 +183,13 @@
             <div class="rule phase-rule"></div>
           </div>
           <div class="section-title">Vision judge</div>
-          <div class="section-sub">Watches every rollout video twice. Pass-1: cheap binary pass/fail. Pass-2 (only on failures): high-res frames, picks a failure label, points at the visual evidence.</div>
+          <div class="section-sub">Single dense-frame call per sim-failed rollout. Names the decisive frame, picks one of three outcome-axis labels, points at the evidence (or abstains on no-contact failures).</div>
           <div class="writes"><span class="key">Writes:</span> <code class="phase-txt" style="opacity:0.8;font-size:11px;">findings.jsonl</code></div>
         </div>
-        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>coarse</b>(rollout_id='rollout_0001', n_frames=16)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
-        <div class="tool-result judge" style="border-left-color: var(--c); opacity: 0.85;">◀ coarse → {"verdict":"fail","failure_frame_range":[5,9]}</div>
-        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>fine</b>(rollout_id='rollout_0001', window=[5,9])<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
-        <div class="msg judge" style="border-left-color: var(--c);">I can see the gripper descending ~2 cm off-center of the nut at frame 7 (point: 1284, 908). The claw closes on empty air before the nut is engaged — this is textbook <b>approach_miss</b>.</div>
-        <div class="tool-result judge" style="border-left-color: var(--c); opacity: 0.85;">◀ fine → {"taxonomy_label":"approach_miss","point":[1284,908]}</div>
-        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>coarse</b>(rollout_id='rollout_0003', n_frames=16)<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0003</code></span></div>
+        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>judge</b>(rollout_id='rollout_0001', video_path='/memories/rollouts/rollout_0001.mp4')<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0001</code></span></div>
+        <div class="msg judge" style="border-left-color: var(--c);">Gripper descends ~2 cm off-center of the cube at frame 7 (point: 1284, 908). Fingers close on empty air before the cube is engaged — this is a clean <b>missed_approach</b>.</div>
+        <div class="tool-result judge" style="border-left-color: var(--c); opacity: 0.85;">◀ judge → {"taxonomy_label":"missed_approach","frame_index":7,"point":[1284,908]}</div>
+        <div class="tool-use judge" style="border-left-color: var(--c);">▶ <b>judge</b>(rollout_id='rollout_0003', video_path='/memories/rollouts/rollout_0003.mp4')<span class="rid">→ <code style="background:var(--c);opacity:0.22;">rollout_0003</code></span></div>
 
       </div>
     </div>
@@ -222,12 +220,11 @@
             <rect x="-16" y="4" width="6" height="18" fill="#cbd5e1" />
             <rect x="10" y="4" width="6" height="18" fill="#cbd5e1" />
           </g>
-          <!-- square nut (missed, to the right) -->
+          <!-- cube (missed, to the right) -->
           <rect x="340" y="240" width="22" height="22" fill="#fbbf24" stroke="#f59e0b" stroke-width="2" />
-          <circle cx="351" cy="251" r="4" fill="#0f172a" />
           <!-- pointing annotation -->
           <circle cx="351" cy="251" r="22" fill="none" stroke="#ef4444" stroke-width="3" />
-          <text x="360" y="236" fill="#ef4444" font-size="11" font-weight="700">approach_miss</text>
+          <text x="360" y="236" fill="#ef4444" font-size="11" font-weight="700">missed_approach</text>
         </svg>
         <div class="video-overlay">rollout_0001 · frame 142 / 284</div>
       </div>

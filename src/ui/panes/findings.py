@@ -4,9 +4,9 @@ The trust banner lives in `src/ui/panes/chrome.py` because the Overview tab
 may surface a shortened version of it. The cluster cards and the bottom-of-
 tab rollout table are specific to this pane.
 
-Cluster cards are the calibrated estimates: each card is one failure label
-or one perturbation condition that appeared among judged failures, decorated
-with the per-label calibration precision computed in `metrics_view`.
+Cluster cards are the calibrated estimates: one card per judge taxonomy
+label that appeared among judged failures, decorated with the per-label
+calibration precision computed in `metrics_view`.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from src.ui.styles import empty, html_escape, num
 from src.ui.synthesis import (
     Cluster,
     ScoredRollout,
-    cluster_by_condition,
     cluster_by_label,
     copy_button,
     load_scored_rollouts,
@@ -30,18 +29,14 @@ from src.ui.synthesis import (
 # ---- Cluster cards --------------------------------------------------------------
 
 
-def cluster_cards_html(mirror_root: Path, mode: str) -> str:
+def cluster_cards_html(mirror_root: Path) -> str:
     """Render all cluster cards for the Deployment findings tab.
 
-    `mode` ∈ {'label', 'condition'} selects between cluster_by_label and
-    cluster_by_condition — the former groups by judge taxonomy label, the
-    latter by perturbation condition (scripted) or (env, policy) pair (BC-RNN).
-
-    Clusters are built from the DEPLOYMENT cohort only. Calibration rollouts
-    live on the Judge calibration tab; mixing them here would double-count
-    scripted failures as if they were deployment findings. Per-label
-    calibration precision (the chips on each breakdown) still comes from the
-    full rollout set so we retain the scripted GT signal.
+    One card per judge taxonomy label seen in the deployment cohort.
+    Calibration rollouts live on the Judge calibration tab; mixing them here
+    would double-count scripted failures as if they were deployment findings.
+    Per-label calibration precision (the chips on each breakdown) still comes
+    from the full rollout set so we retain the scripted GT signal.
     """
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
@@ -63,7 +58,7 @@ def cluster_cards_html(mirror_root: Path, mode: str) -> str:
             "or the judge hasn't finished labeling the sim failures."
         )
 
-    clusters = cluster_by_label(deployment) if mode == "label" else cluster_by_condition(deployment)
+    clusters = cluster_by_label(deployment)
     cards = [
         _cluster_card(i + 1, c, total_failures, keyframes, cal_stats)
         for i, c in enumerate(clusters)

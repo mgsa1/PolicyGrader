@@ -959,7 +959,7 @@
 .pg-trace-event.report  { border-left-color: var(--pg-phase-report); }
 
 /* Session-created lines: dimmer, dashed rule so they read as metadata
-   dividers rather than agent output. Plan B emits one per spawned
+   dividers rather than agent output. The orchestrator emits one per spawned
    Managed Agents session (planner / rollout / judge-NN / reporter). */
 .pg-trace-event.session-created {
   background: transparent;
@@ -969,7 +969,7 @@
   padding: 6px 12px;
 }
 
-/* Worker chip: identifies which Plan B session produced the event.
+/* Worker chip: identifies which specialized session produced the event.
    Coloured by the phase the worker belongs to; renders as a subtle
    mono pill at the start of each trace-event body. */
 .pg-worker-chip {
@@ -1739,4 +1739,123 @@
   color: var(--pg-ink-4);
   font-style: italic;
   font-size: 13px;
+}
+
+/* ============================================================= */
+/* REPORT CARD (Overview — reporter's final report.md)            */
+/* ============================================================= */
+
+.pg-report-card {
+  border-left: 3px solid var(--pg-phase-report);
+}
+.pg-report-card-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: var(--pg-s-4);
+  padding-bottom: var(--pg-s-3);
+  border-bottom: 1px solid var(--pg-line);
+}
+.pg-report-card-title {
+  font-size: var(--pg-fs-h3);
+  font-weight: 500;
+  color: var(--pg-ink);
+  margin: 0;
+}
+.pg-report-card-meta {
+  color: var(--pg-ink-4);
+  font-size: var(--pg-fs-xs);
+  font-family: var(--pg-font-mono);
+  background: var(--pg-surface-inset);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Rendered-markdown body — editorial typography, not agent-trace feed. */
+.pg-report-body {
+  color: var(--pg-ink);
+  font-size: var(--pg-fs-body);
+  line-height: 1.6;
+  max-width: 72ch;
+}
+.pg-report-body h1,
+.pg-report-body h2,
+.pg-report-body h3 {
+  font-family: var(--pg-font-display, var(--pg-font-sans));
+  color: var(--pg-ink);
+  font-weight: 500;
+  line-height: 1.25;
+  margin: var(--pg-s-6) 0 var(--pg-s-3);
+}
+.pg-report-body h1 { font-size: 26px; }
+.pg-report-body h2 { font-size: 20px; }
+.pg-report-body h3 { font-size: 16px; }
+.pg-report-body h1:first-child,
+.pg-report-body h2:first-child,
+.pg-report-body h3:first-child { margin-top: 0; }
+.pg-report-body p { margin: 0 0 var(--pg-s-3); }
+.pg-report-body ul,
+.pg-report-body ol { margin: 0 0 var(--pg-s-3) var(--pg-s-5); padding: 0; }
+.pg-report-body li { margin-bottom: var(--pg-s-2); }
+.pg-report-body a { color: var(--pg-accent); text-decoration: none; border-bottom: 1px solid var(--pg-line-2); }
+.pg-report-body a:hover { border-bottom-color: var(--pg-accent); }
+.pg-report-body code {
+  font-family: var(--pg-font-mono);
+  font-size: 0.92em;
+  background: var(--pg-surface-inset);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--pg-ink-2);
+}
+.pg-report-body pre {
+  background: var(--pg-surface-inset);
+  border: 1px solid var(--pg-line);
+  border-radius: var(--pg-radius);
+  padding: var(--pg-s-4);
+  overflow-x: auto;
+  font-size: var(--pg-fs-sm);
+  margin: 0 0 var(--pg-s-4);
+}
+.pg-report-body pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.pg-report-body blockquote {
+  margin: 0 0 var(--pg-s-4);
+  padding: var(--pg-s-2) var(--pg-s-4);
+  border-left: 3px solid var(--pg-line-2);
+  color: var(--pg-ink-3);
+}
+.pg-report-body hr {
+  border: 0;
+  border-top: 1px solid var(--pg-line);
+  margin: var(--pg-s-6) 0;
+}
+.pg-report-body table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--pg-fs-sm);
+  margin: 0 0 var(--pg-s-4);
+}
+.pg-report-body thead th {
+  text-align: left;
+  padding: var(--pg-s-3);
+  font-weight: 500;
+  font-size: var(--pg-fs-xs);
+  color: var(--pg-ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--pg-font-mono);
+  border-bottom: 1px solid var(--pg-line-2);
+}
+.pg-report-body tbody td {
+  padding: var(--pg-s-3);
+  border-bottom: 1px solid var(--pg-line);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+.pg-report-body tbody tr:last-child td { border-bottom: 0; }
+.pg-report-body tbody td:nth-child(n+2) {
+  font-family: var(--pg-font-mono);
+  color: var(--pg-ink);
 }

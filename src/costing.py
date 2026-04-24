@@ -42,7 +42,7 @@ class CostTracker:
     Call `add_usage(response.usage)` on any object that exposes the usual
     `*_tokens` attributes; missing attrs are tolerated.
 
-    Thread-safe: Plan B's multi-orchestrator runs ~10 Managed Agents sessions
+    Thread-safe: the orchestrator runs ~10 Managed Agents sessions
     concurrently, each dispatching token-accumulating events from its own
     thread. The internal lock serializes add_usage() so increments don't race.
     total_cost_usd is a pure read of scalar fields — Python's GIL guarantees

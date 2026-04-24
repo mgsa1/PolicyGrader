@@ -37,7 +37,7 @@ from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 from src.sim.scripted import ScriptedLiftPolicy  # noqa: E402
 
 # After success triggers, keep stepping for ~1 s so we can re-verify the cube
-# is still aloft at the end of the hold — this is what demotes slip_during_lift
+# is still aloft at the end of the hold — this is what demotes gripper_slipped
 # rollouts (cube rises above the success threshold mid-slip, then falls back)
 # from false-success to failure. Also gives the recorded video clean "cube held
 # aloft" final frames on clean successes.
@@ -49,7 +49,7 @@ POST_SUCCESS_HOLD_STEPS = 20
 PANDA_GRIPPER_FULL_OPEN_M = 0.08
 
 # If the cube's final z is within this margin of its initial z, it clearly
-# fell back to the table — the slip_during_lift signature. A held cube sits
+# fell back to the table — the gripper_slipped signature. A held cube sits
 # ~20 cm above its initial z (LIFT_HEIGHT_M in scripted.py); a successful
 # BC-RNN rollout likewise keeps the cube well above this margin. 3 cm is
 # conservative enough that physics jitter around a legitimately-held cube
@@ -189,7 +189,7 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
                 break
 
     # Demote transient success only when the cube has clearly returned to the
-    # table — the slip_during_lift signature. A stricter `env._check_success()`
+    # table — the gripper_slipped signature. A stricter `env._check_success()`
     # re-check here over-penalizes BC-RNN rollouts whose held cube briefly
     # dips below the success threshold while the policy continues issuing
     # actions post-success (the policy wasn't trained on post-success
@@ -198,9 +198,7 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
     # held, jiggling".
     if success:
         current_cube_z = float(np.asarray(obs["cube_pos"], dtype=np.float64)[2])
-        cube_dropped_back_to_table = (
-            current_cube_z - initial_cube_pos[2] < CUBE_FELL_BACK_MARGIN_M
-        )
+        cube_dropped_back_to_table = current_cube_z - initial_cube_pos[2] < CUBE_FELL_BACK_MARGIN_M
         if cube_dropped_back_to_table:
             success = False
 

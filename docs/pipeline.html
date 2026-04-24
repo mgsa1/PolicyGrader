@@ -260,10 +260,10 @@
     <g transform="translate(330,540)">
       <rect width="360" height="140" rx="10" fill="#0f1729" stroke="#2a3a5c" />
       <text x="16" y="22" font-size="12" font-weight="700" fill="#e6edf7">Pretrained BC-RNN</text>
-      <text x="16" y="40" font-size="11" fill="#9fb0cf">robomimic v0.3 · NutAssemblySquare</text>
-      <text x="16" y="62" font-size="11" fill="#9fb0cf">~82% success → ~18% rich failures</text>
-      <text x="16" y="86" font-size="10" fill="#6f7e9a">Real policy under test. No injected truth;</text>
-      <text x="16" y="99" font-size="10" fill="#6f7e9a">used for binary judge precision/recall.</text>
+      <text x="16" y="40" font-size="11" fill="#9fb0cf">robomimic v0.3 · Lift + cube_xy_jitter</text>
+      <text x="16" y="62" font-size="11" fill="#9fb0cf">100% @ 0 m → ~38% fail @ 0.15 m jitter</text>
+      <text x="16" y="86" font-size="10" fill="#6f7e9a">Real policy under environmental stress.</text>
+      <text x="16" y="99" font-size="10" fill="#6f7e9a">Calibration P decorates these findings.</text>
       <text x="16" y="125" font-size="10" fill="#8ea0bf" font-style="italic">“grade the shipped model”</text>
     </g>
 
@@ -293,9 +293,9 @@
         </g>
       </g>
 
-      <text x="16" y="98" font-size="10" fill="#6f7e9a">Each knob maps to one label: knock_object_off_table,</text>
-      <text x="16" y="111" font-size="10" fill="#6f7e9a">approach_miss, approach_miss, slip_during_lift.</text>
-      <text x="16" y="128" font-size="10" fill="#ffd27a" font-style="italic">Ground truth for &quot;eval the eval&quot; — lets us measure the judge.</text>
+      <text x="16" y="98" font-size="10" fill="#6f7e9a">Knobs steer the policy toward missed_approach,</text>
+      <text x="16" y="111" font-size="10" fill="#6f7e9a">gripper_slipped, or gripper_not_open (3 labels).</text>
+      <text x="16" y="128" font-size="10" fill="#ffd27a" font-style="italic">Human labels on a sampled subset — that's the calibration GT.</text>
     </g>
 
     <!-- Adapter chip -->

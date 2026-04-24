@@ -32,9 +32,8 @@ def _canned_image_blocks(n: int) -> tuple[list[dict[str, object]], list[int]]:
 
 def _canned_response_json() -> str:
     return (
-        '{"per_frame_observations": [],'
-        ' "frame_index": 0,'
-        ' "taxonomy_label": "approach_miss",'
+        '{"frame_index": 0,'
+        ' "taxonomy_label": "missed_approach",'
         ' "point": null,'
         ' "description": "test"}'
     )

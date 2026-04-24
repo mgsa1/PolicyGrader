@@ -61,10 +61,10 @@ class RuntimeState:
     # run_id; goal + started_at are surfaced in the picker's display label.
     run_id: str = ""
     goal: str = ""
-    # Plan B fans out ~10 concurrent Managed Agents sessions; their event-stream
-    # threads all call mark_event / append_chat / write_snapshot. A single
-    # re-entrant lock is enough because set_phase() calls write_snapshot()
-    # while already holding the lock.
+    # The orchestrator fans out ~10 concurrent Managed Agents sessions; their
+    # event-stream threads all call mark_event / append_chat / write_snapshot.
+    # A single re-entrant lock is enough because set_phase() calls
+    # write_snapshot() while already holding the lock.
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def write_meta(self) -> None:

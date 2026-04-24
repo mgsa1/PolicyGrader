@@ -37,7 +37,7 @@ from src.vision.judge import judge
 ROLLOUT_TOOL_NAME = "rollout"
 JUDGE_TOOL_NAME = "judge"
 
-# Plan B submit_* tools. Each session's /memories/ is isolated, so sub-agents
+# Per-role submit_* tools. Each session's /memories/ is isolated, so sub-agents
 # hand their final artifacts back to the host via these tools which write into
 # mirror_root. See CLAUDE.md §3 "Inter-session artifact hand-off".
 SUBMIT_PLAN_TOOL_NAME = "submit_plan"
@@ -47,17 +47,16 @@ SUBMIT_REPORT_TOOL_NAME = "submit_report"
 
 # MuJoCo rollout dispatch is serialized process-wide because GLFW's OpenGL
 # context is global state — two concurrent run_rollout() calls in the same
-# process corrupt each other's env. Plan B's rollout phase runs in ONE
-# session on the main thread (see src/multi_orchestrator.py docstring:
-# macOS GLFW/Cocoa init hangs off the main thread), so in normal operation
-# there is no contention. The lock stays as defense-in-depth for tests /
-# future callers. Judge calls are pure Messages-API calls and parallelize
-# freely — no lock needed there.
+# process corrupt each other's env. The rollout phase runs in ONE session on
+# the main thread (see src/orchestrator.py docstring: macOS GLFW/Cocoa init
+# hangs off the main thread), so in normal operation there is no contention.
+# The lock stays as defense-in-depth for tests / future callers. Judge calls
+# are pure Messages-API calls and parallelize freely — no lock needed there.
 _ROLLOUT_LOCK = threading.Lock()
 
-# dispatch_log.jsonl is appended to from every tool dispatch. Under Plan B
-# these dispatches are concurrent across worker threads, so interleaved writes
-# would corrupt the JSONL format. Single process-wide lock around the append.
+# dispatch_log.jsonl is appended to from every tool dispatch. Judge-phase
+# dispatches are concurrent across worker threads, so interleaved writes would
+# corrupt the JSONL format. Single process-wide lock around the append.
 _DISPATCH_LOG_LOCK = threading.Lock()
 
 # Default pretrained checkpoints, keyed by env_name. Lets the agent request a
@@ -107,9 +106,10 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "type": "number",
             "default": 0.0,
             "description": (
-                "scripted only — std of per-step action noise. ≈0.05 tends to "
-                "scratch the cube; ≥0.25 tends to knock it off. Ground truth "
-                "is assigned by the human labeler, not by the knob value."
+                "scripted only — std of per-step action noise. Non-zero values "
+                "destabilize the approach (graze / knock the cube) and tend to "
+                "produce missed_approach. Ground truth is assigned by the "
+                "human labeler, not by the knob value."
             ),
         },
         "injected_premature_close": {
@@ -117,7 +117,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": False,
             "description": (
                 "scripted only — gripper is commanded closed from step 0, so "
-                "it never opens to grasp. Intended visual: gripper_never_opened."
+                "it never opens to grasp. Intended visual: gripper_not_open."
             ),
         },
         "injected_angle_deg": {
@@ -125,7 +125,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": 0.0,
             "description": (
                 "scripted only — radial xy offset on approach. 15°–35° produces "
-                "a clean approach_miss."
+                "a clean missed_approach (gripper closes beside the cube)."
             ),
         },
         "injected_grip_scale": {
@@ -133,7 +133,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": 1.0,
             "description": (
                 "scripted only — < 0.7 opens the gripper mid-lift after a few "
-                "carry steps. Intended visual: slip_during_lift."
+                "carry steps. Intended visual: gripper_slipped."
             ),
         },
         "cube_xy_jitter_m": {
@@ -192,21 +192,22 @@ _JUDGE_PARAM: dict[str, Any] = {
     "type": "custom",
     "name": JUDGE_TOOL_NAME,
     "description": (
-        "Single-call CoT vision judge on a recorded rollout mp4. Only call "
-        "on rollouts where the `rollout` tool returned success=false — "
+        "Single-call vision judge on a recorded rollout mp4. Only call on "
+        "rollouts where the `rollout` tool returned success=false — "
         "successful rollouts have no failure to classify, so skip them. "
-        "Returns a closed-set taxonomy_label, the ORIGINAL-mp4 frame_index "
-        "the judge named as decisive, a 2576px pointing coordinate (or null "
-        "when no gripper-cube contact is visible), a one-sentence "
-        "description, and the full per-frame chain of thought."
+        "Returns a closed-set taxonomy_label (one of missed_approach, "
+        "gripper_slipped, gripper_not_open, other), the ORIGINAL-mp4 "
+        "frame_index the judge named as decisive, a pointing coordinate (or "
+        "null when no gripper-cube contact is visible), and a one-sentence "
+        "description."
     ),
     "input_schema": _JUDGE_INPUT_SCHEMA,
 }
 
-# Plan B submit_* tools. Each takes the final artifact content verbatim so the
-# host can persist it under mirror_root (the agent's /memories/ is isolated
-# per-session and unreachable from sibling sessions — the host IS the common
-# surface, these tools are how artifacts get there).
+# Submit tools. Each takes the final artifact content verbatim so the host can
+# persist it under mirror_root. The agent's /memories/ is isolated per-session
+# and unreachable from sibling sessions — the host IS the common surface, and
+# these tools are how artifacts get there.
 
 _SUBMIT_PLAN_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -257,7 +258,7 @@ _SUBMIT_FINDINGS_INPUT_SCHEMA: dict[str, Any] = {
                 "({rollout_id, sim_success: bool, annotation: {...}|null}). "
                 "`annotation` is null when sim_success=true; otherwise it "
                 "carries the judge output {taxonomy_label, frame_index, "
-                "point: [x,y]|null, description, per_frame_observations}. "
+                "point: [x,y]|null, description}. "
                 "Host APPENDS these to mirror_root/findings.jsonl — safe for "
                 "parallel judge workers to submit their own slices."
             ),
@@ -284,7 +285,7 @@ _SUBMIT_PLAN_PARAM: dict[str, Any] = {
     "type": "custom",
     "name": SUBMIT_PLAN_TOOL_NAME,
     "description": (
-        "Plan B PLANNER hand-off: submit the plan, test matrix, and taxonomy to "
+        "PLANNER hand-off: submit the plan, test matrix, and taxonomy to "
         "the host in one call. Call this EXACTLY ONCE at the end of the planner "
         "phase, then stop. The host writes the files to mirror_root and the "
         "downstream workers read them from there."
@@ -296,7 +297,7 @@ _SUBMIT_RESULTS_PARAM: dict[str, Any] = {
     "type": "custom",
     "name": SUBMIT_RESULTS_TOOL_NAME,
     "description": (
-        "Plan B ROLLOUT WORKER hand-off: submit the JSONL of RolloutResult records "
+        "ROLLOUT WORKER hand-off: submit the JSONL of RolloutResult records "
         "for this worker's slice. Call this ONCE after all assigned rollouts are "
         "complete, then stop."
     ),
@@ -307,7 +308,7 @@ _SUBMIT_FINDINGS_PARAM: dict[str, Any] = {
     "type": "custom",
     "name": SUBMIT_FINDINGS_TOOL_NAME,
     "description": (
-        "Plan B JUDGE WORKER hand-off: submit the JSONL of Finding records for "
+        "JUDGE WORKER hand-off: submit the JSONL of Finding records for "
         "this worker's slice. Call this ONCE after judging is done, then stop."
     ),
     "input_schema": _SUBMIT_FINDINGS_INPUT_SCHEMA,
@@ -317,19 +318,14 @@ _SUBMIT_REPORT_PARAM: dict[str, Any] = {
     "type": "custom",
     "name": SUBMIT_REPORT_TOOL_NAME,
     "description": (
-        "Plan B REPORTER hand-off: submit the final report markdown. Call this ONCE and stop."
+        "REPORTER hand-off: submit the final report markdown. Call this ONCE and stop."
     ),
     "input_schema": _SUBMIT_REPORT_INPUT_SCHEMA,
 }
 
 
-def tool_params() -> list[dict[str, Any]]:
-    """Plan A tool set: rollout + judge (all phases share one session)."""
-    return [_ROLLOUT_PARAM, _JUDGE_PARAM]
-
-
 def tool_params_for_role(role: str) -> list[dict[str, Any]]:
-    """Plan B tool set: narrow per-role tool surface.
+    """Narrow per-role tool surface.
 
     Each specialized agent gets ONLY the tools it needs plus its submit tool.
     A tighter tool surface makes the model's choices more obvious and reduces
@@ -407,11 +403,11 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
         )
 
     video_out = mirror_root / ROLLOUTS_DIR / f"{rollout_id}.mp4"
-    # GLFW's OpenGL context is process-global. Under Plan B several rollout
-    # workers may dispatch `rollout` concurrently from their event-stream
-    # threads — without this lock their sim steps interleave and corrupt
-    # each other's render state. Sim time is ~2 s per Lift rollout; the lock
-    # just makes the sim the critical section, not the tool call.
+    # GLFW's OpenGL context is process-global. Rollouts run sequentially from
+    # one session on the host main thread, so normal operation doesn't
+    # contend — but if this is ever called from concurrent threads their sim
+    # steps would interleave and corrupt each other's render state. The lock
+    # is defense-in-depth; sim time is ~2 s per Lift rollout.
     with _ROLLOUT_LOCK:
         result = run_rollout(config, video_out=video_out)
 
@@ -447,7 +443,6 @@ def _dispatch_judge(
         "frame_index": annotation.frame_index,
         "point": list(annotation.point) if annotation.point is not None else None,
         "description": annotation.description,
-        "per_frame_observations": [obs.model_dump() for obs in annotation.per_frame_observations],
     }
 
 
@@ -465,7 +460,7 @@ def _append_dispatch_log(
     and judge findings without needing access to /memories/ inside the agent's
     environment. We see every tool call here anyway — logging it costs ~1 ms.
 
-    Lock-protected so Plan B's concurrent worker threads don't interleave
+    Lock-protected so concurrent judge-worker threads don't interleave
     partial JSON writes into the same file.
     """
     import time as _time

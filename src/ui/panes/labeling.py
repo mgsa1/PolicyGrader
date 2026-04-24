@@ -26,13 +26,9 @@ from src.ui.styles import empty, html_escape, num
 # failure modes appear in taxonomy order. `ambiguous` is the escape hatch.
 LABELING_CHOICES: list[tuple[str, HumanLabelValue]] = [
     ("success (clean pick)", "none"),
-    ("approach_miss", "approach_miss"),
-    ("gripper_never_opened", "gripper_never_opened"),
-    ("cube_scratched_but_not_moved", "cube_scratched_but_not_moved"),
-    ("premature_release", "premature_release"),
-    ("slip_during_lift", "slip_during_lift"),
-    ("knock_object_off_table", "knock_object_off_table"),
-    ("gripper_collision", "gripper_collision"),
+    ("missed_approach", "missed_approach"),
+    ("gripper_slipped", "gripper_slipped"),
+    ("gripper_not_open", "gripper_not_open"),
     ("other", "other"),
     ("ambiguous / can't tell", "ambiguous"),
 ]

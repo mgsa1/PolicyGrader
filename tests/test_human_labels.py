@@ -108,7 +108,7 @@ class TestPersistence:
     def test_append_and_read_roundtrip(self, tmp_path: Path) -> None:
         label = HumanLabel(
             rollout_id="calib_00",
-            label="approach_miss",
+            label="missed_approach",
             note="gripper closed on empty air",
             labeled_at=datetime.now(UTC),
         )
@@ -116,25 +116,25 @@ class TestPersistence:
         records = read_labels(tmp_path)
         assert len(records) == 1
         assert records[0].rollout_id == "calib_00"
-        assert records[0].label == "approach_miss"
+        assert records[0].label == "missed_approach"
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         assert read_labels(tmp_path) == []
 
     def test_submit_label_helper_writes_and_returns_record(self, tmp_path: Path) -> None:
-        rec = submit_label(tmp_path, rollout_id="calib_07", label="slip_during_lift")
+        rec = submit_label(tmp_path, rollout_id="calib_07", label="gripper_slipped")
         assert rec.rollout_id == "calib_07"
-        assert rec.label == "slip_during_lift"
+        assert rec.label == "gripper_slipped"
         assert rec.note is None
         reloaded = read_labels(tmp_path)
         assert len(reloaded) == 1
         assert reloaded[0] == rec
 
     def test_last_write_wins_on_duplicate_rollout_id(self, tmp_path: Path) -> None:
-        submit_label(tmp_path, rollout_id="calib_00", label="approach_miss")
-        submit_label(tmp_path, rollout_id="calib_00", label="gripper_never_opened")
+        submit_label(tmp_path, rollout_id="calib_00", label="missed_approach")
+        submit_label(tmp_path, rollout_id="calib_00", label="gripper_not_open")
         mapping = labels_by_rollout(tmp_path)
-        assert mapping["calib_00"].label == "gripper_never_opened"
+        assert mapping["calib_00"].label == "gripper_not_open"
 
     def test_malformed_lines_skipped(self, tmp_path: Path) -> None:
         # Pre-seed the file with one good record + two bad lines.
@@ -160,7 +160,7 @@ class TestResume:
     def test_pending_rollouts_filters_already_labeled(self, tmp_path: Path) -> None:
         queue = ["calib_0", "calib_1", "calib_2", "calib_3"]
         submit_label(tmp_path, rollout_id="calib_0", label="none")
-        submit_label(tmp_path, rollout_id="calib_2", label="approach_miss")
+        submit_label(tmp_path, rollout_id="calib_2", label="missed_approach")
         pending = pending_rollouts(queue, tmp_path)
         assert pending == ["calib_1", "calib_3"]
 

@@ -8,7 +8,7 @@ excluded from P/R and only enter via the per-policy success rate column in
 the report.
 
 Per-label numbers, not a global score, so the report can surface "we're
-great at slip but mediocre at approach_miss". Binary fail-detection
+great at gripper_slipped but mediocre at missed_approach". Binary fail-detection
 (any-failure vs none) is deliberately NOT tracked here: simulator
 `env._check_success()` owns that bit.
 """
