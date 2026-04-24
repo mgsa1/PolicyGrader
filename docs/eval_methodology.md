@@ -4,32 +4,42 @@
 
 ## Dual-population design
 
-Every eval mixes two cohorts of rollouts. Both now run on **robosuite Lift**
-(same task, same env, same camera) — this replaces an earlier design that ran
-calibration on Lift and deployment on NutAssemblySquare, and which suffered
-from cross-task calibration drift (precision/recall measured on Lift applied
-to Nut was at best a floor, not a transferable number).
+Every eval mixes two cohorts of rollouts. Both run on **robosuite Lift**
+(same task, same env, same camera). That shared task is what lets
+calibration P/R transfer onto deployment findings — an earlier cross-task
+design (Lift calibration → Nut deployment) suffered from calibration drift
+that was at best a floor, not a transferable number.
 
-### Calibration cohort — scripted policy + injected output knobs
+### Calibration cohort — scripted policy + injected knobs + human-labeled subset
 
 - **Policy.** `src/sim/scripted.py::ScriptedLiftPolicy` — a four-phase
   IK-style picker (approach → descend → grasp → lift) that reliably succeeds
   on default-placement Lift when no failures are injected.
-- **Perturbation surface.** The policy's output actions. Four knobs map to
-  four ground-truth labels (`src/sim/scripted.py::InjectedFailures.to_label`):
-  - `action_noise ≥ 0.10` → `knock_object_off_table`
-  - `approach_angle_offset_deg > 0` → `approach_miss`
-  - `gripper_close_prematurely=True` → `approach_miss`
-  - `grip_force_scale < 0.7` → `slip_during_lift`
-- **Why the ground truth is trustworthy.** The knobs are implemented as
-  explicit branches in the policy's `act()` — the injected failure is the
-  policy's commanded behavior, not a hoped-for consequence. Integration tests
-  in `tests/test_scripted_failure_injection.py::TestScriptedLiftIntegration`
-  pin the knob → outcome mapping to the sim.
+- **Perturbation surface.** The policy's output actions. Four knobs steer
+  the scripted policy into specific failure regimes:
+  - `action_noise ≈ 0.05` tends to graze the cube (`cube_scratched_but_not_moved`)
+  - `action_noise ≥ 0.25` tends to knock the cube off (`knock_object_off_table`)
+  - `approach_angle_offset_deg > 0` produces clean `approach_miss`
+  - `gripper_close_prematurely=True` produces `gripper_never_opened`
+  - `grip_force_scale < 0.7` produces `slip_during_lift` (the gripper carries
+    the cube up, then releases — see the `SLIP_CARRY_STEPS` loop in the
+    policy)
+- **Ground truth comes from humans, not knobs.** Knob settings are intent,
+  not truth — on any given seed the actual behavior can blur between modes
+  (a low-noise rollout that grazes the cube; a knock knob that produces a
+  miss). After rollouts complete, the host samples a subset and a human
+  reviewer labels each sampled rollout from the closed taxonomy (plus
+  `none` and `ambiguous`). Those human labels are the calibration GT.
+  - Sampler: `src/human_labels.py::sample_for_labeling`. Stratified 1/3
+    successes + 2/3 failures, scripted-cohort only, `clamp(10% × N, 6, 20)`.
+  - Persistence: `mirror_root/human_labels.jsonl`, appended by the Gradio
+    labeling UI.
+  - Blinding: the labeler never sees the judge's output or the knob intent
+    while labeling.
 - **Placement.** `cube_xy_jitter_m = 0.0` always. The scripted policy is
   hand-tuned for the default ±3 cm placement range; widening it changes the
   probability that the scripted policy itself succeeds, which would muddy
-  what the knobs measure. Dispatch rejects non-zero jitter on scripted
+  what the knobs elicit. Dispatch rejects non-zero jitter on scripted
   rollouts (`src/agents/tools.py::_dispatch_rollout`).
 
 ### Deployment cohort — pretrained BC-RNN under environmental perturbation
@@ -85,18 +95,21 @@ unlocks this transfer.
 
 ### Residual gap: engineered vs natural failure distribution
 
-Even with same-task calibration, scripted-injected failures look visually
-distinct from the failures a real learned policy produces. The scripted
-knocks and slips are abrupt and amplitude-stereotyped; the BC-RNN's
-natural failures under OOD placement are subtler (wrong approach angles,
-premature closures near the cube edge, etc.). The calibration P/R is
-therefore still a *floor*, not a transferable number — if a human labeled
-a held-out natural Nut set, the same judge would likely score a bit lower
-on natural failures than on scripted ones.
+Even with same-task calibration and human-labeled GT, scripted-injected
+failures look visually distinct from the failures a real learned policy
+produces. The scripted knocks and slips are abrupt and amplitude-stereotyped;
+the BC-RNN's natural failures under OOD placement are subtler (wrong
+approach angles, premature closures near the cube edge, etc.). The
+calibration P/R is therefore still a *floor* for sharp modes and a *ceiling*
+for subtle ones — if a human labeled a held-out natural deployment set, the
+same judge would likely score a bit lower on natural failures than on
+scripted ones.
 
-Closing this fully requires a small human-labeled held-out set of deployment
-rollouts — explicitly out of scope for this submission. The dashboard's
-banner copy acknowledges this.
+Closing this fully would require extending the labeling UI to the deployment
+cohort too. The human labels there would become the measured deployment
+performance rather than a calibrated estimate. We kept labeling scoped to
+the calibration cohort for this submission so every deployment rollout the
+demo shows is genuinely being judged-without-intervention.
 
 ## Historical: robomimic 0.1 ↔ robosuite 1.5 drift (resolved by pinning to 1.4.1)
 
@@ -126,10 +139,11 @@ controller dict is native on 1.4).
 
 ## Scope of what we claim to measure
 
-- **Calibration-cohort claim.** Judge precision and recall on scripted
-  Lift failures, with Wilson 95% CIs. Per-label rates via the
-  `src.metrics` module; confusion matrix on the dashboard. These are
-  the headline calibration numbers.
+- **Calibration-cohort claim.** Judge precision and recall on scripted Lift
+  failures, measured against **human labels on a sampled subset** of
+  calibration rollouts, with Wilson 95% CIs. Per-label rates via the
+  `src.ui.synthesis.compute_metrics` module; confusion matrix on the
+  dashboard. These are the headline calibration numbers.
 - **Deployment-cohort claim.** The judge's label distribution over a
   real BC-RNN policy's failures on Lift under a ±15 cm placement
   perturbation. The policy succeeds 8/8 at `cube_xy_jitter_m=0.0` and
@@ -137,4 +151,4 @@ controller dict is native on 1.4).
   Each deployment finding carries its per-label calibration precision chip.
 - **Out of scope.** Real-robot deployment, sim-to-real, multi-task
   generalization, clustering beyond the 1M-context single-pass synthesis
-  the report writer does.
+  the report writer does, human-labeled deployment GT.

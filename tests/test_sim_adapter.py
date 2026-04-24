@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.schemas import RolloutConfig
-from src.sim.scripted import FailureMode, InjectedFailures
+from src.sim.scripted import InjectedFailures
 
 
 @pytest.mark.integration
@@ -33,12 +33,63 @@ class TestRunRolloutScripted:
         result = run_rollout(cfg, video_out=out)
 
         assert result.success is True
-        assert result.ground_truth_label == FailureMode.NONE
         assert result.rollout_id == "clean"
         assert result.video_path == out
         assert out.exists() and out.stat().st_size > 1024  # non-empty mp4
 
-    def test_premature_close_fails_with_correct_label(self, tmp_path: Path) -> None:
+    def test_clean_writes_physics_sane_telemetry(self, tmp_path: Path) -> None:
+        """Telemetry sidecar exists, aligns with the mp4, and is physics-sane.
+
+        Clean Lift pickup → contact_flag must flip True at least once,
+        gripper_aperture must close (drop below 0.3), cube_z_above_table_m
+        must rise above the success threshold (~0.04), cube_xy_drift stays
+        small (<5 cm — gripper should grasp, not knock).
+        """
+        from src.schemas import RolloutTelemetry
+        from src.sim.adapter import _telemetry_path_for, run_rollout
+
+        cfg = RolloutConfig(
+            rollout_id="clean-tel",
+            policy_kind="scripted",
+            env_name="Lift",
+            seed=0,
+            max_steps=200,
+            injected_failures=InjectedFailures(),
+        )
+        out = tmp_path / "clean-tel.mp4"
+        result = run_rollout(cfg, video_out=out)
+
+        assert result.success is True
+        assert result.telemetry_path == _telemetry_path_for(out)
+        assert result.telemetry_path is not None and result.telemetry_path.exists()
+
+        tel = RolloutTelemetry.model_validate_json(result.telemetry_path.read_text())
+        assert tel.rollout_id == "clean-tel"
+        assert tel.fps == cfg.render.fps
+        assert len(tel.rows) == result.steps_taken  # 1:1 with mp4 frames
+
+        assert any(r.contact_flag for r in tel.rows), "gripper never touched cube"
+        assert min(r.gripper_aperture for r in tel.rows) < 0.3, "gripper never closed"
+        assert max(r.cube_z_above_table_m for r in tel.rows) > 0.04, "cube never lifted"
+        assert max(r.cube_xy_drift_m for r in tel.rows) < 0.05, "clean run shouldn't knock"
+
+    def test_no_video_no_telemetry(self, tmp_path: Path) -> None:
+        """video_out=None → no mp4 AND no telemetry sidecar."""
+        from src.sim.adapter import run_rollout
+
+        cfg = RolloutConfig(
+            rollout_id="no-video",
+            policy_kind="scripted",
+            env_name="Lift",
+            seed=0,
+            max_steps=50,
+            injected_failures=InjectedFailures(),
+        )
+        result = run_rollout(cfg, video_out=None)
+        assert result.video_path is None
+        assert result.telemetry_path is None
+
+    def test_premature_close_fails(self, tmp_path: Path) -> None:
         from src.sim.adapter import run_rollout
 
         cfg = RolloutConfig(
@@ -49,11 +100,10 @@ class TestRunRolloutScripted:
             max_steps=200,
             injected_failures=InjectedFailures(gripper_close_prematurely=True),
         )
-        # Skip rendering: this test cares about success/label, not the mp4.
+        # Skip rendering: this test cares about success, not the mp4.
         result = run_rollout(cfg, video_out=None)
 
         assert result.success is False
-        assert result.ground_truth_label == FailureMode.APPROACH_MISS
         assert result.video_path is None
 
     def test_zero_jitter_matches_default_placement_bounds(self) -> None:

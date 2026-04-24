@@ -14,6 +14,11 @@ tools, NOT via /memories/ files. The built-in read/write/edit/bash are still
 available for in-session scratch work; the prompts below are explicit about
 when an agent must call its submit tool.
 
+Between rollout and judge the host runs a HUMAN LABELING step that samples
+calibration rollouts for a human reviewer. No agent participates in this step
+— the host blocks until labels are in (or the step is skipped), then dispatches
+the judge workers.
+
 Communication style: every `agent.message` event is rendered live in the
 dashboard. Translate internal jargon into plain language (see the translation
 table inherited from Plan A below).
@@ -43,7 +48,6 @@ plain language in those messages:
   - "knob" / "scripted-policy knob"  → "failure-injection parameter"
   - "injected slot"                   → "scenario where we deliberately trigger
                                         a failure"
-  - "expected_label"                  → "the failure type we expect"
   - "policy_kind=scripted"            → "the scripted policy" (a hand-coded
                                         controller we can deliberately break —
                                         this is the calibration cohort)
@@ -86,52 +90,59 @@ The user will send you a one-line evaluation goal. Produce three artifacts:
 1. plan.md — short markdown: stated goal, success criteria, scenario budget,
    cohort mix rationale (calibration vs deployment — see below), which
    failure-injection parameters were chosen for the calibration subset and
-   why, which seeds, and the cube_xy_jitter_m value chosen for the deployment
-   subset.
+   the intended visual failure each targets, which seeds, and the
+   cube_xy_jitter_m value chosen for the deployment subset.
 
 2. test_matrix.csv — one row per scenario with columns:
      rollout_id, policy_kind, env_name, seed, max_steps,
      injected_action_noise, injected_premature_close, injected_angle_deg,
-     injected_grip_scale, cube_xy_jitter_m, expected_label.
+     injected_grip_scale, cube_xy_jitter_m, calibration_purpose.
    The injected_* columns are 0/False for clean rollouts and for any
    deployment (pretrained-policy) rollout. cube_xy_jitter_m is 0.0 for
    calibration rollouts and the chosen perturbation value for deployment
-   rollouts. For expected_label:
-     - clean calibration rollouts:    "none"
-     - injected calibration rollouts: the label per the parameter mapping below
-     - deployment rollouts: leave EMPTY. Ground truth for these is binary
-       (env._check_success); we don't know which taxonomy label a natural
-       failure would carry.
+   rollouts. calibration_purpose is a short human-readable note on what
+   VISUAL failure the scripted row is trying to elicit ("knock", "scratch",
+   "gripper never opens", "slip", "approach miss 20deg", "clean success",
+   etc.) — metadata for the human labeler's reference, NOT ground truth.
+   Deployment rows leave calibration_purpose empty.
 
 3. taxonomy.md — copy the failure taxonomy below into the argument verbatim
    so downstream agents can read it without seeing this prompt.
 
 TWO COHORTS — the dual-population story:
 
-  • CALIBRATION — scripted IK picker with injected output knobs. Each rollout
-    has a KNOWN expected failure label. This is the judge's measuring stick.
-    Always on Lift with cube_xy_jitter_m = 0.0.
+  • CALIBRATION — scripted IK picker with injected output knobs. Each row
+    aims to elicit a specific visual failure mode, but the ground-truth
+    label is assigned by a human labeler post-rollout (on a sampled
+    subset), NOT derived from the knob. Always on Lift, cube_xy_jitter_m=0.
 
-  • DEPLOYMENT — the pretrained BC-RNN policy. Stress-tested by widening
-    the cube's initial xy placement range via cube_xy_jitter_m. No output
-    knobs on the policy itself. Ground truth is unknown.
+  • DEPLOYMENT — the pretrained BC-RNN policy, stress-tested by widening
+    the cube's initial xy placement range via cube_xy_jitter_m. No knobs
+    on the policy itself. The judge runs on its failures; no human labeling
+    happens on this cohort.
 
-Sizing: aim for ~16 scenarios split 50/50 between cohorts for a smoke run,
-more for production. At least 50% of the calibration half should carry an
-injected failure (distributed across the four injection parameters); the rest
-are clean. Deployment rollouts are zero-config on the policy — just set
-policy_kind=pretrained, env_name=Lift, and a cube_xy_jitter_m in [0.05, 0.15].
+Sizing: aim for ~32 scenarios split roughly 50/50 between cohorts for a
+demo run (smaller for smoke). At least 70% of the calibration half should
+carry an injected failure distributed across the four parameters, so the
+human labeler sees a diverse set of modes. The remainder are clean.
+Deployment rollouts are zero-config on the policy — policy_kind=pretrained,
+env_name=Lift, and a cube_xy_jitter_m in [0.08, 0.15].
 
-Failure-injection parameter → label mapping (SCRIPTED cohort only):
-  - injected_action_noise >= 0.10   -> knock_object_off_table
-  - injected_angle_deg > 0           -> approach_miss
-  - injected_premature_close = True  -> approach_miss
-  - injected_grip_scale < 0.7        -> slip_during_lift
-  - otherwise                        -> none
+Failure-injection parameters (intended visual outcome — actual labels come
+from the human reviewer):
+  - injected_action_noise
+        ≈0.05 tends to scratch the cube without knocking it off.
+        ≈0.25+ tends to knock the cube off the table (chaotic).
+  - injected_angle_deg > 0
+        15°–35° produces a clean approach_miss.
+  - injected_premature_close = True
+        Gripper closed from step 0. Produces gripper_never_opened.
+  - injected_grip_scale < 0.7
+        Gripper releases mid-lift. Produces slip_during_lift.
 
 Environmental perturbation (DEPLOYMENT only; never on scripted):
   - cube_xy_jitter_m = 0.0           -> training distribution (BC-RNN ~100%)
-  - cube_xy_jitter_m ≈ 0.05 - 0.10   -> meaningful OOD stress
+  - cube_xy_jitter_m ≈ 0.08 – 0.15   -> meaningful OOD stress
 
 The taxonomy to embed in taxonomy_md (copy verbatim):
 
@@ -159,8 +170,7 @@ You have these tools:
             injected_action_noise, injected_premature_close,
             injected_angle_deg, injected_grip_scale,
             cube_xy_jitter_m, checkpoint_path): run one rollout via the sim
-    adapter. Returns {{rollout_id, success, steps_taken, video_path,
-    ground_truth_label}}.
+    adapter. Returns {{rollout_id, success, steps_taken, video_path}}.
   - submit_results(results_jsonl): hand your batch of RolloutResult records
     to the host. Call this ONCE when every assigned rollout is complete, then
     stop.
@@ -169,9 +179,8 @@ The user message will give you the full matrix as a JSON array of rows.
 For EACH row:
   1. Call `rollout` with the row's parameters. For pretrained rollouts do
      NOT pass checkpoint_path — the host substitutes it from env_name.
-  2. Record the returned {{rollout_id, success, steps_taken, video_path,
-     ground_truth_label}} into a results.jsonl buffer (one JSON object per
-     line).
+  2. Record the returned {{rollout_id, success, steps_taken, video_path}}
+     into a results.jsonl buffer (one JSON object per line).
 
 Run rollouts one at a time, in order (the sim adapter is ~1-2 s per Lift
 episode, so just work through your list).
@@ -205,8 +214,8 @@ You have these tools:
     Call ONCE when all assigned rollouts are judged, then stop.
 
 The user message gives you a JSON array of rollout records (each
-{{rollout_id, video_path, success, ground_truth_label, ...}}) that your
-worker is assigned to. For EACH record:
+{{rollout_id, video_path, success, ...}}) that your worker is assigned to.
+For EACH record:
   1. Inspect `success`. If success=true, skip the judge call — construct
      the Finding directly as
      {{"rollout_id": <id>, "sim_success": true, "annotation": null}}.
@@ -231,9 +240,9 @@ You may run your rollouts in any order; there is no inter-rollout dependency.
 Judge calls are API calls (not local compute), so they parallelize well
 across sibling workers — trust that and just work through your list.
 
-Do NOT read the test matrix's expected_label column. The judge must be
-blind to ground truth; only the reporter compares judgments to expected
-labels.
+The judge must stay blind to calibration signal. Do not read the
+test matrix's calibration_purpose column or any human_labels.jsonl file
+during this phase.
 
 When every assigned rollout has a finding line (whether from judging or
 from the trivial sim_success=true shape), call
@@ -260,9 +269,10 @@ You have these tools:
 
 The user message contains these blocks:
   1. plan.md — the goal, cohort mix, and rationale.
-  2. test_matrix.csv — one row per scenario with expected_label column.
-  3. results.jsonl — one line per rollout: {{rollout_id, success,
-     steps_taken, video_path, ground_truth_label}}.
+  2. test_matrix.csv — one row per scenario. calibration_purpose is a
+     human-facing note on scripted rows; it is NOT ground truth.
+  3. results.jsonl — one line per rollout:
+     {{rollout_id, success, steps_taken, video_path}}.
   4. findings.jsonl — one line per rollout: {{rollout_id, sim_success,
      annotation}} where annotation is null on sim successes and is the
      JudgeAnnotation dict on failures.
@@ -272,28 +282,24 @@ The user message contains these blocks:
 Metrics to compute from the matrix + results + findings:
 
   - Overall success rate: fraction of results with sim_success=true. Break
-    down by cohort (calibration = scripted policy, deployment = pretrained
-    policy).
+    down by cohort (calibration = scripted policy, deployment = pretrained).
 
-  - Judge label accuracy (CALIBRATION only — rows whose expected_label is
-    non-empty AND whose result shows success=false): for each such
-    rollout, compare the judge's annotation.taxonomy_label to the matrix's
-    expected_label. Report accuracy and a per-label confusion matrix.
-    Deployment rows (empty expected_label) EXCLUDE from label accuracy;
-    they are reported qualitatively in the cluster analysis below because
-    we have no ground-truth taxonomy for natural BC-RNN failures.
+  - Distribution of judge taxonomy_label across failed rollouts, split by
+    cohort. Use this to seed the deployment cluster analysis.
 
-  - The cohort framing matters for the demo narrative: calibration label
-    accuracy is the judge's MEASURING STICK. Whatever label accuracy we
-    achieve on the calibration half is the credibility we attach to the
-    deployment-half labels — say this explicitly in the Summary.
+  Do NOT attempt to compute judge precision/recall against any ground-truth
+  label — calibration P/R is computed by the host from human labels on a
+  sampled subset and displayed in the dashboard. Your report should reference
+  that calibration as a qualitative framing ("the dashboard's Judge
+  Calibration panel shows measured precision for each label"), not try to
+  reproduce the numbers.
 
 Write report.md with this structure:
 
   # Evaluation Report
   ## Summary
     One-paragraph headline: scenarios run, overall success rate (and a
-    per-cohort split), judge label accuracy on the calibration cohort.
+    per-cohort split), count of judged failures by taxonomy label.
     Then a table:
       | Metric | This pipeline | Manual review baseline |
       | Cost | $X.XX | $Y.YY |
@@ -301,23 +307,19 @@ Write report.md with this structure:
       | Cost ratio (pipeline / baseline) | Z.ZZx |
       | Time ratio (pipeline / baseline) | Z.ZZx |
     This comparison is the demo's headline — it MUST appear in the Summary.
-  ## Calibration: Judge Label Accuracy
-    Overall calibration label accuracy, plus a per-label confusion matrix
-    (rows = expected_label, columns = judged taxonomy_label, values = count).
-    One sentence framing what this number buys us on deployment findings.
   ## Deployment Findings
     With the full findings in context (this is what the 1M context buys),
     identify 3-6 thematic failure clusters observed in the deployment
     cohort. For each: name, count, representative rollout_id, one-sentence
-    pattern description. Reference the calibration label accuracy above
+    pattern description. Reference the dashboard's Judge Calibration panel
     when discussing confidence in the labels.
   ## Methodology Notes
     A short paragraph on what the eval covered and what it does NOT cover
     (especially: the judge is blind to ground truth; simulator
-    `_check_success()` is the binary-truth source; natural deployment
-    failures have no ground-truth taxonomy so their labels inherit
-    calibration-level trust, not more). Include the token breakdown the
-    host provided so cost is auditable.
+    `_check_success()` is the binary-truth source; calibration ground truth
+    comes from human labels on a sampled subset of scripted rollouts;
+    deployment labels inherit calibration-level trust, not more). Include
+    the token breakdown the host provided so cost is auditable.
 
 Call submit_report(report_md=<full markdown>) EXACTLY ONCE and stop.
 """

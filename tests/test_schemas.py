@@ -17,6 +17,8 @@ from src.schemas import (
     RenderConfig,
     RolloutConfig,
     RolloutResult,
+    RolloutTelemetry,
+    TelemetryRow,
 )
 from src.sim.scripted import FailureMode, InjectedFailures
 
@@ -29,16 +31,18 @@ class TestRolloutConfig:
             env_name="Lift",
             injected_failures=InjectedFailures(),
         )
-        assert cfg.ground_truth_label == FailureMode.NONE
+        assert cfg.rollout_id == "r1"
+        assert cfg.injected_failures == InjectedFailures()
 
-    def test_scripted_with_injected_failure_label(self) -> None:
+    def test_scripted_with_injected_failure(self) -> None:
         cfg = RolloutConfig(
             rollout_id="r2",
             policy_kind="scripted",
             env_name="Lift",
             injected_failures=InjectedFailures(grip_force_scale=0.3),
         )
-        assert cfg.ground_truth_label == FailureMode.SLIP_DURING_LIFT
+        assert cfg.injected_failures is not None
+        assert cfg.injected_failures.grip_force_scale == 0.3
 
     def test_scripted_missing_failures_rejected(self) -> None:
         with pytest.raises(ValueError, match="injected_failures"):
@@ -61,7 +65,7 @@ class TestRolloutConfig:
             env_name="Lift",
             checkpoint_path=Path("/tmp/x.pth"),
         )
-        assert cfg.ground_truth_label is None
+        assert cfg.injected_failures is None
         assert cfg.cube_xy_jitter_m == 0.0
 
     def test_pretrained_with_cube_jitter(self) -> None:
@@ -126,7 +130,6 @@ class TestRolloutResult:
             success=True,
             steps_taken=42,
             video_path=Path("artifacts/x.mp4"),
-            ground_truth_label=FailureMode.NONE,
             env_name="Lift",
             policy_kind="scripted",
             seed=0,
@@ -141,7 +144,6 @@ class TestRolloutResult:
                 success=False,
                 steps_taken=-1,
                 video_path=None,
-                ground_truth_label=None,
                 env_name="Lift",
                 policy_kind="scripted",
                 seed=0,
@@ -215,3 +217,79 @@ class TestRenderConfig:
         assert r.camera == "frontview"
         assert (r.width, r.height) == (512, 512)
         assert r.fps == 20
+
+
+class TestTelemetry:
+    def test_round_trip(self) -> None:
+        tel = RolloutTelemetry(
+            rollout_id="r1",
+            fps=20,
+            rows=[
+                TelemetryRow(
+                    step_index=0,
+                    gripper_aperture=1.0,
+                    ee_to_cube_m=0.18,
+                    cube_z_above_table_m=0.0,
+                    cube_xy_drift_m=0.0,
+                    contact_flag=False,
+                ),
+                TelemetryRow(
+                    step_index=1,
+                    gripper_aperture=0.4,
+                    ee_to_cube_m=0.01,
+                    cube_z_above_table_m=0.001,
+                    cube_xy_drift_m=0.018,
+                    contact_flag=True,
+                ),
+            ],
+        )
+        clone = RolloutTelemetry.model_validate_json(tel.model_dump_json())
+        assert clone == tel
+        assert clone.rows[1].contact_flag is True
+
+    def test_aperture_out_of_range_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            TelemetryRow(
+                step_index=0,
+                gripper_aperture=1.2,
+                ee_to_cube_m=0.0,
+                cube_z_above_table_m=0.0,
+                cube_xy_drift_m=0.0,
+                contact_flag=False,
+            )
+
+    def test_negative_distance_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            TelemetryRow(
+                step_index=0,
+                gripper_aperture=0.5,
+                ee_to_cube_m=-0.01,
+                cube_z_above_table_m=0.0,
+                cube_xy_drift_m=0.0,
+                contact_flag=False,
+            )
+
+    def test_result_telemetry_path_optional(self, tmp_path: Path) -> None:
+        r = RolloutResult(
+            rollout_id="r1",
+            success=False,
+            steps_taken=10,
+            video_path=tmp_path / "x.mp4",
+            env_name="Lift",
+            policy_kind="scripted",
+            seed=0,
+            telemetry_path=tmp_path / "x.telemetry.json",
+        )
+        assert r.telemetry_path == tmp_path / "x.telemetry.json"
+
+    def test_result_telemetry_path_defaults_none(self, tmp_path: Path) -> None:
+        r = RolloutResult(
+            rollout_id="r1",
+            success=False,
+            steps_taken=10,
+            video_path=tmp_path / "x.mp4",
+            env_name="Lift",
+            policy_kind="scripted",
+            seed=0,
+        )
+        assert r.telemetry_path is None

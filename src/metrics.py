@@ -1,19 +1,16 @@
-"""Precision/recall of the vision judge against injected ground-truth labels.
+"""Precision/recall of the vision judge against human labels.
 
-CLAUDE.md sec 13: the demo's TPM-slide frame is `Precision X% · Recall Y%`,
-so this module is what makes the eval an *eval*. It must:
+Pure tabular comparison — never looks at frames or videos, just a list of
+(expected, judged) label pairs. Ground truth comes from human labels on a
+sampled subset of calibration rollouts (see src/human_labels.py); rollouts
+without a human label (unlabeled calibration or any deployment rollout) are
+excluded from P/R and only enter via the per-policy success rate column in
+the report.
 
-  - never look at frames or videos — it's a pure tabular comparison
-  - work over a list of (expected, judged) label pairs
-  - give per-label numbers, not just a global score, so the report can
-    surface "we're great at slip but mediocre at approach_miss"
-  - report binary fail-detection (any-failure vs none) separately from
-    multi-class label agreement, since those answer different questions
-
-The taxonomy is the closed set in src.sim.scripted.FailureMode. Pretrained
-rollouts have ground_truth_label=None (we don't know what should happen) and
-are excluded from precision/recall — they only enter via the per-policy
-success rate column in the report.
+Per-label numbers, not a global score, so the report can surface "we're
+great at slip but mediocre at approach_miss". Binary fail-detection
+(any-failure vs none) is deliberately NOT tracked here: simulator
+`env._check_success()` owns that bit.
 """
 
 from __future__ import annotations

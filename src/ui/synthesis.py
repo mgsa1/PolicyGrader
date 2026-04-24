@@ -31,6 +31,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from src.agents.tools import DISPATCH_LOG
+from src.human_labels import labels_by_rollout
 from src.ui import theme
 from src.vision.frames import read_frames, resize_long_edge
 from src.vision.judge import JUDGE_LONG_EDGE_PX
@@ -172,7 +173,7 @@ class ScoredRollout:
     seed: int
     success: bool  # authoritative from sim._check_success()
     steps_taken: int
-    ground_truth_label: str | None
+    human_label: str | None  # from mirror_root/human_labels.jsonl; None if unlabeled
     injection_knobs: dict[str, Any]
     judge_label: str | None  # None if sim_success or judge pending
     judge_frame_index: int | None  # original-mp4 frame index the judge named
@@ -197,26 +198,39 @@ class ScoredRollout:
 
     @property
     def population(self) -> str:
-        """'calibration' if injected ground truth exists, else 'deployment'."""
-        return "calibration" if self.ground_truth_label else "deployment"
+        """'calibration' (scripted policy) or 'deployment' (pretrained policy).
+
+        This is the cohort a rollout was planned into, not a reflection of
+        whether a human has labeled it yet. Human labels arrive on a sampled
+        SUBSET of the calibration cohort — see human_label for that signal.
+        """
+        return "calibration" if self.policy_kind == "scripted" else "deployment"
+
+    # Backwards-compatible alias for call sites that still reach for the old
+    # field name. Reads as the human label, which is the current source of
+    # ground truth.
+    @property
+    def ground_truth_label(self) -> str | None:
+        return self.human_label
 
 
 def population_chip(rollout: ScoredRollout, *, compact: bool = False) -> str:
     """Render the calibration/deployment chip for a rollout.
 
-    Calibration chip shows the injected ground-truth label.
-    Deployment chip shows the policy + 'no GT' so it's clear there's no
-    label to compare against.
+    Calibration chip shows the human label if one exists, else "unlabeled"
+    (only a sampled subset of calibration rollouts gets human-reviewed).
+    Deployment chip shows the policy name; deployment rollouts are never
+    human-labeled.
     """
     if rollout.population == "calibration":
         modifier = "cal"
         kind_label = CALIBRATION_LABEL
-        sub = f"expected: {rollout.ground_truth_label}"
+        sub = f"labeled: {rollout.human_label}" if rollout.human_label else "unlabeled"
     else:
         modifier = "dep"
         kind_label = DEPLOYMENT_LABEL
         policy = "BC-RNN" if rollout.policy_kind == "pretrained" else rollout.policy_kind
-        sub = f"{policy} · no GT"
+        sub = f"{policy}"
     sub_html = "" if compact else f"<span class='pg-chip__sub'>{html_escape(sub)}</span>"
     return (
         f"<span class='pg-chip pg-chip--{modifier}'>"
@@ -233,20 +247,22 @@ def cohort_split(rollouts: list[ScoredRollout]) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class JudgeMetrics:
-    """Multiclass judge calibration numbers, computed from dispatch_log.jsonl.
+    """Multiclass judge calibration numbers, computed from dispatch_log.jsonl
+    joined with human_labels.jsonl.
 
     Binary success is authoritative from sim so there is no vision-vs-sim
     binary panel — the only thing worth measuring is how often the judge's
-    taxonomy label matches the injected ground-truth label on the
-    calibration cohort. Successful rollouts with ground_truth_label="none"
-    count as a correct "none" label (the judge doesn't run on them; we
-    treat the no-judge-annotation-on-success case as an implicit "none").
+    taxonomy label matches the HUMAN label on the calibration subset the
+    human reviewed. `ambiguous` human labels are excluded from n_labeled
+    (they count as coverage but not as a P/R signal). Successful rollouts
+    with human label "none" count as a correct implicit "none" (the judge
+    does not run on successes).
     """
 
     n_total: int
-    n_with_ground_truth: int  # calibration rollouts (injected label known)
+    n_with_human_label: int  # rollouts that have a human label
     n_labeled: int  # of those, ones where the judge's verdict is determined
-    label_correct: int  # of n_labeled, where judge_label == ground_truth
+    label_correct: int  # of n_labeled, where judge_label == human_label
 
     @property
     def label_accuracy(self) -> float | None:
@@ -254,13 +270,19 @@ class JudgeMetrics:
             return None
         return self.label_correct / self.n_labeled
 
+    @property
+    def n_with_ground_truth(self) -> int:
+        """Backwards-compatible alias for n_with_human_label."""
+        return self.n_with_human_label
+
 
 def compute_metrics(rollouts: list[ScoredRollout]) -> JudgeMetrics:
-    """Compute multiclass label accuracy on the calibration subset.
+    """Compute multiclass label accuracy on the human-labeled subset.
 
-    For each calibration rollout:
-      - sim_success=True: treat judge label as "none" (judge doesn't run on
-        successes). Correct iff ground_truth_label == "none".
+    For each human-labeled rollout:
+      - human label "ambiguous": excluded from n_labeled (coverage only).
+      - sim_success=True: treat judge verdict as "none" (judge doesn't run on
+        successes). Correct iff human_label == "none".
       - sim_success=False and judge_label set: correct iff labels match.
       - sim_success=False and judge_label None: judge pending; excluded
         from n_labeled.
@@ -270,9 +292,13 @@ def compute_metrics(rollouts: list[ScoredRollout]) -> JudgeMetrics:
     label_correct = 0
 
     for r in rollouts:
-        if not r.ground_truth_label:
-            continue  # deployment cohort; no ground truth to score against
+        gt = r.human_label
+        if not gt:
+            continue  # unlabeled rollout
         n_with_gt += 1
+
+        if gt == "ambiguous":
+            continue  # counted as coverage, not as P/R input
 
         if r.success:
             judge_verdict: str | None = "none"
@@ -284,12 +310,12 @@ def compute_metrics(rollouts: list[ScoredRollout]) -> JudgeMetrics:
         if judge_verdict is None:
             continue
         n_labeled += 1
-        if judge_verdict == r.ground_truth_label:
+        if judge_verdict == gt:
             label_correct += 1
 
     return JudgeMetrics(
         n_total=len(rollouts),
-        n_with_ground_truth=n_with_gt,
+        n_with_human_label=n_with_gt,
         n_labeled=n_labeled,
         label_correct=label_correct,
     )
@@ -333,6 +359,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
             judge_records[rid] = result
 
     rollouts_dir = mirror_root / "rollouts"
+    human_labels = labels_by_rollout(mirror_root)
     out: list[ScoredRollout] = []
     for rid, rr in rollout_records.items():
         args = rr["args"]
@@ -348,6 +375,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
         }
         host_video = rollouts_dir / f"{rid}.mp4"
         judge_frame_raw = judge.get("frame_index")
+        human_label_record = human_labels.get(rid)
         out.append(
             ScoredRollout(
                 rollout_id=rid,
@@ -356,7 +384,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
                 seed=int(args.get("seed", 0)),
                 success=bool(result.get("success", False)),
                 steps_taken=int(result.get("steps_taken", 0)),
-                ground_truth_label=result.get("ground_truth_label"),
+                human_label=human_label_record.label if human_label_record else None,
                 injection_knobs=knobs,
                 judge_label=judge.get("taxonomy_label"),
                 judge_frame_index=int(judge_frame_raw) if judge_frame_raw is not None else None,

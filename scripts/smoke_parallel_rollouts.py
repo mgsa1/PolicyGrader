@@ -70,9 +70,7 @@ def main() -> int:
     print(f"OK  {len(results)} rollouts in {elapsed:.1f}s ({elapsed / len(results):.1f}s/each)")
     for r in results:
         flag = "PASS" if r.success else "FAIL"
-        print(
-            f"  {flag}  {r.rollout_id:20s}  steps={r.steps_taken:3d}  label={r.ground_truth_label}"
-        )
+        print(f"  {flag}  {r.rollout_id:20s}  steps={r.steps_taken:3d}")
     return 0
 
 

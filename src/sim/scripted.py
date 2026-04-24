@@ -1,17 +1,24 @@
 """Scripted state-machine pick policy for robosuite Lift, with injectable failure modes.
 
-This is the source of GROUND-TRUTH labels for vision-judge precision/recall:
-each rollout config carries an InjectedFailures and a derivable FailureMode
-label that the judge's output is later compared against. Runs the
-calibration cohort of every eval (the deployment cohort uses the pretrained
-BC-RNN on the same task under cube-placement perturbations instead).
+Drives the calibration cohort of every eval. The deployment cohort uses the
+pretrained BC-RNN on the same task under cube-placement perturbations.
 
-Knob -> label mapping (priority high to low; first match wins):
-  action_noise >= 0.1            -> KNOCK_OBJECT_OFF_TABLE
-  approach_angle_offset_deg > 0  -> APPROACH_MISS
-  gripper_close_prematurely      -> APPROACH_MISS  (closes in air, never grasps)
-  grip_force_scale < 0.7         -> SLIP_DURING_LIFT
-  otherwise                      -> NONE
+The knobs control WHAT the scripted policy does, not WHAT the rollout will be
+labeled as: ground truth comes from human labels on a sampled subset of
+rollouts (see src/human_labels.py), because knob-intent and visual-outcome
+diverged too often under the old knob->label mapping (e.g. action_noise=0.10
+was labeled knock_object_off_table but visually produced approach_miss on
+many seeds).
+
+Knob menu:
+  action_noise            gaussian perturbation on action[:6] every step
+                          (amplified by NOISE_GAIN). High values chaotic.
+  approach_angle_offset   radial xy offset of target during approach+descent
+                          — gripper closes beside the cube.
+  gripper_close_prematurely  gripper commanded closed from step 0 — fingers
+                          never open, cannot grasp.
+  grip_force_scale        < SLIP_THRESHOLD -> gripper opens mid-lift after
+                          SLIP_CARRY_STEPS; cube falls visibly.
 """
 
 from __future__ import annotations
@@ -41,14 +48,16 @@ LIFT_HEIGHT_M = 0.20
 POS_TOLERANCE_M = 0.01
 GRASP_HOLD_STEPS = 8
 
-# Slip threshold: must match InjectedFailures.to_label so behavior == label.
+# Slip threshold: weak grip -> gripper releases mid-lift.
 SLIP_THRESHOLD = 0.7
 
-# When slip is injected, the gripper command flips to OPEN at LIFT start, but
-# the physical aperture takes ~10 steps to actually move. Without holding
-# position during those steps, the arm rises and (briefly) carries the cube
-# past the success threshold before dropping it. Holding lets the cube fall.
-SLIP_RELEASE_PAUSE_STEPS = 12
+# During slip, hold the grasp with GRIP_CLOSE for this many LIFT-phase steps
+# so the arm has time to actually raise the cube to ~LIFT_HEIGHT_M before we
+# command GRIP_OPEN. Without the hold the gripper released before the lift
+# started and the cube never left the table — visually indistinguishable
+# from approach_miss. With it, the cube is clearly airborne when released
+# and falls back, producing the canonical slip silhouette.
+SLIP_CARRY_STEPS = 15
 
 # Internal multiplier on action_noise so the user-facing values from claude.md
 # sec 4 ({0.0, 0.05, 0.15}) actually translate to visible behavior on Lift.
@@ -62,15 +71,16 @@ NOISE_GAIN = 8.0
 class FailureMode(StrEnum):
     NONE = "none"
     APPROACH_MISS = "approach_miss"
+    GRIPPER_NEVER_OPENED = "gripper_never_opened"
+    CUBE_SCRATCHED_BUT_NOT_MOVED = "cube_scratched_but_not_moved"
     PREMATURE_RELEASE = "premature_release"
     SLIP_DURING_LIFT = "slip_during_lift"
     KNOCK_OBJECT_OFF_TABLE = "knock_object_off_table"
-    # Judge-emit-only labels — no scripted injection produces these. Listed in
-    # docs/taxonomy.md as legitimate failure modes the vision judge can choose,
-    # mostly relevant to multi-object / insertion envs (NutAssemblySquare).
+    GRIPPER_COLLISION = "gripper_collision"
+    # Retained in the closed set for future multi-task re-expansion. Not
+    # reachable on Lift (single object, no insertion).
     WRONG_OBJECT_SELECTED = "wrong_object_selected"
     INSERTION_MISALIGNMENT = "insertion_misalignment"
-    GRIPPER_COLLISION = "gripper_collision"
     OTHER = "other"
 
 
@@ -89,22 +99,12 @@ class InjectedFailures:
     approach_angle_offset_deg: float = 0.0
     grip_force_scale: float = 1.0
 
-    def to_label(self) -> FailureMode:
-        if self.action_noise >= 0.1:
-            return FailureMode.KNOCK_OBJECT_OFF_TABLE
-        if self.approach_angle_offset_deg > 0.0:
-            return FailureMode.APPROACH_MISS
-        if self.gripper_close_prematurely:
-            return FailureMode.APPROACH_MISS
-        if self.grip_force_scale < SLIP_THRESHOLD:
-            return FailureMode.SLIP_DURING_LIFT
-        return FailureMode.NONE
-
 
 @dataclass
 class _State:
     phase: _Phase = _Phase.APPROACH
     grasp_step_counter: int = 0
+    lift_step_counter: int = 0
     initial_cube_pos: np.ndarray[Any, Any] | None = field(default=None)
 
 
@@ -122,10 +122,6 @@ class ScriptedLiftPolicy(Policy):
         self._seed = seed
         self._state = _State()
         self._rng = np.random.default_rng(seed)
-
-    @property
-    def injected_label(self) -> FailureMode:
-        return self._failures.to_label()
 
     def reset(self) -> None:
         self._state = _State()
@@ -162,17 +158,18 @@ class ScriptedLiftPolicy(Policy):
         return action
 
     def _gripper_action(self, nominal_cmd: float) -> float:
-        """Slip semantic: during LIFT phase, fully open the gripper if scale<0.7.
-
-        Threshold matches InjectedFailures.to_label so the behavior tracks the
-        label exactly: scale<0.7 -> SLIP_DURING_LIFT label AND gripper opens
-        mid-lift. A continuous interpolation (e.g. 2*scale-1) is not robust
-        across cube-placement seeds — partial-close still grasps about half the
-        time. Binary release on threshold drops the cube reliably.
+        """Slip semantic: carry the cube through the first SLIP_CARRY_STEPS of
+        LIFT with GRIP_CLOSE so it is clearly airborne, then command GRIP_OPEN
+        so it falls. Binary release on threshold drops the cube reliably —
+        continuous interpolation (e.g. 2*scale-1) grasped about half the time
+        across cube-placement seeds and made the mode visually ambiguous.
         """
         if self._state.phase != _Phase.LIFT:
             return nominal_cmd
-        if self._failures.grip_force_scale < SLIP_THRESHOLD:
+        if (
+            self._failures.grip_force_scale < SLIP_THRESHOLD
+            and self._state.lift_step_counter >= SLIP_CARRY_STEPS
+        ):
             return GRIP_OPEN
         return nominal_cmd
 
@@ -215,19 +212,7 @@ class ScriptedLiftPolicy(Policy):
         # LIFT or DONE
         assert s.initial_cube_pos is not None
 
-        # Slip mode: hold position at the grasp pose for SLIP_RELEASE_PAUSE_STEPS
-        # while _gripper_action issues GRIP_OPEN. By the time we begin the actual
-        # lift, the gripper has fully opened and the cube has fallen back to the
-        # table — the arm rises empty. Without this, the arm out-paces the
-        # gripper opening and briefly carries the cube past the success threshold.
-        if (
-            self._failures.grip_force_scale < SLIP_THRESHOLD
-            and s.grasp_step_counter < GRASP_HOLD_STEPS + SLIP_RELEASE_PAUSE_STEPS
-        ):
-            s.grasp_step_counter += 1
-            target = cube + np.array([xy_off[0], xy_off[1], GRASP_HEIGHT_OFFSET_M])
-            return target, GRIP_CLOSE
-
+        s.lift_step_counter += 1
         target = s.initial_cube_pos + np.array([xy_off[0], xy_off[1], LIFT_HEIGHT_M])
         return target, GRIP_CLOSE
 

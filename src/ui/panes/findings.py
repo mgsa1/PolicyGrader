@@ -36,6 +36,12 @@ def cluster_cards_html(mirror_root: Path, mode: str) -> str:
     `mode` ∈ {'label', 'condition'} selects between cluster_by_label and
     cluster_by_condition — the former groups by judge taxonomy label, the
     latter by perturbation condition (scripted) or (env, policy) pair (BC-RNN).
+
+    Clusters are built from the DEPLOYMENT cohort only. Calibration rollouts
+    live on the Judge calibration tab; mixing them here would double-count
+    scripted failures as if they were deployment findings. Per-label
+    calibration precision (the chips on each breakdown) still comes from the
+    full rollout set so we retain the scripted GT signal.
     """
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
@@ -44,16 +50,20 @@ def cluster_cards_html(mirror_root: Path, mode: str) -> str:
             "has run at least one rollout + judge cycle."
         )
 
-    keyframes = render_all_keyframes(rollouts, mirror_root)
-    total_failures = sum(1 for r in rollouts if r.judged_failure)
+    cal_stats = per_label_calibration(rollouts)
+    deployment = [r for r in rollouts if r.population == "deployment"]
+    if not deployment:
+        return empty("Deployment cohort is empty for this run.")
+
+    keyframes = render_all_keyframes(deployment, mirror_root)
+    total_failures = sum(1 for r in deployment if r.judged_failure)
     if total_failures == 0:
         return empty(
-            "No judged failures yet — either every rollout succeeded, or the "
-            "judge hasn't finished labeling the sim failures."
+            "No judged failures yet — either every deployment rollout succeeded, "
+            "or the judge hasn't finished labeling the sim failures."
         )
 
-    cal_stats = per_label_calibration(rollouts)
-    clusters = cluster_by_label(rollouts) if mode == "label" else cluster_by_condition(rollouts)
+    clusters = cluster_by_label(deployment) if mode == "label" else cluster_by_condition(deployment)
     cards = [
         _cluster_card(i + 1, c, total_failures, keyframes, cal_stats)
         for i, c in enumerate(clusters)

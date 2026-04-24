@@ -31,19 +31,22 @@ import numpy as np  # noqa: E402
 import robosuite as suite  # noqa: E402
 from robosuite.controllers import load_controller_config  # noqa: E402
 
-from src.schemas import RolloutConfig, RolloutResult  # noqa: E402
+from src.schemas import RolloutConfig, RolloutResult, RolloutTelemetry, TelemetryRow  # noqa: E402
 from src.sim.policies import Policy  # noqa: E402
 from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 from src.sim.scripted import ScriptedLiftPolicy  # noqa: E402
 
-# After success, keep stepping for ~1 s so the recorded video shows the cube
-# clearly held aloft over an empty table. Without this the rollout would cut
-# the instant success triggers, leaving ambiguous final frames that tripped
-# the old Pass-1 judge into labeling the rollout as a failure. The current
-# single-call CoT judge only runs on sim-confirmed failures, so the hold is
-# now cosmetic (cleaner gallery thumbnails for successes). Does not affect
-# steps_taken, which still reflects the success step.
+# After success triggers, keep stepping for ~1 s so we can re-verify the cube
+# is still aloft at the end of the hold — this is what demotes slip_during_lift
+# rollouts (cube rises above the success threshold mid-slip, then falls back)
+# from false-success to failure. Also gives the recorded video clean "cube held
+# aloft" final frames on clean successes.
 POST_SUCCESS_HOLD_STEPS = 20
+
+# Sum of the two Panda finger joint qpos values when fully open. Used to
+# normalize gripper aperture to [0, 1] for the judge's telemetry table.
+# Each finger ranges roughly [0, 0.04]; sum tops out near 0.08 m.
+PANDA_GRIPPER_FULL_OPEN_M = 0.08
 
 
 def _build_pretrained(config: RolloutConfig) -> tuple[Policy, dict[str, Any], str]:
@@ -90,12 +93,49 @@ def _apply_cube_xy_jitter(env: Any, jitter_m: float) -> None:
     sampler.y_range = (-jitter_m, jitter_m)
 
 
+def _extract_telemetry_row(
+    env: Any,
+    obs: dict[str, Any],
+    step_index: int,
+    initial_cube_pos: np.ndarray[Any, Any],
+) -> TelemetryRow:
+    """Pull the five disambiguating scalars for one step from the env + obs.
+
+    Aligned 1:1 with the rendered frame for the same step — the judge slices
+    rows by sampled-frame index and the lookup is identity (frame i ↔ step i).
+    """
+    cube = np.asarray(obs["cube_pos"], dtype=np.float64)
+    eef = np.asarray(obs["robot0_eef_pos"], dtype=np.float64)
+    grip = np.asarray(obs["robot0_gripper_qpos"], dtype=np.float64)
+
+    aperture = float(np.clip(grip.sum() / PANDA_GRIPPER_FULL_OPEN_M, 0.0, 1.0))
+    ee_to_cube = float(np.linalg.norm(eef - cube))
+    cube_z_above = float(cube[2] - initial_cube_pos[2])
+    cube_xy_drift = float(np.linalg.norm(cube[:2] - initial_cube_pos[:2]))
+    contact = bool(env.check_contact(env.robots[0].gripper, env.cube))
+
+    return TelemetryRow(
+        step_index=step_index,
+        gripper_aperture=aperture,
+        ee_to_cube_m=ee_to_cube,
+        cube_z_above_table_m=cube_z_above,
+        cube_xy_drift_m=cube_xy_drift,
+        contact_flag=contact,
+    )
+
+
+def _telemetry_path_for(video_out: Path) -> Path:
+    """Sidecar path next to the mp4: <id>.mp4 → <id>.telemetry.json."""
+    return video_out.with_suffix(".telemetry.json")
+
+
 def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> RolloutResult:
     """Run one scenario end-to-end and return its result.
 
-    If `video_out` is provided, an mp4 of the configured camera is written there.
-    Pass None to skip rendering (useful for parallel sweeps where only the
-    success/label outcome matters).
+    If `video_out` is provided, an mp4 of the configured camera is written there
+    along with a `<id>.telemetry.json` sidecar of per-step sim telemetry. Pass
+    None to skip both (useful for parallel sweeps where only the success/label
+    outcome matters).
     """
     if config.policy_kind == "pretrained":
         policy, env_kwargs, env_name = _build_pretrained(config)
@@ -109,9 +149,11 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
     obs = env.reset()
     policy.reset()
     render_camera = config.render.camera
+    initial_cube_pos = np.asarray(obs["cube_pos"], dtype=np.float64).copy()
 
     record_video = video_out is not None
     frames: list[np.ndarray[Any, Any]] = []
+    telemetry_rows: list[TelemetryRow] = []
     success = False
     steps = 0
     hold_remaining = 0
@@ -126,9 +168,10 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
                 height=config.render.height,
             )
             frames.append(frame[::-1])
+            telemetry_rows.append(_extract_telemetry_row(env, obs, step - 1, initial_cube_pos))
 
+        steps = step
         if not success:
-            steps = step
             if env._check_success():
                 success = True
                 hold_remaining = POST_SUCCESS_HOLD_STEPS
@@ -137,17 +180,31 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
             if hold_remaining <= 0:
                 break
 
+    # Demote transient success: cube may have crossed the height threshold
+    # mid-slip then fallen back. Success is only honored if the cube is still
+    # aloft at the end of the hold.
+    if success and not env._check_success():
+        success = False
+
+    telemetry_out: Path | None = None
     if record_video and video_out is not None and frames:
         video_out.parent.mkdir(parents=True, exist_ok=True)
         imageio.mimsave(video_out, list(frames), fps=config.render.fps)
+        telemetry_out = _telemetry_path_for(video_out)
+        telemetry = RolloutTelemetry(
+            rollout_id=config.rollout_id,
+            fps=config.render.fps,
+            rows=telemetry_rows,
+        )
+        telemetry_out.write_text(telemetry.model_dump_json())
 
     return RolloutResult(
         rollout_id=config.rollout_id,
         success=success,
         steps_taken=steps,
         video_path=video_out if record_video else None,
-        ground_truth_label=config.ground_truth_label,
         env_name=config.env_name,
         policy_kind=config.policy_kind,
         seed=config.seed,
+        telemetry_path=telemetry_out,
     )

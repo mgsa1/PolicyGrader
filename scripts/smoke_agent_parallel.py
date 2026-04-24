@@ -67,6 +67,20 @@ def main() -> int:
         help="Parallel-worker count for both rollout and judge phases (default 4).",
     )
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--skip-labeling",
+        action="store_true",
+        help=(
+            "Bypass the host-side human-labeling phase. Useful for unattended "
+            "smoke runs. Calibration will render as 'not measured' in the UI."
+        ),
+    )
+    parser.add_argument(
+        "--label-seed",
+        type=int,
+        default=0,
+        help="Seed for the labeling-subset sampler.",
+    )
     args = parser.parse_args()
 
     run_id = args.run_id or _mint_run_id()
@@ -87,6 +101,8 @@ def main() -> int:
         mirror_root=mirror_root,
         k_workers=args.k_workers,
         run_id=run_id,
+        skip_labeling=args.skip_labeling,
+        label_seed=args.label_seed,
     )
 
     print("\n=== Per-phase stop reasons ===", flush=True)

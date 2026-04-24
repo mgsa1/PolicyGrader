@@ -49,6 +49,7 @@ from src.costing import (
     format_cost,
     format_duration,
 )
+from src.label_phase import run_label_phase
 from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
@@ -369,12 +370,16 @@ def run_all_phases(
     run_id: str = "",
     messages_client: Anthropic | None = None,
     cost_tracker: CostTracker | None = None,
+    skip_labeling: bool = False,
+    label_seed: int = 0,
 ) -> SessionResult:
     """Drive all four phases in order. Returns stops + cost + time + scenario count.
 
     The user_goal is sent together with the PLANNER marker so the agent has
     a one-line objective for the test matrix. The REPORT marker is enriched
     with measured runtime numbers so the agent doesn't fabricate them.
+    Between ROLLOUT and JUDGE the orchestrator pauses to run the host-side
+    human labeling phase (unless `skip_labeling=True`).
     """
     if messages_client is None:
         messages_client = client
@@ -425,6 +430,18 @@ def run_all_phases(
         if stop != "end_turn":
             logger.warning("phase %s ended with %s — stopping orchestrator", marker, stop)
             break
+
+        # Pause between ROLLOUT and JUDGE for the host-side human labeling
+        # phase. The agent has no knowledge of this phase — the host reads
+        # dispatch_log.jsonl, samples a subset, writes the queue, and blocks
+        # until the Gradio UI has collected labels.
+        if marker == PHASE_MARKER_ROLLOUT:
+            run_label_phase(
+                runtime,
+                mirror_root,
+                skip_labeling=skip_labeling,
+                sample_seed=label_seed,
+            )
 
     runtime.set_phase("complete")
     n_rollouts_final = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0

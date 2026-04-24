@@ -26,6 +26,9 @@ def _scored(
     knobs: dict[str, Any] | None = None,
     policy_kind: str = "scripted",
     env_name: str = "Lift",
+    human_label: str | None = None,
+    # Legacy kwarg alias — old tests pass ground_truth_label meaning "the
+    # human-side GT label". Map it onto human_label for backwards compat.
     ground_truth_label: str | None = None,
 ) -> ScoredRollout:
     """Minimal ScoredRollout factory matching the single-judge model.
@@ -51,7 +54,7 @@ def _scored(
         seed=0,
         success=success,
         steps_taken=42,
-        ground_truth_label=ground_truth_label,
+        human_label=human_label if human_label is not None else ground_truth_label,
         injection_knobs=base_knobs,
         judge_label=judge_label,
         judge_frame_index=70 if judge_label else None,

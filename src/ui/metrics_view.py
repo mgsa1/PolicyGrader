@@ -48,18 +48,23 @@ WILSON_Z_95 = 1.96  # 95% Wilson CI z-score; no scipy required
 class CohortCounts:
     """The calibration / deployment denominators that frame this tab."""
 
-    n_calibration: int  # rollouts with injected ground-truth label
-    n_calibration_with_findings: int  # of those, ones scored (success OR judge done)
-    n_deployment: int  # rollouts with no ground-truth label (pretrained etc.)
+    n_calibration: int  # all scripted rollouts (the calibration cohort)
+    n_calibration_with_findings: int  # scripted rollouts that are scorable
+    n_deployment: int  # pretrained rollouts
 
 
 def _calibration_is_scored(r: ScoredRollout) -> bool:
     """True iff this calibration rollout has a complete verdict to score.
 
-    Successful rollouts are implicitly "none" (judge doesn't run). Failed
-    rollouts are scored once the judge has produced a label.
+    A rollout is scorable when (a) it's in the calibration cohort,
+    (b) a human has labeled it, and (c) the judge's verdict is determined —
+    either sim said success (implicit "none", judge didn't run) or the judge
+    has produced a label. Unlabeled calibration rollouts are in-flight, not
+    excluded.
     """
-    if not r.ground_truth_label:
+    if r.population != "calibration":
+        return False
+    if not r.human_label:
         return False
     if r.success:
         return True
@@ -67,9 +72,9 @@ def _calibration_is_scored(r: ScoredRollout) -> bool:
 
 
 def cohort_counts(rollouts: list[ScoredRollout]) -> CohortCounts:
-    n_cal = sum(1 for r in rollouts if r.ground_truth_label)
+    n_cal = sum(1 for r in rollouts if r.population == "calibration")
     n_cal_done = sum(1 for r in rollouts if _calibration_is_scored(r))
-    n_dep = len(rollouts) - n_cal
+    n_dep = sum(1 for r in rollouts if r.population == "deployment")
     return CohortCounts(
         n_calibration=n_cal,
         n_calibration_with_findings=n_cal_done,
@@ -186,10 +191,10 @@ def render_caption() -> str:
         + theme.INK_3
         + ";margin-bottom:18px;line-height:1.55;'>"
         "Binary success comes from <code>env._check_success()</code> (sim-authoritative). "
-        "This tab measures the judge's <b>taxonomy label</b> against the failure-injection "
-        "parameter used in the scripted policy. Pretrained (deployment) rollouts have no "
-        "injected ground truth and are excluded from these numbers — see the Deployment "
-        "findings tab."
+        "This tab measures the judge's <b>taxonomy label</b> against the <b>human label</b> "
+        "given during the calibration phase, on the sampled subset of scripted rollouts the "
+        "reviewer saw. Unlabeled calibration rollouts and all deployment rollouts are "
+        "excluded from these numbers — see the Deployment findings tab for the latter."
         "</div>"
     )
 
@@ -246,9 +251,11 @@ def render_judge_calibration_header() -> str:
         "<div class='pg-callout'>"
         f"<div class='pg-callout__eyebrow' style='color:{theme.CAL};'>JUDGE CALIBRATION</div>"
         "<div class='pg-callout__body'>"
-        "This tab measures the <b>judge</b>, not the policy. The numbers here "
-        "come from rollouts where we injected a known failure, so we know the "
-        "correct label. Policy findings live in the <b>Deployment findings</b> tab."
+        "This tab measures the <b>judge</b>, not the policy. The numbers come "
+        "from scripted rollouts where a human reviewer labeled the failure mode "
+        "from the closed taxonomy — the confusion matrix below pits the judge's "
+        "taxonomy label against that human label. Policy findings live in the "
+        "<b>Deployment findings</b> tab."
         "</div></div>"
     )
 

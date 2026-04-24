@@ -11,20 +11,21 @@
 
 Submitted to the Anthropic Opus 4.7 Hackathon.
 
-**How it works.** Describe an evaluation goal in English → an Opus 4.7 Managed Agent designs a test suite, runs rollouts in simulation across two populations side by side, watches each resulting video in a single dense-frame chain-of-thought pass (~30 frames at 2576 px), names the failure frame, annotates it with pixel-accurate pointing (or abstains when there is no contact to point at), and emits a report. Minutes, a few dollars, fully auditable trail.
+**How it works.** Describe an evaluation goal in English → an Opus 4.7 Managed Agent designs a test suite, runs rollouts in simulation, **pauses for the human to label a sampled subset of calibration rollouts** from a closed taxonomy, then watches each failed rollout in a single dense-frame chain-of-thought pass (~30 frames at 2576 px), names the failure frame, annotates it with pixel-accurate pointing (or abstains when there is no contact to point at), and emits a report. Minutes, a few dollars, fully auditable trail.
 
-**The two populations are load-bearing.** *Calibration rollouts* run a scripted policy with deliberately-injected output knobs on Lift — ground truth is known by construction, so we measure judge precision/recall against it. *Deployment rollouts* run a real policy (today: a pretrained BC-RNN, also on Lift) under an environmental perturbation (`cube_xy_jitter_m` — widened initial-position range) where ground truth is unknown — the judge is applied with its calibration trust attached. Both cohorts run on the **same task, env, and camera**, which is what lets the calibration precision numbers actually attach to the deployment findings instead of being at-best a floor. The dashboard's headline number is the calibrated judge applied to the deployment population. See `@docs/eval_methodology.md` for the full framing + limitations.
+**The two populations are load-bearing.** *Calibration rollouts* run a scripted IK policy with knobs that steer it into specific failure regimes; a **human labels a sampled subset** (clamp(10% × N, 6, 20), stratified 1/3 successes + 2/3 failures) from the closed taxonomy, and that subset is the judge's measuring stick — judge P/R is computed against the human labels, not against knob intent. *Deployment rollouts* run a real policy (today: a pretrained BC-RNN, also on Lift) under an environmental perturbation (`cube_xy_jitter_m` — widened initial-position range); the judge runs on their failures with the calibration P/R attached as trust chips. Both cohorts run on the **same task, env, and camera**, which is what lets the per-label calibration precision transfer onto the deployment findings. See `@docs/eval_methodology.md` for the full framing + limitations.
 
-**Why it matters.** Robotics teams spend weeks hand-crafting eval suites and watching rollouts. We replace that labor with an agentic pipeline that scales horizontally, **measures its own judge against synthetic ground truth, and explicitly carries that measurement through to the deployment findings.** A real "eval the eval" story, not a vibes demo.
+**Why it matters.** Robotics teams spend weeks hand-crafting eval suites and watching rollouts. We replace that labor with an agentic pipeline that scales horizontally and **explicitly measures its own judge against human-labeled ground truth on a sampled subset**, then carries that measurement through to the deployment findings. A real "eval the eval" story, not a vibes demo.
 
 **Vocabulary — use these exact terms.**
 
 | Term | What it means | Don't say |
 |---|---|---|
-| Calibration rollout | scripted policy + injected failure (GT known) | "scripted rollout", "scored rollout" |
-| Deployment rollout | pretrained / real policy (no GT label) | "pretrained rollout", "unscored" |
-| Injected ground truth | the programmed failure label on calibration rollouts | bare "ground truth" |
-| Judge calibration | P/R measurement against injected GT | "metrics", "judge accuracy" |
+| Calibration rollout | scripted policy rollout (whether labeled or not) | "scripted rollout", "scored rollout" |
+| Deployment rollout | pretrained / real policy rollout | "pretrained rollout", "unscored" |
+| Human label | the calibration GT source — one HumanLabel per reviewed rollout | bare "ground truth" |
+| Labeling phase | host-side PHASE 2.5 between rollout and judge; blocks on the Gradio UI | "review", "scoring" |
+| Judge calibration | judge P/R against human labels on the labeled subset | "metrics", "judge accuracy" |
 | Calibrated estimate | a judge label on a deployment rollout, decorated with its calibration P | bare "judge label" |
 | Deployment findings | artifacts of applying the judge to deployment rollouts | "report metrics" |
 
@@ -66,26 +67,33 @@ Research-preview access to parallel Managed Agents sessions is **confirmed avail
 │  Tabs: Live · Judge calibration · Deployment findings (label /   │
 │        condition sub-tabs)                                        │
 │  Top banner: $X spent · Y elapsed · N scenarios (cal + dep)       │
-│  Phase progress strip: 4 chips (planner/rollout/judge/report)    │
+│  Phase progress strip: 5 chips                                    │
+│    (planner/rollout/LABELING/judge/report)                        │
 │  Live tab: agent activity · current rollout · rich gallery       │
-│  Judge calibration: cohort pills, multiclass heatmap,            │
-│    per-label table, drill-down (filtered)                        │
+│  Judge calibration: labeling flow (video + radio + submit) at    │
+│    top; confusion matrix + per-label P/R + drill-down below      │
 │  Deployment findings: Judge Trust banner over cluster cards      │
-│    decorated with per-label calibration P                        │
+│    decorated with per-label calibration P (deployment-only)      │
 └──────────────────────────────────────────────────────────────────┘
                                 ▲
-                       reads via file watcher
+                       reads via file watcher + submits labels
                                 ▲
 ┌──────────────────────────────────────────────────────────────────┐
 │ Layer 3a: Host-side mirror (IPC files in mirror_root)            │
 │  runtime.json · chat.jsonl · dispatch_log.jsonl · keyframes/     │
-│  Written by orchestrator + dispatch on every event.              │
+│  labeling_queue.json (host → UI handoff)                          │
+│  human_labels.jsonl (UI → host: calibration GT)                   │
+│  Written by orchestrator, dispatch, and the labeling UI.          │
 └──────────────────────────────────────────────────────────────────┘
                                 ▲
 ┌──────────────────────────────────────────────────────────────────┐
-│ Layer 3: ONE Managed Agents session (Opus 4.7)                   │
+│ Layer 3: Agent phases (Managed Agents, Opus 4.7)                 │
 │  Planner phase   → /memories/plan.md, test_matrix.csv            │
 │  Rollout phase   → /memories/rollouts/*.mp4                      │
+│  [PHASE 2.5: HUMAN LABELING — host-side, no agent session.       │
+│   Samples a subset of scripted rollouts, blocks on the Gradio    │
+│   labeling UI until every queued rollout has a HumanLabel.       │
+│   Skipped when --skip-labeling is set.]                           │
 │  Vision judge    → single CoT call per rollout                   │
 │    2576px, N = clamp(video_duration*3, 12, 36), JPEG q88         │
 │    per-frame walkthrough (gripper / cube / contact) →            │
@@ -98,14 +106,14 @@ Research-preview access to parallel Managed Agents sessions is **confirmed avail
                                 ▲
 ┌──────────────────────────────────────────────────────────────────┐
 │ Layer 2: Two populations of policies (both on Lift)              │
-│  Calibration: scripted IK picker with injected OUTPUT knobs      │
-│               → known ground-truth label per rollout             │
+│  Calibration: scripted IK picker with knobs that steer behavior  │
+│               toward specific failure modes. HUMAN labels a      │
+│               sampled subset → that's the calibration GT.        │
 │  Deployment:  robomimic BC-RNN pretrained + ENVIRONMENTAL        │
 │               perturbation (cube_xy_jitter_m widens placement)   │
-│               → no ground truth, judged with calibration trust   │
-│  Two different perturbation surfaces (policy output vs env),     │
-│  one shared task + judge — that's what makes the calibration P/R │
-│  meaningful on the deployment findings.                          │
+│               → judged with calibration trust attached.           │
+│  One shared task + judge + labeler — that's what makes the       │
+│  per-label calibration P transfer onto the deployment findings.  │
 └──────────────────────────────────────────────────────────────────┘
                                 ▲
 ┌──────────────────────────────────────────────────────────────────┐
@@ -118,7 +126,7 @@ Research-preview access to parallel Managed Agents sessions is **confirmed avail
 
 **Hard interface discipline.** The orchestrator never imports MuJoCo or robosuite directly. It calls `sim.run_rollout(config) -> RolloutResult` via `src/sim/adapter.py`. The adapter wraps both the pretrained policy and the scripted-failure policy behind one `Policy` interface. This is what lets §12's pivot (`.mp4` files instead of sim) swap in without touching agent code, *and* what lets Plan B swap in without touching sim code.
 
-**Dual-population data flow.** Every rollout carries a `population` flag derived from `ground_truth_label` (calibration if non-empty, deployment if empty). The Judge calibration tab consumes only the calibration subset for P/R numbers. The Deployment findings tab applies those P/R numbers to deployment rollouts as `calibrated estimate` chips. The Live tab and Live banner break down counts as `N total (n_cal cal + n_dep dep)` in the population colors (amber `#f59e0b` for calibration, steel blue `#38bdf8` for deployment). These are NOT the phase colors — different axis.
+**Dual-population data flow.** Every rollout carries a `population` flag derived from `policy_kind` (scripted = calibration, pretrained = deployment). The Judge calibration tab shows the labeling flow on the calibration subset, then the confusion matrix + per-label P/R computed from `human_labels.jsonl ⋈ findings.jsonl`. The Deployment findings tab applies the per-label calibration P as `calibrated estimate` chips on deployment cluster cards and a rollout table that is deployment-cohort-only. The Live tab and Live banner break down counts as `N total (n_cal cal + n_dep dep)` in the population colors (amber `#f59e0b` for calibration, steel blue `#38bdf8` for deployment). These are NOT the phase colors — different axis.
 
 ---
 
@@ -127,9 +135,9 @@ Research-preview access to parallel Managed Agents sessions is **confirmed avail
 - **Language:** Python 3.12.
 - **Model:** `claude-opus-4-7`. See §11 for breaking changes vs 4.6.
 - **Agent runtime:** Claude Managed Agents, beta header `managed-agents-2026-04-01`.
-- **Simulator:** `mujoco>=3` + `robosuite==1.4.1` (pinned — see below). One env in active use: **`Lift`** (both cohorts). Calibration = scripted policy with injected output knobs (known ground truth); deployment = pretrained BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens `env.placement_initializer.x_range/y_range` from the default ±3 cm). No custom cameras needed — default `frontview` works.
+- **Simulator:** `mujoco>=3` + `robosuite==1.4.1` (pinned — see below). One env in active use: **`Lift`** (both cohorts). Calibration = scripted policy with knobs that elicit specific failure modes; deployment = pretrained BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens `env.placement_initializer.x_range/y_range` from the default ±3 cm). No custom cameras needed — default `frontview` works.
 - **Policy — pretrained (deployment):** `robomimic` v0.3.0 with a pretrained BC-RNN checkpoint for Lift (`artifacts/checkpoints/lift_ph_low_dim.pth`, fetched by `scripts/fetch_checkpoints.py` from the Stanford rt_benchmark model zoo). **Verified 8/8 success** at `cube_xy_jitter_m=0.0` on our stack; failure rate climbs cleanly with the jitter value (0% at 0.12 m → 38% at 0.15 m → 88% at 0.30 m). **Pin robosuite to 1.4.1** — 1.5's composite-controller rewrite re-scales the 1.4-trained BC-RNN's delta actions and produces 0% success (see `@docs/eval_methodology.md` for the full story + robomimic issues #259 / #283). Do **not** use LeRobot — its policies target ALOHA / Koch / SO-100, not Franka Panda.
-- **Policy — scripted with injected failures (calibration):** `src/sim/scripted.py`. Knob → label mapping: `action_noise ≥ 0.10 → knock_object_off_table`; `angle_deg > 0 → approach_miss`; `premature_close = True → approach_miss`; `grip_scale < 0.7 → slip_during_lift`. Each config has known ground truth. Lift-only — the scope cut removed all other envs.
+- **Policy — scripted with injected failures (calibration):** `src/sim/scripted.py`. Knobs steer behavior toward intended visual failure modes: `action_noise≈0.05` → scratch, `action_noise≥0.25` → knock, `angle_deg>0` → approach_miss, `premature_close=True` → gripper_never_opened, `grip_scale<0.7` → slip_during_lift (gripper carries the cube up for `SLIP_CARRY_STEPS`, then releases; adapter demotes transient-success cases to failure). Ground truth comes from human labels on a sampled subset, not from the knob — see `src/human_labels.py`. Lift-only.
 - **UI:** `gradio` ≥ 6 (we run 6.13). Static files served via `/gradio_api/file=<abs_path>` — `allowed_paths=[mirror_root]` MUST be set on `app.launch()` or images 403.
 - **Plotting:** `plotly` ≥ 5 (interactive heatmap on the Judge calibration tab; `gr.Plot` only emits `.change` in Gradio 6, no native cell-click — use dropdown filters as the workaround). `matplotlib` available but largely unused.
 - **Video:** `imageio-ffmpeg` for `.mp4`. Frame sampling lives in `src/vision/frames.py`.
@@ -165,20 +173,26 @@ repo/
 │   ├── ui/
 │   │   ├── app.py                # Gradio entrypoint, tab orchestration
 │   │   ├── synthesis.py          # ScoredRollout, clusters, copy_button, chips
-│   │   └── metrics_view.py       # cohort, Wilson CI, heatmap, drill-down,
-│   │                             #   judge_trust banner, calibration chips
-│   ├── orchestrator.py           # ONE Managed Agents session, four phases
+│   │   ├── metrics_view.py       # cohort, Wilson CI, heatmap, drill-down,
+│   │   │                         #   judge_trust banner, calibration chips
+│   │   └── panes/
+│   │       ├── labeling.py       # human-labeling flow (video + radio + submit)
+│   │       ├── calibration.py    # confusion matrix + per-label P/R + drill
+│   │       └── findings.py       # deployment cluster cards + rollout table
+│   ├── orchestrator.py           # Plan A: one session, four phases + label phase
+│   ├── multi_orchestrator.py     # Plan B: four agents, label phase between rollout+judge
+│   ├── label_phase.py            # host-side PHASE 2.5 helper (queue, wait)
+│   ├── human_labels.py           # sampler + HumanLabel persistence + resume
 │   ├── runtime_state.py          # RuntimeState writes runtime.json + chat.jsonl
 │   ├── memory_layout.py          # canonical /memories/ paths
-│   ├── schemas.py                # Pydantic: RolloutConfig, RolloutResult, etc.
-│   ├── metrics.py                # P/R against injected ground truth
+│   ├── schemas.py                # Pydantic: RolloutConfig, RolloutResult, HumanLabel
 │   ├── costing.py                # CostTracker + manual-review baseline
 │   └── constants.py              # OPUS_MODEL_ID, beta headers, etc.
 ├── tests/
 │   ├── test_schemas.py
 │   ├── test_sim_adapter.py
-│   ├── test_scripted_failure_injection.py   # @integration where it touches sim
-│   ├── test_metrics.py
+│   ├── test_scripted_failure_injection.py   # @integration sim behavior check
+│   ├── test_human_labels.py                  # sampler, persistence, resume
 │   ├── test_costing.py                       # Wilson CI, baselines, formatters
 │   ├── test_synthesis.py                     # cluster math, scored conversion
 │   ├── test_metrics_view.py                  # cohort, drill filter, label adapter
@@ -198,10 +212,12 @@ repo/
 │   ├── install-mujoco-macos.md
 │   └── pipeline.html             # standalone pipeline diagram
 └── artifacts/                    # per-session, gitignored
-    └── smoke/agent/              # default mirror_root for scripts/smoke_agent.py
+    └── runs/<run_id>/            # mirror_root per run
         ├── runtime.json          # banner state (host writes, UI reads)
         ├── chat.jsonl            # phase markers + agent messages + tool calls
         ├── dispatch_log.jsonl    # every rollout/judge call args+result
+        ├── labeling_queue.json   # which rollouts go to the human labeler
+        ├── human_labels.jsonl    # human-provided GT (calibration)
         ├── rollouts/<id>.mp4
         └── keyframes/<id>.png    # rendered by synthesis layer with red dot
 ```
@@ -219,21 +235,23 @@ The agent writes its own deliverables here via the built-in `write` tool. The HO
 | Path | Owner | Contents |
 | --- | --- | --- |
 | `/memories/plan.md` | planner | goal, success criteria, scenario budget, mix rationale |
-| `/memories/test_matrix.csv` | planner | one row per scenario, knob values, expected_label |
+| `/memories/test_matrix.csv` | planner | one row per scenario; columns include `calibration_purpose` (labeler reference, NOT GT) — no `expected_label` |
 | `/memories/taxonomy.md` | planner | failure labels copied from `docs/taxonomy.md` |
 | `/memories/rollouts/<id>.mp4` | rollout worker | recorded videos (also mirrored host-side, see below) |
 | `/memories/findings.jsonl` | vision judge | one line per rollout: `{rollout_id, sim_success, judge: {taxonomy_label, frame_index, point \| null, description, per_frame_observations}}` |
 | `/memories/report.md` | report writer | final markdown deliverable |
 
-### Host-side mirror: `mirror_root/` (default `artifacts/smoke/agent/`)
+### Host-side mirror: `mirror_root/` (e.g. `artifacts/runs/<run_id>/`)
 
-The orchestrator and dispatch write a parallel set of files the dashboard reads via file watcher. Path constants in `src/memory_layout.py` and `src/runtime_state.py` — never hardcode.
+The orchestrator, dispatch, and the labeling UI write a parallel set of files the dashboard reads via file watcher. Path constants in `src/memory_layout.py` and `src/runtime_state.py` — never hardcode.
 
 | Path | Writer | Contents |
 | --- | --- | --- |
-| `runtime.json` | `RuntimeState.write_snapshot()` on every event | phase, elapsed, cost, dispatch counts, planned_total |
-| `chat.jsonl` | orchestrator on every agent event | phase markers, agent messages/thinking, tool calls/results |
+| `runtime.json` | `RuntimeState.write_snapshot()` on every event | phase, elapsed, cost, dispatch counts, label counts |
+| `chat.jsonl` | orchestrator on every agent event | phase markers (including LABELING), agent messages/thinking, tool calls/results |
 | `dispatch_log.jsonl` | `tools.dispatch()` on every rollout/judge | full args + result for every custom-tool call |
+| `labeling_queue.json` | `src/label_phase.py` at start of PHASE 2.5 | `{queue: [rollout_ids], skipped: bool, created_at}` |
+| `human_labels.jsonl` | Gradio labeling UI (`submit_label`) | one HumanLabel per reviewed rollout: `{rollout_id, label, note, labeled_at}` |
 | `rollouts/<id>.mp4` | dispatch_rollout (writes locally then surfaces an agent-visible path) | recorded videos |
 | `keyframes/<id>.png` | synthesis layer when needed | the `frame_index` the judge named, with red dot at the judge-returned `point` (no dot if `point` is `null`) |
 
@@ -247,16 +265,19 @@ Past the original 48-hour sprint. State of the world:
 
 ### Done
 
-- **Plan-A pipeline end-to-end.** ONE Managed Agents session, four phases (planner / rollout / judge / report), multi-tool `requires_action` cycles handled correctly, all four phases reach `end_turn` on smoke runs.
-- **Both populations on Lift, both working.** Scope-cut from the earlier Lift + Nut mix to **Lift-only across both cohorts**. Calibration = scripted Lift with injected output knobs; deployment = pretrained Lift BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens the `UniformRandomSampler` xy range from ±3 cm default to ±15 cm for demo runs). BC-RNN verified **8/8 success at `cube_xy_jitter_m=0.0`**, **38% failure at 0.15 m** (clean OOD stress test). Same-task calibration means P/R numbers actually transfer to deployment findings. Post-success hold of 20 frames so clean rollouts show "cube clearly held aloft" — fixes a vision-side false-positive class (originally diagnosed against the retired Pass-1).
-- **Single-call CoT vision judge (decision: 2026-04-24, code migration in flight).** Replaces the prior two-pass (coarse 768px → fine 2576px) design. One Messages-API call per rollout at 2576 px × `clamp(video_duration*3, 12, 36)` frames (upper cap keeps the request under the 32 MB payload limit; lower floor protects short clips). JPEG q88. **Binary success is taken from `RolloutResult.success` (sim `env._check_success()`), not from vision** — the judge only classifies the failure mode and points at it. Prompt walks per-frame observations (gripper state / cube state / contact) → names the earliest failure `frame_index` → taxonomy label → `point` as `(x, y)` or `null` (abstains explicitly when no cube-gripper contact is visible). Named anti-bias against `default-to-approach_miss`. Motivation: Pass-1 range drift was the #1 cause of Pass-2 mislabels, and Pass-1's binary verdict was duplicating sim ground truth — see §16 "Single-pass CoT migration".
+- **Plan-A pipeline end-to-end.** ONE Managed Agents session, four phases (planner / rollout / judge / report), plus host-side PHASE 2.5 labeling between rollout and judge. All agent phases reach `end_turn` on smoke runs.
+- **Plan-B pipeline end-to-end.** FOUR specialized agents + host-side PHASE 2.5 labeling. Rollout worker runs on the host main thread (GLFW/Cocoa requirement); judge workers fan out K-wide. Demo default.
+- **Human-labeled calibration.** Knob → label mapping retired (intent-vs-outcome gap was corrupting the scripted GT). Ground truth for calibration now comes from a human reviewer labeling a sampled subset of scripted rollouts via the Gradio labeling UI. Stratified sampler `clamp(10%×N, 6, 20)` / 1/3 successes + 2/3 failures in `src/human_labels.py`. `--skip-labeling` bypasses the UI for unattended smoke runs.
+- **Both populations on Lift.** Scope-cut to Lift-only across cohorts. Calibration = scripted Lift with knobs steering behavior toward specific visual failure modes; deployment = pretrained Lift BC-RNN under `cube_xy_jitter_m` environmental perturbation (±15 cm for demo runs). BC-RNN verified **8/8 success at `cube_xy_jitter_m=0.0`**, **38% failure at 0.15 m** (clean OOD stress test). Slip knob reimplemented to visibly lift-then-release (previously released before lifting, producing an approach_miss silhouette); adapter now re-verifies success at the end of POST_SUCCESS_HOLD so transient crossings of the height threshold don't register as successes.
+- **Taxonomy refresh.** Added `gripper_never_opened` and `cube_scratched_but_not_moved` as first-class labels. Judge prompt updated with disambiguation guidance between these and the existing modes.
+- **Single-call CoT vision judge.** One Messages-API call per rollout at 2576 px × `clamp(video_duration*3, 12, 36)` frames. Binary success is taken from `RolloutResult.success` (sim `env._check_success()`), not from vision — the judge only classifies the failure mode and points at it.
 - **Cost + wall-time accounting.** `src/costing.py` tracks Opus 4.7 token usage live, computes manual-review baseline ($75/hr × 3 min/rollout for cost, sum of video durations + 60 s/rollout for wall time), surfaces both as the headline banner.
-- **Dashboard.** Live tab (chat + current rollout video + rich gallery), Judge calibration tab (cohort pills + multiclass heatmap + per-label table + drill-down filter — binary panel retired with the single-pass migration since sim owns the binary verdict now), Deployment findings tab with **Judge Trust banner** at the top + cluster cards decorated with calibration-precision chips (no longer carry the "(Lift)" parenthetical — both cohorts are Lift). Phase progress strip below the banner shows X/N for each phase live. Population chips (amber / steel-blue) on every rollout card.
-- **Plain-language agent messages.** System prompt includes a translation table — agent.message events translate "knob" → "failure-injection parameter", "scripted policy" → plain English, `cube_xy_jitter_m` → "cube placement perturbation", etc. Internal thinking can stay technical.
+- **Dashboard.** Live tab (chat + current rollout video + rich gallery). Judge calibration tab (labeling flow at top: video + radio + submit; confusion matrix + per-label P/R below, computed from human_labels ⋈ findings). Deployment findings tab (Judge Trust banner + cluster cards decorated with calibration-precision chips; deployment-cohort-only filter now fixed). Phase progress strip shows 5 chips (planner/rollout/**labeling**/judge/report).
+- **Plain-language agent messages.** Agents never see human_labels.jsonl and never label rollouts themselves. The planner's test matrix uses `calibration_purpose` as a human-facing metadata column; no `expected_label`.
 
 ### Open methodology questions
-- **Engineered vs natural failure distribution.** Even with same-task calibration, scripted-injected failures look visually distinct from BC-RNN natural failures (the engineered ones are obvious; natural ones are subtle). A small human-labeled set is the only true cure; we can defer this if we lean into the floor framing in the demo narrative.
-- **Sub-second event resolution.** The single-call CoT judge samples at ~3 fps (≈0.33 s/frame). Events shorter than that interval (e.g. a brief gripper-knock, a ~50 ms contact) can still fall between frames. Escalation paths if the CoT prompt doesn't close it: pixel-difference-driven adaptive sampling (redistribute frames toward high-motion regions inside the clip), a zoom-and-refine crop re-ask around the judge's returned `frame_index`, or self-consistency at N=3 on ambiguous rollouts. **Native video input is NOT supported on Opus 4.7** — confirmed via SDK + docs (no `VideoBlockParam`, only image MIME types). Don't spend time on that lever.
+- **Engineered vs natural failure distribution.** Even with same-task calibration and human labels, scripted failures look visually distinct from BC-RNN natural failures. A held-out human-labeled deployment set would close it — explicitly out of scope.
+- **Sub-second event resolution.** The single-call CoT judge samples at ~3 fps (≈0.33 s/frame). Events shorter than that interval can still fall between frames. Escalation paths: adaptive motion-weighted sampling, zoom-and-refine crop re-ask, N=3 self-consistency. Native video is not a Claude option (see §11).
 
 ### Remaining for the demo recording
 
@@ -334,12 +355,13 @@ assert ok == 3, 'sim stack broken — do not run smoke_agent'
 "
 
 # smoke: full Plan-A end-to-end (sequential — HITS REAL ANTHROPIC API — ~$18 / 15 min for 16 rollouts)
-python scripts/smoke_agent.py
+# --skip-labeling bypasses the host-side PHASE 2.5 labeling UI (unattended smoke).
+python scripts/smoke_agent.py --skip-labeling
 
 # smoke: full Plan-B end-to-end (parallel, 4 specialized agents — SAME COST, TARGET ~4-6 min for 16 rollouts)
-# Demo default. K controls rollout/judge worker fan-out (default 4).
+# Demo default. K controls judge worker fan-out (default 4). Add --skip-labeling for unattended.
 python scripts/smoke_agent_parallel.py
-python scripts/smoke_agent_parallel.py --k-workers 4
+python scripts/smoke_agent_parallel.py --k-workers 4 --skip-labeling
 
 # launch the dashboard (point at a mirror_root; auto-opens in browser)
 python scripts/run_ui.py
@@ -405,19 +427,6 @@ The cost tracker is now wired to the correct Managed Agents event (`span.model_r
 
 ---
 
-## 12. Pivot plan (read before panicking)
-
-If MuJoCo or robosuite fights us past Saturday noon:
-
-1. Delete `src/sim/` internals; replace `adapter.py` with a thin reader over pre-recorded robot failure videos (YouTube robot-fail reels, Open X-Embodiment clips, RoboNet).
-2. `RolloutConfig` becomes `VideoConfig`. `RolloutResult` stays identical.
-3. The orchestrator, vision judge, metrics, and report writer do not change.
-4. Reframe in README + demo as **"Manipulation Failure Forensics"** — applies to sim rollouts and real robot logs alike. Arguably a better product.
-
-The judges score layers 3 and 4. We can lose layer 1 and still win.
-
----
-
 ## 13. Demo video plan
 
 Full shot list in `docs/demo_script.md`. Principles:
@@ -454,8 +463,11 @@ Full shot list in `docs/demo_script.md`. Principles:
 - Do not bump `robosuite` past 1.4.1 without first re-running the BC-RNN sanity gate in §10. 1.5's composite-controller rewrite silently produces 0/16 success — see §16 for the full symptom.
 - Do not reintroduce cross-task evaluation (calibration on one env, deployment on another) without a methodology note. Today both cohorts run Lift so per-label calibration P transfers directly onto deployment findings — if you split them again, the Judge Trust chips stop being honest and need explicit `(env)` tagging.
 - Do not reintroduce a separate coarse pass. The single-call CoT judge replaced the two-pass design on 2026-04-24 (§7). Binary success comes from sim, not vision. If you need tighter temporal resolution, add frames to the single call (cap 36) or switch to motion-weighted sampling inside `frames.py` — do not add a second API round-trip.
-- Do not require the judge to return a `point` on every rollout. `point = null` is a first-class output for failure modes with no contact (`approach_miss`, `gripper_collision`). Pydantic type is `tuple[int, int] | None`, not `tuple[int, int]`. Forcing a coordinate is what caused the "random red dot" regressions.
+- Do not require the judge to return a `point` on every rollout. `point = null` is a first-class output for failure modes with no contact (`approach_miss`, `gripper_never_opened`, `gripper_collision`). Pydantic type is `tuple[int, int] | None`, not `tuple[int, int]`. Forcing a coordinate is what caused the "random red dot" regressions.
 - Do not render the keyframe from a heuristic (midpoint of any range, `n // 2`, etc.). The keyframe is always the `frame_index` the judge named. If the judge didn't name one, the rollout shouldn't have a keyframe.
+- Do not reintroduce the knob → ground-truth-label mapping. `InjectedFailures.to_label` was deleted because knob intent and visual outcome diverged often enough to corrupt GT (action_noise=0.10 labeled knock but visually approach_miss; grip_force_scale=0.5 labeled slip but visually approach_miss because the gripper released before the lift started). Ground truth is human labels on a sampled subset — full stop.
+- Do not let an agent touch `human_labels.jsonl`, `labeling_queue.json`, or attempt to label rollouts itself. The judge must stay blind to calibration signal. Agent prompts already enforce this; don't loosen them.
+- Do not skip the post-success re-verification in `src/sim/adapter.py`. It demotes transient success crossings (e.g. slip rollouts where the cube is briefly above the success height before falling) to failures. Without it, `slip_during_lift` rollouts register as sim-successes and never reach the judge.
 
 ---
 
@@ -468,7 +480,9 @@ Full shot list in `docs/demo_script.md`. Principles:
 - **Opus 4.7 literalism.** More literal than 4.6. Be explicit in system prompts; do not expect the model to generalize from one item to another unprompted.
 - **Silent 4.7 breakages.** §11 list. Verify any 4.6-era snippet before reusing.
 - **Tokenizer change.** Up to ~35% more tokens for the same text. Adjust `max_tokens` and `task_budget` upward vs 4.6 baselines.
-- **Cross-task calibration drift — resolved.** Prior design calibrated on Lift and deployed on NutAssemblySquare, so the calibration number was at best a floor on the deployment number. Post scope-cut we run BOTH cohorts on Lift (calibration = scripted policy + output knobs; deployment = BC-RNN + `cube_xy_jitter_m` environmental perturbation), so the per-label calibration precision can legitimately decorate deployment findings. Deployment-finding chips no longer carry the `(Lift)` parenthetical. The remaining gap — engineered-vs-natural failure distribution — is documented in `@docs/eval_methodology.md` and only closable with a human-labeled set.
+- **Cross-task calibration drift — resolved.** Prior design calibrated on Lift and deployed on NutAssemblySquare, so the calibration number was at best a floor. Post scope-cut we run BOTH cohorts on Lift, so the per-label calibration precision can legitimately decorate deployment findings.
+- **Knob → label drift — resolved.** The scripted policy used to export an `InjectedFailures.to_label()` mapping that became the calibration GT. It was a lie on many seeds (noise=0.10 produced visual approach_misses, etc.), which penalized the judge for being correct and rewarded it for agreeing with the knob. Replaced 2026-04-24 with human-labeled GT on a sampled subset — see `src/human_labels.py` and the labeling UI at `src/ui/panes/labeling.py`. The knobs are still useful: they reliably produce failure DIVERSITY in the calibration pool; they just don't claim to name what each rollout actually shows.
+- **Slip produced no visible lift — resolved.** The prior slip impl paused at grasp height while opening the gripper BEFORE the lift started, so the cube was released back onto the table and the rollout looked like an approach_miss. New impl (`SLIP_CARRY_STEPS`) carries the cube up for ~15 LIFT-phase steps with the gripper closed, THEN commands open; cube falls visibly from height. Adapter's post-success re-verification catches the brief success-threshold crossing and demotes it to failure.
 - **robosuite version pin.** We pin `robosuite==1.4.1` in `requirements.txt`. Robosuite 1.5's composite-controller rewrite re-scales the 1.4-trained BC-RNN's delta actions into garbage (symptom: arm rises away from cube with gripper closed from step 0, 0/16 success). Stanford publishes only 1.5-compatible *datasets*, not re-trained checkpoints — upstream context in robomimic issues #259 / #283. 1.4.1 is pure Python on the DeepMind mujoco bindings and installs cleanly on Python 3.12 arm64. Don't upgrade robosuite without also re-validating the BC-RNN succeeds at `cube_xy_jitter_m=0.0`.
 - **Frame sampling vs sub-second events.** The single-call judge samples at ~3 fps (≈0.33 s/frame) regardless of clip length. Events shorter than that interval (brief gripper-knock, ~50 ms contact) can still fall between frames — the judge then reasons from consequence frames and may mis-label. Escalation paths if the CoT prompt isn't enough: pixel-difference-driven adaptive sampling (redistribute frames toward high-motion windows), a zoom-and-refine crop re-ask around the judge's `frame_index` (CropVLM pattern), self-consistency at N=3. Native video isn't an option (see §11).
 - **Single-pass CoT migration (2026-04-24).** Two-pass (coarse 768px → fine 2576px windowed) was retired because (1) Pass-1 failure-range drift cascaded into Pass-2 label errors (main driver of `approach_miss` over-collapse), (2) Pass-1's binary verdict duplicated sim ground truth (`env._check_success()`), and (3) the keyframe was being rendered from a Pass-1 midpoint heuristic while the red dot was placed at a Pass-2 point — the two frames disagreed, producing "random-looking" dot locations. New design: one Messages-API call, `clamp(video_duration*3, 12, 36)` frames at 2576 px, per-frame CoT → `(label, frame_index, point | null)`. Keyframe comes from `frame_index`, red dot from `point` (skipped when `null`). Code landing pending — target files: `src/vision/judge.py` (replaces `coarse_pass.py` + `fine_pass.py`), schema consolidation in `src/schemas.py` (`Finding` drops `pass1`/`pass2` split), dispatch tool rename `coarse`+`fine` → `judge` in `src/agents/tools.py`.

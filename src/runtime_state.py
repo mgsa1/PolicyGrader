@@ -51,6 +51,12 @@ class RuntimeState:
     # tell — the UI then shows progress without a denominator until Phase 2
     # finishes (at which point the actual count becomes the denominator).
     planned_total: int | None = None
+    # Human labeling progress (phase 2.5). `n_labels_target` is the size of
+    # the queue handed to the labeler; `n_labels_done` ticks up as the UI
+    # appends to human_labels.jsonl. Both 0 before the label phase starts or
+    # when labeling is skipped.
+    n_labels_target: int = 0
+    n_labels_done: int = 0
     # Run identity (set once at session start). The UI run-picker keys on
     # run_id; goal + started_at are surfaced in the picker's display label.
     run_id: str = ""
@@ -143,6 +149,8 @@ class RuntimeState:
             "n_rollouts_dispatched": n_roll,
             "n_judge_dispatched": n_judge,
             "n_judge_planned": n_judge_planned,
+            "n_labels_target": self.n_labels_target,
+            "n_labels_done": self.n_labels_done,
             "last_event_at": self.last_event_at,
             "session_id": self.session_id,
         }

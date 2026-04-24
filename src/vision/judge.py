@@ -28,7 +28,7 @@ from anthropic import Anthropic
 
 from src.constants import OPUS_MODEL_ID
 from src.costing import CostTracker
-from src.schemas import FrameObservation, JudgeAnnotation
+from src.schemas import FrameObservation, JudgeAnnotation, RolloutTelemetry
 from src.sim.scripted import FailureMode
 from src.vision.frames import encode_jpeg_b64, read_frames, resize_long_edge, sample_indices
 
@@ -70,7 +70,18 @@ def _load_taxonomy() -> str:
 _TAXONOMY_MARKDOWN = _load_taxonomy()
 
 
-def _build_system_prompt(n_frames: int) -> str:
+def _build_system_prompt(n_frames: int, *, has_telemetry: bool) -> str:
+    telemetry_anchor = (
+        "\nSim telemetry is appended after the frames as a table — one row "
+        "per shown frame, taken directly from the simulator (exact, not "
+        "inferred from pixels). Use it to ANCHOR your per-frame observations: "
+        "`gripper_aperture` resolves closing-vs-closed, `contact_flag` "
+        "resolves touching-vs-grasped/none, `cube_z_above_table_m` and "
+        "`cube_xy_drift_m` resolve slip-vs-knock-vs-still. Pixels remain the "
+        "source of truth for the LABEL — telemetry is supporting evidence.\n"
+        if has_telemetry
+        else ""
+    )
     return f"""\
 You are a robot manipulation eval judge. A Franka Panda arm is trying to pick \
 up a cube on a table (the Lift task). You will be shown {n_frames} \
@@ -80,7 +91,7 @@ high-resolution frames from a SINGLE rollout in chronological order, labeled \
 The simulator has already confirmed that this rollout FAILED. Your job is to \
 classify the failure mode and point at the visible evidence — you are NOT \
 deciding pass-vs-fail. Do not return `none`.
-
+{telemetry_anchor}
 STEP 1 — per-frame walkthrough. Before choosing a label, walk through EVERY \
 frame in order. For each frame, emit one observation with these fields:
   - gripper_state: one of {{{", ".join(_GRIPPER_STATES)}}}
@@ -100,18 +111,33 @@ STEP 3 — pick exactly ONE label from this closed set:
   {", ".join(ALLOWED_LABELS)}
 
 Common confusions to RESIST:
-  - approach_miss vs knock_object_off_table: if the cube visibly moved \
-    BEFORE the gripper closed (or while the arm was still descending), it's \
-    knock_object_off_table — the impact is the failure, not the later empty \
-    close. Check your per-frame cube_state sequence.
+  - approach_miss vs knock_object_off_table vs cube_scratched_but_not_moved: \
+    all three have the gripper ending in empty space, but they differ in \
+    what happened to the cube. No contact + cube stationary = approach_miss. \
+    Brief contact + cube moved <1 cm (twitch, small nudge, spin in place) = \
+    cube_scratched_but_not_moved. Contact + cube clearly displaced / off the \
+    table = knock_object_off_table. Check your per-frame cube_state sequence \
+    — `moving_on_table` that later returns to `still_on_table` indicates a \
+    scratch, not a full knock.
+  - approach_miss vs gripper_never_opened: if the gripper arrives at the \
+    cube with fingers already closed (or closes before it ever reaches the \
+    cube's vicinity), it's gripper_never_opened — the hand was never in a \
+    grasp-capable configuration. approach_miss assumes the gripper was open \
+    at some point during approach. Check the gripper_state on Frame 0 and \
+    through the descent — if it's `closed` from the start, it's \
+    gripper_never_opened.
   - approach_miss vs slip_during_lift: slip requires VISIBLE partial pickup \
     — at least one frame where `cube_state: in_gripper` is true. No such \
     frame means it was never a slip.
+  - slip_during_lift vs premature_release: in slip the fingers stay pinched \
+    together as the cube slides out; in premature_release the fingers \
+    visibly splay open mid-lift.
   - Default-to-approach_miss is this judge's failure mode. If your per-frame \
     observations contain any `contact: touching_cube` or `cube_state: \
     moving_on_table` before the gripper closed, the answer is NOT \
     approach_miss.
-  - `insertion_misalignment` does not apply to Lift. Do not use it.
+  - `insertion_misalignment` and `wrong_object_selected` do not apply to \
+    Lift (single object, no insertion). Do not use them.
 
 STEP 4 — point at the evidence, or abstain. Return `point` as `[x, y]` in \
 the pixel coordinates of the frame you named (long edge = {JUDGE_LONG_EDGE_PX} \
@@ -178,6 +204,39 @@ def _build_image_blocks(
             }
         )
     return blocks, original_indices
+
+
+def _load_telemetry(path: Path) -> RolloutTelemetry:
+    return RolloutTelemetry.model_validate_json(path.read_text())
+
+
+def _render_telemetry_block(
+    telemetry: RolloutTelemetry,
+    original_indices: list[int],
+) -> str:
+    """ASCII-table render of the telemetry rows for the sampled frames.
+
+    Frame labels match the image labels ("Frame 0".."Frame N-1"); each row is
+    the telemetry for the underlying sim step (`original_indices[i]`). Skips
+    rows whose step index is out of bounds rather than failing the call —
+    telemetry presence is best-effort, not load-bearing.
+    """
+    header = "Frame  gripper  ee→cube   cube_z    cube_xy   contact"
+    lines = [
+        "Sim telemetry (one row per shown frame — exact, from simulator):",
+        header,
+    ]
+    for sampled_idx, step_idx in enumerate(original_indices):
+        if step_idx >= len(telemetry.rows):
+            continue
+        r = telemetry.rows[step_idx]
+        contact = "✓" if r.contact_flag else "-"
+        lines.append(
+            f"{sampled_idx:5d}  {r.gripper_aperture:6.2f}  "
+            f"{r.ee_to_cube_m:5.3f}m   {r.cube_z_above_table_m:+.3f}m   "
+            f"{r.cube_xy_drift_m:.3f}m   {contact}"
+        )
+    return "\n".join(lines)
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -253,12 +312,19 @@ def judge(
     client: Anthropic | None = None,
     cost_tracker: CostTracker | None = None,
     fps: int = DEFAULT_RENDER_FPS,
+    telemetry_path: Path | None = None,
 ) -> JudgeAnnotation:
     """Run the single-call CoT judge on a recorded rollout mp4.
 
     Only call on sim-confirmed failures. `cost_tracker`, if provided,
     accumulates this call's token usage into the session-wide ledger so Phase
     4 can report against the manual-review baseline.
+
+    `telemetry_path`, if provided AND the file exists, loads the per-step sim
+    telemetry sidecar (written by adapter.run_rollout) and inlines the rows
+    aligned to the sampled frames as a text block in the user message.
+    Anchors the judge's per-frame observations to ground-truth physical state
+    instead of relying on pixel hallucination for gripper/contact/cube state.
     """
     if client is None:
         client = Anthropic()
@@ -267,11 +333,26 @@ def judge(
     if not original_indices:
         raise ValueError(f"video has no frames: {video_path}")
 
+    telemetry = (
+        _load_telemetry(telemetry_path)
+        if telemetry_path is not None and telemetry_path.exists()
+        else None
+    )
+
+    user_blocks: list[dict[str, object]] = list(image_blocks)
+    if telemetry is not None:
+        user_blocks.append(
+            {"type": "text", "text": _render_telemetry_block(telemetry, original_indices)}
+        )
+
     response = client.messages.create(
         model=OPUS_MODEL_ID,
         max_tokens=JUDGE_MAX_TOKENS,
-        system=_build_system_prompt(n_frames=len(original_indices)),
-        messages=[{"role": "user", "content": cast(Any, image_blocks)}],
+        system=_build_system_prompt(
+            n_frames=len(original_indices),
+            has_telemetry=telemetry is not None,
+        ),
+        messages=[{"role": "user", "content": cast(Any, user_blocks)}],
     )
 
     if cost_tracker is not None:

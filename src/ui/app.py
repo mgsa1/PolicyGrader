@@ -20,15 +20,22 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import gradio as gr
 
 from src.costing import format_cost
 from src.runtime_state import RunInfo, discover_runs
+from src.schemas import HumanLabelValue
 from src.ui import styles, theme
 from src.ui.metrics_view import EMPTY_FILTER, DrillFilter
-from src.ui.panes import calibration, chrome, findings, live, overview
+from src.ui.panes import calibration, chrome, findings, labeling, live, overview
+
+
+def cast_to_label(value: str) -> HumanLabelValue:
+    """Narrow a Gradio-emitted string back to the HumanLabelValue literal type."""
+    return cast(HumanLabelValue, value)
+
 
 REFRESH_SECONDS = 1.0
 HEAVY_REFRESH_SECONDS = 5.0
@@ -216,6 +223,36 @@ def build_app(runs_root: Path) -> gr.Blocks:
 
             with gr.Tab("Judge calibration"):
                 cal_scope_html = gr.HTML(value=chrome.scope_strip_html(initial_path, "calibration"))
+
+                # ---- Labeling flow (auto-visible when the queue has work) ------
+                with gr.Group():
+                    gr.Markdown("### Human labeling")
+                    labeling_status = gr.HTML(value=labeling.queue_status_html(initial_path))
+                    labeling_video = gr.Video(
+                        value=labeling.current_video_path(initial_path),
+                        autoplay=True,
+                        loop=True,
+                        height=360,
+                    )
+                    labeling_rollout = gr.HTML(
+                        value=labeling.current_rollout_header_html(initial_path)
+                    )
+                    labeling_label = gr.Radio(
+                        choices=[(display, value) for display, value in labeling.LABELING_CHOICES],
+                        value=None,
+                        label="Pick the failure mode (or 'success' for a clean pick)",
+                        interactive=True,
+                    )
+                    labeling_note = gr.Textbox(
+                        label="Optional note",
+                        placeholder="One sentence on what you saw (optional)",
+                        interactive=True,
+                    )
+                    with gr.Row():
+                        labeling_skip_btn = gr.Button("Skip (mark ambiguous)")
+                        labeling_submit_btn = gr.Button("Submit label", variant="primary")
+
+                # ---- Calibration metrics below ---------------------------------
                 gr.HTML(value=calibration.calibration_header_html())
                 initial_blocks = calibration.metrics_blocks(initial_path)
                 cal_cohort_html = gr.HTML(value=initial_blocks[0])
@@ -306,6 +343,24 @@ def build_app(runs_root: Path) -> gr.Blocks:
         timer.tick(fn=_current_video_path_for, inputs=[selected_run], outputs=current_video_path)
         timer.tick(fn=_gallery_for, inputs=[selected_run], outputs=gallery_html)
         timer.tick(fn=_memories_for, inputs=[selected_run], outputs=memories_html)
+        # Labeling pane refreshes on the fast timer so the queue status,
+        # current-rollout video, and rollout header keep pace with the
+        # orchestrator's label-phase writes (and with this tab's own submits).
+        timer.tick(
+            fn=lambda r: labeling.queue_status_html(_as_path(r)),
+            inputs=[selected_run],
+            outputs=labeling_status,
+        )
+        timer.tick(
+            fn=lambda r: labeling.current_video_path(_as_path(r)),
+            inputs=[selected_run],
+            outputs=labeling_video,
+        )
+        timer.tick(
+            fn=lambda r: labeling.current_rollout_header_html(_as_path(r)),
+            inputs=[selected_run],
+            outputs=labeling_rollout,
+        )
 
         # ---- Slower timers (5 s) -----------------------------------------------
         heavy = gr.Timer(HEAVY_REFRESH_SECONDS)
@@ -399,6 +454,74 @@ def build_app(runs_root: Path) -> gr.Blocks:
             fn=_refresh_dropdowns,
             inputs=[selected_run],
             outputs=[filter_expected, filter_judged],
+        )
+
+        # ---- Labeling submit / skip handlers -----------------------------------
+        def _on_submit_label(
+            run: str, choice: str | None, note: str
+        ) -> tuple[Any, Any, Any, Any, Any]:
+            """Persist the current rollout's label and advance.
+
+            Returns refreshed (status, video_path, rollout_header, label_radio,
+            note_textbox) outputs. No-op if `choice` is empty (the user clicked
+            Submit without selecting a label).
+            """
+            if not choice:
+                return (
+                    gr.skip(),
+                    gr.skip(),
+                    gr.skip(),
+                    gr.skip(),
+                    gr.skip(),
+                )
+            labeling.submit_and_advance(
+                _as_path(run),
+                label=cast_to_label(choice),
+                note=note,
+            )
+            return (
+                labeling.queue_status_html(_as_path(run)),
+                labeling.current_video_path(_as_path(run)),
+                labeling.current_rollout_header_html(_as_path(run)),
+                gr.update(value=None),
+                gr.update(value=""),
+            )
+
+        def _on_skip_label(run: str) -> tuple[Any, Any, Any, Any, Any]:
+            labeling.submit_and_advance(
+                _as_path(run),
+                label="ambiguous",
+                note=None,
+            )
+            return (
+                labeling.queue_status_html(_as_path(run)),
+                labeling.current_video_path(_as_path(run)),
+                labeling.current_rollout_header_html(_as_path(run)),
+                gr.update(value=None),
+                gr.update(value=""),
+            )
+
+        labeling_submit_btn.click(
+            fn=_on_submit_label,
+            inputs=[selected_run, labeling_label, labeling_note],
+            outputs=[
+                labeling_status,
+                labeling_video,
+                labeling_rollout,
+                labeling_label,
+                labeling_note,
+            ],
+        )
+        labeling_skip_btn.click(
+            fn=_on_skip_label,
+            inputs=[selected_run],
+            outputs=[
+                labeling_status,
+                labeling_video,
+                labeling_rollout,
+                labeling_label,
+                labeling_note,
+            ],
         )
 
         def _refresh_drill(run: str, expected: str | None, judged: str | None) -> str:

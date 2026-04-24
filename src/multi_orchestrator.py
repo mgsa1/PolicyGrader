@@ -65,6 +65,7 @@ from src.costing import (
     format_cost,
     format_duration,
 )
+from src.label_phase import run_label_phase
 from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
@@ -606,13 +607,18 @@ def run_multi_agent(
     run_id: str = "",
     messages_client: Anthropic | None = None,
     cost_tracker: CostTracker | None = None,
+    skip_labeling: bool = False,
+    label_seed: int = 0,
 ) -> PlanBResult:
     """Drive the full Plan B flow end-to-end.
 
     Phases:
       1. Planner (1 session). Must produce plan.md + test_matrix.csv.
-      2. Rollout workers (K parallel). Must produce results.jsonl for every
-         matrix row.
+      2. Rollout worker (1 session, sequential on main thread). Must produce
+         results.jsonl for every matrix row.
+      2.5. Human labeling (host-side, no agent). Samples a subset of scripted
+           rollouts, blocks until the Gradio UI has collected labels. Skipped
+           when `skip_labeling=True`.
       3. Judge workers (K parallel). Must produce findings.jsonl for every
          rollout.
       4. Reporter (1 session). Must produce report.md.
@@ -686,6 +692,18 @@ def run_multi_agent(
     stops["rollout"].append(rollout_stop)
     if rollout_stop != "end_turn":
         logger.warning("rollout worker ended non-end_turn: %s", rollout_stop)
+
+    # 2.5) Human labeling phase — host-side, no Managed Agents session. Reads
+    #      dispatch_log.jsonl, samples a subset of completed scripted rollouts,
+    #      writes the queue, and blocks until the Gradio UI has logged a
+    #      HumanLabel for every queued rollout. `skip_labeling=True` bypasses
+    #      the block (smoke / CI path).
+    run_label_phase(
+        runtime,
+        mirror_root,
+        skip_labeling=skip_labeling,
+        sample_seed=label_seed,
+    )
 
     # 3) Judge workers — parallel.
     results = _load_results(mirror_root)

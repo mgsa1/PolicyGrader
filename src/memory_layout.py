@@ -19,6 +19,7 @@ TEST_MATRIX_FILE = "test_matrix.csv"
 TAXONOMY_FILE = "taxonomy.md"
 FINDINGS_FILE = "findings.jsonl"
 REPORT_FILE = "report.md"
+HUMAN_LABELS_FILE = "human_labels.jsonl"
 
 # Subdirectories.
 ROLLOUTS_DIR = "rollouts"

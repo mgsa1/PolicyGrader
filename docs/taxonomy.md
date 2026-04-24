@@ -1,45 +1,56 @@
 # Failure Taxonomy
 
-This is the closed set of failure labels the vision judge is allowed to emit.
-The same set is the ground-truth label space for scripted-policy rollouts (see
-`src/sim/scripted.py` — `FailureMode`). Keeping the two in sync by hand is a
-deliberate choice; if a label is added here it must also be added to `FailureMode`.
+This is the closed set of failure labels the vision judge is allowed to emit,
+and the same closed set the human labeler picks from during the calibration
+phase. The judge MUST pick exactly one label from this list per failed
+rollout; the human labeler additionally has a `success` option (a clean pick)
+and an `ambiguous` option (can't tell from the video).
 
-The judge MUST pick exactly one label from this list when annotating a failed
-rollout. "other" exists only as an escape hatch for genuinely unrecognized
-modes — using it for fuzzy cases will sink precision.
+"other" exists only as an escape hatch for genuinely unrecognized modes — using
+it for fuzzy cases sinks precision.
 
-**Not exercised by the current eval set:** `wrong_object_selected` and
-`insertion_misalignment` were relevant to the prior NutAssemblySquare
-deployment env (multi-object + insertion task). Post scope-cut to Lift-only
-they're unreachable from any scenario we run — Lift has one object and no
-placement. They remain in the closed set as escape-hatch labels the judge
-may still emit if it ever sees something it can't otherwise classify, and
-so the `FailureMode` enum stays stable across any future multi-task
-re-expansion.
+The label set is kept in sync with `src/sim/scripted.py::FailureMode` by hand;
+adding a label here requires adding it there too, plus updating the judge
+prompt in `src/vision/judge.py`.
 
 ## Labels
 
 | Label | When to use | Visual cue |
 | --- | --- | --- |
-| `none` | Rollout succeeded — pick was completed. Used as Pass-1 verdict, not as a Pass-2 annotation. | Object lifted to target height and stable. |
-| `approach_miss` | The arm reaches a position where the gripper cannot grasp the object. Includes both "missed by a wide margin" and "closed gripper before reaching object" — both look like "gripper closes on air, never makes contact". | Gripper closes but object does not move. Gripper tips clearly offset from object center, OR gripper closes while still in air well above object. |
-| `premature_release` | The gripper grasps the object successfully but releases it before the lift target is reached. Object falls back near the grasp pose. | Object briefly rises with gripper, then drops while arm continues upward. |
-| `slip_during_lift` | The gripper has hold of the object at lift start but loses contact during the lift motion. The gripper APPEARS to be holding (fingers around the object) but the object slides out. Distinguish from premature_release: in slip the gripper does not visibly open; in premature_release it does. | Object descends along the gripper fingers as the arm rises. |
-| `knock_object_off_table` | The arm contacts the object hard enough to displace it (often laterally), so the object is no longer in graspable position when the gripper closes. Often happens during approach. | Object visibly moves before any grasp attempt — slid, tipped, or pushed off the table. |
-| `wrong_object_selected` | Multiple objects in the scene; the policy targets and grasps the incorrect one. Only relevant for envs with multiple manipulation targets (e.g. NutAssemblySquare with both nuts visible). | Gripper successfully grasps an object but it is not the intended target. |
-| `insertion_misalignment` | Pick succeeded but the subsequent placement / insertion failed because the object orientation or position was wrong relative to the receptacle. Specific to insertion / assembly tasks. | Object is held above the target receptacle, but the placement attempt fails — object rotates wrong, lands on lip, or rebounds. |
-| `gripper_collision` | The gripper or arm physically collides with the environment (table, wall, fixture) hard enough to interrupt the trajectory. Distinct from `knock_object_off_table` because the collision target is the environment, not the object. | Visible contact with non-object geometry; arm jolts, recoils, or freezes. |
-| `other` | A failure occurred but does not match any of the above. Use sparingly — prefer the closest-fit specific label. | (varies) |
+| `none` | Clean success — object lifted to target height and held stably. Not emitted by the judge on failed rollouts (sim owns the success bit); only used on the human-labeling side to confirm a clean rollout. | Object clearly in the air, gripper fingers around it, arm stationary at lift height. |
+| `approach_miss` | Gripper arrives at a pose where it cannot grasp the object — offset too far to the side, too high, or otherwise geometrically wrong. Gripper is open during approach. | Gripper closes on air; fingers visibly offset from object center OR still well above it. |
+| `gripper_never_opened` | Gripper is closed when it should be open during approach or descend. Because the fingers are already together, they cannot straddle the object — the hand either pushes against or skims past the cube without ever being in a grasp-capable configuration. Distinct from `approach_miss` (open fingers that miss) and `gripper_collision` (hard impact). | Gripper arrives at cube with fingers already touching each other. |
+| `cube_scratched_but_not_moved` | Brief grazing contact between gripper and object during approach: the cube is grazed or nudged by <1 cm but stays in place, and the rollout still fails to pick it up. Near-miss that is visually distinct from both a clean approach_miss (no contact) and knock_object_off_table (displaced >1 cm). | Cube twitches, spins in place, or wobbles but stays on its original footprint. Gripper continues past. |
+| `premature_release` | Gripper grasps the object successfully but releases it before lift completes. Fingers visibly open mid-lift. | Object briefly rises with gripper, then drops while arm continues upward; gripper fingers splay. |
+| `slip_during_lift` | Gripper has hold of the object at lift start but loses contact during the lift motion — the fingers DO NOT visibly open. The object slides down along the fingers under gravity because the grip is too weak. | Object descends along the gripper fingers as the arm rises; fingers stay pinched together. |
+| `knock_object_off_table` | Gripper or arm contacts the object hard enough to displace it >1 cm (often laterally), so the object is no longer in graspable position by the time the gripper tries to close. Often happens early, during approach. | Object visibly slides, tips, rolls, or is pushed off the table. |
+| `gripper_collision` | Gripper or arm collides with the environment (table, wall, fixture) hard enough to interrupt the trajectory. Distinct from `knock_object_off_table` because the collision target is non-object. | Visible contact with non-object geometry; arm jolts, recoils, or freezes. |
+| `wrong_object_selected` | Scene has multiple manipulation targets; the policy grasps the incorrect one. Not reachable on Lift (single object); retained in the closed set for future multi-task re-expansion. | Gripper successfully grasps an object but it is not the intended target. |
+| `insertion_misalignment` | Pick succeeded but the subsequent placement/insertion failed because the object orientation or position was wrong relative to the receptacle. Not reachable on Lift; retained for future envs. | Object is held above the target but placement fails — rotates wrong, lands on lip, rebounds. |
+| `other` | Failure occurred but does not match any above. Use sparingly. | (varies) |
 
-## Pass-1 vs Pass-2
+## How the labels are used
 
-- **Pass 1 (coarse, ~768 px):** binary `pass | fail` plus, on fail, a frame-range
-  estimate `[start, end]` covering when the failure became visible. No
-  taxonomy label is required at Pass 1 — speed and recall matter more than
-  resolution at this stage.
-- **Pass 2 (fine, 2576 px):** only runs on rollouts where Pass 1 said `fail`.
-  Emits `{taxonomy_label, point: [x, y], description}` where `point` is a
-  pixel coordinate (in the 2576-px frame's coordinate system) on the visual
-  evidence — the object, the offending finger, the misalignment axis. Pick
-  the single most diagnostic frame from the failure range.
+- **Judge** emits one of the failure labels (all above except `none`) as part
+  of a single-call chain-of-thought pass over the rollout video. The judge
+  additionally returns `frame_index` (the earliest frame where the failure is
+  visible) and `point` (pixel coordinate on that frame, or `null` if no
+  cube-gripper contact is visible to point at).
+- **Human labeler**, during the calibration phase, picks one label from the
+  full set including `none` (for successes) plus an `ambiguous` escape hatch
+  (the video is unclear or cuts off before the failure mode is visible).
+  Human labels on the sampled calibration subset are the ground truth the
+  judge is measured against; the per-label precision/recall from this
+  comparison is what decorates deployment findings.
+
+## Binary success is taken from sim, not vision
+
+`RolloutResult.success` is derived from `env._check_success()` plus a
+post-hold re-verification (see `src/sim/adapter.py`): the cube must be above
+the success threshold at the end of the post-success hold, not just
+transiently during the rollout. This is how `slip_during_lift` rollouts are
+correctly classified as sim-failures despite the cube briefly crossing the
+success height during the carry phase.
+
+The judge never overrides the sim success bit. It only runs on sim-failures,
+and only emits a failure label.

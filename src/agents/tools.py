@@ -106,25 +106,35 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
         "injected_action_noise": {
             "type": "number",
             "default": 0.0,
-            "description": "scripted only — std of per-step action noise; "
-            "values >= 0.10 label as knock_object_off_table.",
+            "description": (
+                "scripted only — std of per-step action noise. ≈0.05 tends to "
+                "scratch the cube; ≥0.25 tends to knock it off. Ground truth "
+                "is assigned by the human labeler, not by the knob value."
+            ),
         },
         "injected_premature_close": {
             "type": "boolean",
             "default": False,
             "description": (
-                "scripted only — closes the gripper during approach; labels approach_miss."
+                "scripted only — gripper is commanded closed from step 0, so "
+                "it never opens to grasp. Intended visual: gripper_never_opened."
             ),
         },
         "injected_angle_deg": {
             "type": "number",
             "default": 0.0,
-            "description": "scripted only — radial xy offset on approach; labels approach_miss.",
+            "description": (
+                "scripted only — radial xy offset on approach. 15°–35° produces "
+                "a clean approach_miss."
+            ),
         },
         "injected_grip_scale": {
             "type": "number",
             "default": 1.0,
-            "description": "scripted only — < 0.7 opens gripper at lift; labels slip_during_lift.",
+            "description": (
+                "scripted only — < 0.7 opens the gripper mid-lift after a few "
+                "carry steps. Intended visual: slip_during_lift."
+            ),
         },
         "cube_xy_jitter_m": {
             "type": "number",
@@ -229,7 +239,7 @@ _SUBMIT_RESULTS_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "One JSON object per line, each a RolloutResult record "
-                "(rollout_id, success, steps_taken, video_path, ground_truth_label). "
+                "(rollout_id, success, steps_taken, video_path). "
                 "Host APPENDS to mirror_root/rollouts/results.jsonl."
             ),
         },
@@ -412,9 +422,6 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
         "success": result.success,
         "steps_taken": result.steps_taken,
         "video_path": str(agent_visible),
-        "ground_truth_label": (
-            result.ground_truth_label.value if result.ground_truth_label is not None else None
-        ),
     }
 
 
@@ -425,7 +432,15 @@ def _dispatch_judge(
     cost_tracker: CostTracker | None,
 ) -> dict[str, Any]:
     video_path = _resolve_video_path(args["video_path"], mirror_root)
-    annotation = judge(video_path, client=client, cost_tracker=cost_tracker)
+    # Sibling sidecar written by adapter.run_rollout. Optional: judge falls
+    # back to vision-only when missing (e.g. replay of a pre-telemetry run).
+    telemetry_path = video_path.with_suffix(".telemetry.json")
+    annotation = judge(
+        video_path,
+        client=client,
+        cost_tracker=cost_tracker,
+        telemetry_path=telemetry_path if telemetry_path.exists() else None,
+    )
     return {
         "rollout_id": args["rollout_id"],
         "taxonomy_label": annotation.taxonomy_label.value,
