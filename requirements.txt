@@ -1,8 +1,15 @@
 anthropic>=0.96
 pydantic>=2,<3
 pillow
+# robosuite pinned to 1.4.1: robomimic 0.3.0's pretrained BC-RNN checkpoints
+# were trained against robosuite 1.4.x's classical OSC_POSE controller, and
+# the composite-controller rewrite in 1.5 re-scales/re-frames their delta
+# outputs (saturated +z, gripper-closed-from-step-0 symptom). 1.4.1 is pure
+# Python + the DeepMind mujoco bindings, installs cleanly on Python 3.12.
+# See docs/eval_methodology.md + robomimic issues #259 / #283 for the
+# upstream context.
 mujoco>=3
-robosuite>=1.5
+robosuite==1.4.1
 robomimic==0.3.0
 imageio
 imageio-ffmpeg

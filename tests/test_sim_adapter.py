@@ -61,13 +61,13 @@ class TestRunRolloutScripted:
         import os
 
         import robosuite as suite
-        from robosuite.controllers import load_composite_controller_config
+        from robosuite.controllers import load_controller_config
 
         from src.constants import MUJOCO_GL_ENV_KEY
 
         os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 
-        controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+        controller_cfg = load_controller_config(default_controller="OSC_POSE")
         env = suite.make(
             env_name="Lift",
             robots="Panda",
@@ -87,14 +87,14 @@ class TestRunRolloutScripted:
         import os
 
         import robosuite as suite
-        from robosuite.controllers import load_composite_controller_config
+        from robosuite.controllers import load_controller_config
 
         from src.constants import MUJOCO_GL_ENV_KEY
         from src.sim.adapter import _apply_cube_xy_jitter
 
         os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 
-        controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+        controller_cfg = load_controller_config(default_controller="OSC_POSE")
         env = suite.make(
             env_name="Lift",
             robots="Panda",

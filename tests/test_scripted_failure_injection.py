@@ -71,9 +71,9 @@ class TestScriptedLiftIntegration:
         os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 
         import robosuite as suite
-        from robosuite.controllers import load_composite_controller_config
+        from robosuite.controllers import load_controller_config
 
-        controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+        controller_cfg = load_controller_config(default_controller="OSC_POSE")
 
         def _make():  # type: ignore[no-untyped-def]
             return suite.make(

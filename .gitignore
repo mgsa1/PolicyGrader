@@ -8,7 +8,7 @@ __pycache__/
 artifacts/
 *.egg-info/
 .DS_Store
-.claude/settings.local.json
+.claude/
 .gstack/
 API_RAT/assets/mujoco_menagerie/
 MUJOCO_LOG.TXT

@@ -41,7 +41,10 @@ MAX_STEPS = 200  # Lift horizon in robomimic configs is 200
 
 # Sweep parameters — see docs/eval_methodology.md for how the chosen value was
 # picked. Keep this list short — each config runs SWEEP_SEEDS_PER_VALUE episodes.
-SWEEP_VALUES: list[float] = [0.02, 0.05, 0.08, 0.12]
+# The BC-RNN generalizes well out to ~0.12 m; failures start appearing at 0.15 m
+# (~38%) and dominate past 0.20 m. Sweep extended to 0.30 m after the initial
+# {0.02..0.12} sweep returned 0/32 failures.
+SWEEP_VALUES: list[float] = [0.08, 0.12, 0.15, 0.20, 0.25, 0.30]
 SWEEP_SEEDS_PER_VALUE = 8
 
 

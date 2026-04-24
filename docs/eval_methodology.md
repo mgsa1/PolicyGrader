@@ -35,9 +35,10 @@ to Nut was at best a floor, not a transferable number).
 ### Deployment cohort — pretrained BC-RNN under environmental perturbation
 
 - **Policy.** `robomimic` v0.3.0 BC-RNN trained on the Lift proficient-human
-  dataset (`artifacts/checkpoints/lift_ph_low_dim.pth`, reported ~100%
-  success on training distribution in robosuite 1.4). The policy's forward
-  pass is never touched — no output knobs, no post-hoc action manipulation.
+  dataset (`artifacts/checkpoints/lift_ph_low_dim.pth`). Verified in-env on
+  our stack: **8/8 success at `cube_xy_jitter_m=0.0`** (see
+  `scripts/smoke_pretrained_rollout.py`). The policy's forward pass is
+  never touched — no output knobs, no post-hoc action manipulation.
 - **Perturbation surface.** The environment, not the policy. We widen
   robosuite's `UniformRandomSampler` `x_range`/`y_range` on the cube's
   initial placement via `RolloutConfig.cube_xy_jitter_m`, implemented as
@@ -45,10 +46,20 @@ to Nut was at best a floor, not a transferable number).
   `src/sim/adapter.py::_apply_cube_xy_jitter`. Default is ±3 cm (training
   distribution); elevated values push the cube to positions the policy
   never saw at training time.
-- **Chosen value for the demo.** `cube_xy_jitter_m = 0.08` m (i.e., ±8 cm,
-  ~2.7× the training range). Verified to actually spread cube positions:
-  across 15 seeds, the default range spans roughly x∈[-0.03, +0.03] and
-  the 0.08 override spans x∈[-0.08, +0.07].
+- **Chosen value for the demo.** `cube_xy_jitter_m = 0.15` m (±15 cm, 5×
+  the training range). Picked by running a sweep over
+  {0.02, 0.05, 0.08, 0.12, 0.15, 0.20, 0.25, 0.30} m at 8 seeds each and
+  selecting the smallest value yielding a 30-60% failure rate on the
+  BC-RNN. Measured failure rates:
+
+  | `cube_xy_jitter_m` | failure rate |
+  | --- | --- |
+  | 0.02 – 0.12 m | 0/8 (policy's generalization range) |
+  | **0.15 m** | **3/8 (38%)** ← chosen |
+  | 0.20 m | 4/8 (50%) |
+  | 0.25 m | 6/8 (75%) |
+  | 0.30 m | 7/8 (88%) |
+
 - **Why this is real deployment evaluation, not a dressed-up injection.**
   The BC-RNN weights are frozen and its forward pass is untouched. Any
   failure we observe is the policy's own response to seeing an
@@ -87,49 +98,31 @@ Closing this fully requires a small human-labeled held-out set of deployment
 rollouts — explicitly out of scope for this submission. The dashboard's
 banner copy acknowledges this.
 
-## Known limitation: robomimic 0.1 ↔ robosuite 1.5 drift
+## Historical: robomimic 0.1 ↔ robosuite 1.5 drift (resolved by pinning to 1.4.1)
 
-The Lift BC-RNN checkpoint was trained under robosuite 1.4.x. Between that
-version and 1.5 (the version we ship against, required by the rest of our
-stack for Python 3.12 + MuJoCo compatibility), robosuite changed the default
-reference frame for OSC_POSE delta actions from WORLD to BASE, and may have
-reordered observables. The net effect is that **the BC-RNN consistently
-fails under robosuite 1.5 regardless of cube placement**: in a sweep of
-{0.00, 0.05, 0.08, 0.12} m × 4 seeds, 0 of 16 rollouts succeeded.
+An earlier iteration of this repo ran against `robosuite>=1.5`. Robosuite
+1.5 replaced the classical OSC_POSE controller with a composite-controller
+abstraction, which re-scales and re-frames the ±0.05 m delta commands a
+1.4-trained BC-RNN emits. Symptom: the policy saturated `+z` with the
+gripper closed from step 0 and the arm rose away from the cube, yielding
+0/16 success across {0.0, 0.05, 0.08, 0.12} m × 4 seeds. Verified in two
+code paths — the direct `suite.make()` route and robomimic's own
+`EnvUtils.create_env_from_metadata` route. Forcing `input_ref_frame="world"`
+did not recover task success. See robomimic GitHub issues
+[#259](https://github.com/ARISE-Initiative/robomimic/issues/259) and
+[#283](https://github.com/ARISE-Initiative/robomimic/issues/283) for the
+upstream context — Stanford publishes only 1.5-compatible *datasets*, not
+re-trained checkpoints.
 
-This was verified two ways:
-1. Direct `suite.make()` + `RobomimicPolicy` path used by the adapter.
-2. Via robomimic's own `EnvUtils.create_env_from_metadata` path (with a
-   `mujoco_py` stub since robomimic 0.3.0's env adapter imports the dead
-   package). Same 0% success.
-
-Adding `input_ref_frame="world"` to the migrated controller config was
-tried and did not recover task success on either Lift or Square — so the
-shim in `src/sim/pretrained.py::_upgrade_legacy_controller` leaves the
-library defaults alone.
-
-**Demo implication.** The deployment cohort's failure rate is ~100%
-regardless of `cube_xy_jitter_m`. What `cube_xy_jitter_m` still buys us is
-**visual diversity in the failure modes** — a cube that starts at
-(+8 cm, +8 cm) produces a visually different failure than one starting at
-the origin, which means the vision judge gets a richer label distribution
-to work with. But we cannot claim "placement perturbation caused this
-failure rate to rise" — the floor failure rate is the drift, not the
-perturbation.
-
-**What this does NOT affect.** The calibration cohort, the judge
-calibration numbers, and the dual-population dashboard scaffolding are all
-independent of this drift — those run the scripted policy, which is built
-directly against robosuite 1.5's controllers and does succeed reliably in
-the clean configuration. The judge trust story holds.
-
-**Out-of-scope fixes.**
-- Downgrading robosuite to 1.4 — breaks the rest of our stack.
-- Retraining the BC-RNN against robosuite 1.5 — explicitly a non-goal
-  (claude.md §1: "We evaluate, we do not train.").
-- Using the `lift_mh_low_dim` checkpoint as a fallback — verified via
-  the model zoo docs and HEAD probes that this checkpoint is not
-  published (see conversation notes in the branch history).
+**Resolved by pinning `robosuite==1.4.1`** (see `requirements.txt`).
+Robosuite 1.4.1 is pure-Python on top of the DeepMind mujoco bindings
+(`mujoco>=3`) and installs cleanly on Python 3.12 macOS arm64. Our
+scripted calibration policy uses nothing 1.5-specific; both cohorts run
+on 1.4.1. The only code surfaces that moved were the controller-config
+imports (`load_composite_controller_config` → `load_controller_config`)
+and the pretrained shim (`_upgrade_legacy_controller` →
+`_controller_passthrough`, now a no-op since the checkpoint's own
+controller dict is native on 1.4).
 
 ## Scope of what we claim to measure
 
@@ -138,11 +131,10 @@ the clean configuration. The judge trust story holds.
   `src.metrics` module; confusion matrix on the dashboard. These are
   the headline calibration numbers.
 - **Deployment-cohort claim.** The judge's label distribution over a
-  real BC-RNN policy's failures on Lift under a ±8 cm placement
-  perturbation (and, in this release, under robosuite 1.5 drift — see
-  above). Each deployment finding carries its per-label calibration
-  precision chip. We do not claim a failure *rate* for this cohort —
-  the rate is dominated by the drift floor.
+  real BC-RNN policy's failures on Lift under a ±15 cm placement
+  perturbation. The policy succeeds 8/8 at `cube_xy_jitter_m=0.0` and
+  fails 3/8 (38%) at 0.15 m — a clean out-of-distribution stress test.
+  Each deployment finding carries its per-label calibration precision chip.
 - **Out of scope.** Real-robot deployment, sim-to-real, multi-task
   generalization, clustering beyond the 1M-context single-pass synthesis
   the report writer does.

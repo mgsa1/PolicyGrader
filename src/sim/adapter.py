@@ -29,7 +29,7 @@ os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 import imageio  # noqa: E402
 import numpy as np  # noqa: E402
 import robosuite as suite  # noqa: E402
-from robosuite.controllers import load_composite_controller_config  # noqa: E402
+from robosuite.controllers import load_controller_config  # noqa: E402
 
 from src.schemas import RolloutConfig, RolloutResult  # noqa: E402
 from src.sim.policies import Policy  # noqa: E402
@@ -57,7 +57,7 @@ def _build_pretrained(config: RolloutConfig) -> tuple[Policy, dict[str, Any], st
 def _build_scripted(config: RolloutConfig) -> tuple[Policy, dict[str, Any], str]:
     assert config.injected_failures is not None  # invariant from RolloutConfig
     policy = ScriptedLiftPolicy(config.injected_failures, seed=config.seed)
-    controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+    controller_cfg = load_controller_config(default_controller="OSC_POSE")
     env_kwargs: dict[str, Any] = {
         "robots": "Panda",
         "controller_configs": controller_cfg,

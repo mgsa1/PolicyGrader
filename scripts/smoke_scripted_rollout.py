@@ -23,7 +23,7 @@ os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 import imageio  # noqa: E402
 import numpy as np  # noqa: E402
 import robosuite as suite  # noqa: E402
-from robosuite.controllers import load_composite_controller_config  # noqa: E402
+from robosuite.controllers import load_controller_config  # noqa: E402
 
 from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy  # noqa: E402
 
@@ -40,7 +40,7 @@ RENDER_FPS = 20
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+    controller_cfg = load_controller_config(default_controller="OSC_POSE")
     env = suite.make(
         env_name="Lift",
         robots="Panda",

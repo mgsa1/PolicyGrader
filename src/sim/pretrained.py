@@ -33,30 +33,16 @@ def _patch_legacy_algo_config(ckpt_dict: dict[str, Any]) -> dict[str, Any]:
     return ckpt_dict
 
 
-def _upgrade_legacy_controller(legacy: dict[str, Any], robot: str) -> dict[str, Any]:
-    """Wrap a v1.4-era arm controller dict in robosuite v1.5's composite format.
+def _controller_passthrough(legacy: dict[str, Any], robot: str) -> dict[str, Any]:
+    """No-op on robosuite 1.4: the checkpoint's OSC_POSE dict is already native.
 
-    Delegates to robosuite's own migration helper (used by their demo_control.py)
-    so we inherit the canonical translation of damping->damping_ratio,
-    control_delta->input_type, gripper defaults, etc. Robosuite ships the helper
-    but does not call it automatically — env users must invoke it themselves.
-
-    Known limitation: on robosuite 1.5 the upgraded OSC_POSE controller produces
-    delta actions in base frame by default, while robomimic 0.1's BC-RNN
-    checkpoints were collected under 1.4's world-frame default. Forcing
-    input_ref_frame="world" here was tried and did not recover task success
-    across Lift or Square, so the upgrade is left at library defaults. See
-    docs/eval_methodology.md for the downstream implication on deployment
-    failure rate.
+    Robomimic 0.3.0's pretrained checkpoints were trained against robosuite
+    1.4.x, whose `load_controller_config(default_controller="OSC_POSE")`
+    schema matches what the checkpoint's env_metadata ships. We pin
+    robosuite==1.4.1 in requirements.txt so no format translation is needed.
     """
-    from robosuite.controllers.composite.composite_controller_factory import (
-        refactor_composite_controller_config,
-    )
-
-    upgraded: dict[str, Any] = refactor_composite_controller_config(
-        legacy, robot_type=robot, arms=["right"]
-    )
-    return upgraded
+    del robot  # retained kwarg for call-site stability
+    return legacy
 
 
 class RobomimicPolicy(Policy):
@@ -79,22 +65,23 @@ class RobomimicPolicy(Policy):
     def env_kwargs_for_robosuite(self) -> dict[str, Any]:
         """Return env_kwargs ready to pass into `robosuite.make(...)`.
 
-        Differs from the raw checkpoint env_kwargs only in the controller
-        config, which is upgraded to robosuite v1.5's composite format.
+        On robosuite 1.4.1 the checkpoint's own controller_configs dict is
+        the native OSC_POSE format — no translation needed, just pass through.
         """
         kwargs: dict[str, Any] = dict(self._ckpt_dict["env_metadata"]["env_kwargs"])
         legacy_ctrl = kwargs.get("controller_configs")
-        if isinstance(legacy_ctrl, dict) and legacy_ctrl.get("type") != "BASIC":
+        if isinstance(legacy_ctrl, dict):
             robot = kwargs.get("robots", ["Panda"])[0]
-            kwargs["controller_configs"] = _upgrade_legacy_controller(legacy_ctrl, robot)
+            kwargs["controller_configs"] = _controller_passthrough(legacy_ctrl, robot)
         return kwargs
 
     def reset(self) -> None:
         self._policy.start_episode()
 
     def act(self, obs: dict[str, Any]) -> np.ndarray[Any, Any]:
-        # robosuite 1.5 emits "object-state" where v0.1-trained policies expect
-        # "object". Alias rather than mutate, so callers keep both keys.
+        # Robosuite emits "object-state" as the concatenated object observable
+        # key, but the checkpoint's obs_encoder was saved expecting "object".
+        # Alias rather than mutate so callers keep both keys.
         if "object-state" in obs and "object" not in obs:
             obs = {**obs, "object": obs["object-state"]}
         action = self._policy(ob=obs)

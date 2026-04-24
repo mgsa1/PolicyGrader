@@ -122,9 +122,9 @@ Multi-agent Managed Agents sessions, `outcomes`, and cross-session memory are al
 - **Language:** Python 3.12.
 - **Model:** `claude-opus-4-7`. See §11 for breaking changes vs 4.6.
 - **Agent runtime:** Claude Managed Agents, beta header `managed-agents-2026-04-01`.
-- **Simulator:** `mujoco` + `robosuite` ≥ 1.5. One env in active use: **`Lift`** (both cohorts). Calibration = scripted policy with injected output knobs (known ground truth); deployment = pretrained BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens `env.placement_initializer.x_range/y_range` from the default ±3 cm). No custom cameras needed — default `frontview` works.
-- **Policy — pretrained (deployment):** `robomimic` v0.3.0 with a pretrained BC-RNN checkpoint for Lift (`artifacts/checkpoints/lift_ph_low_dim.pth`, fetched by `scripts/fetch_checkpoints.py` from the Stanford rt_benchmark model zoo, reported ~100% success on training distribution in robosuite 1.4). **Known drift limitation:** robomimic 0.3.0 was trained against robosuite 1.4.x and the BC-RNN consistently fails on 1.5 regardless of cube placement — see `@docs/eval_methodology.md` for the full write-up and what this implies for the demo narrative. Do **not** use LeRobot — its policies target ALOHA / Koch / SO-100, not Franka Panda.
-- **Policy — scripted with injected failures (calibration):** `src/sim/scripted.py`. Knob → label mapping: `action_noise ≥ 0.10 → knock_object_off_table`; `angle_deg > 0 → approach_miss`; `premature_close = True → approach_miss`; `grip_scale < 0.7 → slip_during_lift`. Each config has known ground truth. Currently Lift-only; **scripted Nut equivalent is open work** (see §7).
+- **Simulator:** `mujoco>=3` + `robosuite==1.4.1` (pinned — see below). One env in active use: **`Lift`** (both cohorts). Calibration = scripted policy with injected output knobs (known ground truth); deployment = pretrained BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens `env.placement_initializer.x_range/y_range` from the default ±3 cm). No custom cameras needed — default `frontview` works.
+- **Policy — pretrained (deployment):** `robomimic` v0.3.0 with a pretrained BC-RNN checkpoint for Lift (`artifacts/checkpoints/lift_ph_low_dim.pth`, fetched by `scripts/fetch_checkpoints.py` from the Stanford rt_benchmark model zoo). **Verified 8/8 success** at `cube_xy_jitter_m=0.0` on our stack; failure rate climbs cleanly with the jitter value (0% at 0.12 m → 38% at 0.15 m → 88% at 0.30 m). **Pin robosuite to 1.4.1** — 1.5's composite-controller rewrite re-scales the 1.4-trained BC-RNN's delta actions and produces 0% success (see `@docs/eval_methodology.md` for the full story + robomimic issues #259 / #283). Do **not** use LeRobot — its policies target ALOHA / Koch / SO-100, not Franka Panda.
+- **Policy — scripted with injected failures (calibration):** `src/sim/scripted.py`. Knob → label mapping: `action_noise ≥ 0.10 → knock_object_off_table`; `angle_deg > 0 → approach_miss`; `premature_close = True → approach_miss`; `grip_scale < 0.7 → slip_during_lift`. Each config has known ground truth. Lift-only — the scope cut removed all other envs.
 - **UI:** `gradio` ≥ 6 (we run 6.13). Static files served via `/gradio_api/file=<abs_path>` — `allowed_paths=[mirror_root]` MUST be set on `app.launch()` or images 403.
 - **Plotting:** `plotly` ≥ 5 (interactive heatmap on the Judge calibration tab; `gr.Plot` only emits `.change` in Gradio 6, no native cell-click — use dropdown filters as the workaround). `matplotlib` available but largely unused.
 - **Video:** `imageio-ffmpeg` for `.mp4`. Frame sampling lives in `src/vision/frames.py`.
@@ -150,9 +150,8 @@ repo/
 │   │   └── tools.py              # rollout/coarse/fine custom tools + dispatch
 │   ├── sim/
 │   │   ├── adapter.py            # run_rollout(config) -> RolloutResult
-│   │   ├── cameras.py            # midpoint+30 cm Nut camera override
 │   │   ├── policies.py           # Policy interface
-│   │   ├── pretrained.py         # robomimic BC-RNN loader (with v1.4→v1.5 shim)
+│   │   ├── pretrained.py         # robomimic BC-RNN loader (1.4-native passthrough)
 │   │   └── scripted.py           # Lift IK picker + InjectedFailures
 │   ├── vision/
 │   │   ├── coarse_pass.py        # 768px, 24 frames, binary + earliest-range
@@ -184,10 +183,9 @@ repo/
 ├── scripts/
 │   ├── smoke_render.py           # MUJOCO_GL sanity check
 │   ├── smoke_scripted_rollout.py # one scripted Lift rollout, no API
-│   ├── smoke_pretrained_rollout.py # one BC-RNN Nut rollout, no API
+│   ├── smoke_pretrained_rollout.py # Lift BC-RNN: single sanity OR --sweep mode
 │   ├── smoke_parallel_rollouts.py
 │   ├── smoke_agent.py            # full Plan-A end-to-end (REAL API CALLS)
-│   ├── compare_cameras.py        # Nut camera-angle picker
 │   ├── fetch_checkpoints.py      # download BC-RNN .pth
 │   └── run_ui.py                 # launch the Gradio dashboard
 ├── docs/
@@ -245,15 +243,13 @@ Past the original 48-hour sprint. State of the world:
 ### Done
 
 - **Plan-A pipeline end-to-end.** ONE Managed Agents session, four phases (planner / rollout / judge / report), multi-tool `requires_action` cycles handled correctly, all four phases reach `end_turn` on smoke runs.
-- **Both populations on Lift.** Scope-cut from the earlier Lift + Nut mix to **Lift-only across both cohorts**. Calibration = scripted Lift with injected output knobs; deployment = pretrained Lift BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens the `UniformRandomSampler` xy range from ±3 cm default to ±8 cm). Same-task calibration means P/R numbers actually transfer to deployment findings instead of being at-best a floor — the cross-task drift caveat from the prior design is resolved. Post-success hold of 20 frames so clean rollouts show "cube clearly held aloft" — fixes a Pass-1 false-positive class.
+- **Both populations on Lift, both working.** Scope-cut from the earlier Lift + Nut mix to **Lift-only across both cohorts**. Calibration = scripted Lift with injected output knobs; deployment = pretrained Lift BC-RNN under `cube_xy_jitter_m` environmental perturbation (widens the `UniformRandomSampler` xy range from ±3 cm default to ±15 cm for demo runs). BC-RNN verified **8/8 success at `cube_xy_jitter_m=0.0`**, **38% failure at 0.15 m** (clean OOD stress test). Same-task calibration means P/R numbers actually transfer to deployment findings. Post-success hold of 20 frames so clean rollouts show "cube clearly held aloft" — fixes a Pass-1 false-positive class.
 - **Two-pass vision judge.** Pass-1 at 24 frames × 768 px (denser than initial 14, prompt asks for the *earliest* failure window not the consequence frame). Pass-2 at 14 frames × 2576 px windowed on the coarse range with 8-frame padding, Pass-2 frames encoded as JPEG (fits the 32 MB request cap), prompt explicit about temporal reasoning between adjacent frames and named anti-bias against `default-to-approach_miss`.
 - **Cost + wall-time accounting.** `src/costing.py` tracks Opus 4.7 token usage live, computes manual-review baseline ($75/hr × 3 min/rollout for cost, sum of video durations + 60 s/rollout for wall time), surfaces both as the headline banner.
 - **Dashboard.** Live tab (chat + current rollout video + rich gallery), Judge calibration tab (cohort pills + binary panel with Wilson 95% CI + multiclass heatmap + per-label table + drill-down filter), Deployment findings tab with **Judge Trust banner** at the top + cluster cards decorated with calibration-precision chips (no longer carry the "(Lift)" parenthetical — both cohorts are Lift). Phase progress strip below the banner shows X/N for each phase live. Population chips (amber / steel-blue) on every rollout card.
 - **Plain-language agent messages.** System prompt includes a translation table — agent.message events translate "knob" → "failure-injection parameter", "scripted policy" → plain English, `cube_xy_jitter_m` → "cube placement perturbation", etc. Internal thinking can stay technical.
 
 ### Open methodology questions
-
-- **robomimic 0.1 ↔ robosuite 1.5 drift.** The Lift BC-RNN checkpoint consistently fails on robosuite 1.5 regardless of `cube_xy_jitter_m` (verified via a 16-rollout sweep + robomimic's own env_utils path). Root cause is the controller-frame change between 1.4 and 1.5; the `input_ref_frame="world"` override was tried and didn't recover success. The deployment cohort is therefore a mix of policy-competence-under-perturbation AND environment-drift floor. `cube_xy_jitter_m` still delivers visual diversity in the failures the judge sees. Fully separating these would require either downgrading robosuite (breaks the stack) or retraining the policy (explicit non-goal). See `@docs/eval_methodology.md`.
 - **Engineered vs natural failure distribution.** Even with same-task calibration, scripted-injected failures look visually distinct from BC-RNN natural failures (the engineered ones are obvious; natural ones are subtle). A small human-labeled set is the only true cure; we can defer this if we lean into the floor framing in the demo narrative.
 - **Sub-second event resolution.** Vision tuning shipped (24 / 14 frames + earliest-failure prompt) targets the over-collapse to `approach_miss` we observed. Pending validation on a fresh smoke run. If still weak, escalation paths are: hierarchical zoom-and-refine (two-stage coarse), pixel-difference-driven adaptive sampling, or a frame-tiling experiment. **Native video input is NOT supported on Opus 4.7** — confirmed via SDK + docs (no `VideoBlockParam`, only image MIME types). Don't spend time on that lever.
 
@@ -261,11 +257,12 @@ Past the original 48-hour sprint. State of the world:
 
 - README.md polish (positioning one-liner, architecture diagram, install, headline numbers).
 - `docs/demo_script.md` — shot list (use the new tab structure: open on Live, cut to Judge calibration mid-run, close on Deployment findings with the Judge Trust banner).
-- `docs/eval_methodology.md` — calibration/deployment framing + cross-task caveat.
 - 100–200 word written hackathon summary.
 - Cost-tracker validation — one 3-row probe and compare banner number to Anthropic console; ship if within 10%.
 - Final cleanup pass: dead code removal (a few orphaned helpers in `src/ui/app.py`), TODO sweep, debug-print scan.
 - Recording itself.
+
+(`docs/eval_methodology.md` already exists and reflects the current Lift-only, same-task calibration framing.)
 
 ---
 
@@ -311,11 +308,28 @@ MUJOCO_GL=glfw python scripts/smoke_render.py
 # smoke: one scripted Lift rollout, no API
 python scripts/smoke_scripted_rollout.py
 
-# smoke: one pretrained NutAssemblySquare rollout, no API
+# smoke: one Lift BC-RNN rollout at jitter=0 (expect success), no API
 python scripts/smoke_pretrained_rollout.py
 
-# smoke: full Plan-A end-to-end (HITS REAL ANTHROPIC API — costs money)
-python scripts/smoke_agent.py --goal "Mixed eval: 8 scripted Lift + 8 pretrained Nut, seeds 0-7"
+# BC-RNN SANITY GATE before any agent-flow run — $0, ~30 s, 3 seeds.
+# If this fails, your sim stack is broken (likely robosuite upgraded past
+# 1.4.1) and spending $18+ on smoke_agent will just burn money. Fix before
+# proceeding. Expected: 3/3 success.
+MUJOCO_GL=glfw python -c "
+import sys; sys.path.insert(0,'.')
+from pathlib import Path
+from src.schemas import RolloutConfig
+from src.sim.adapter import run_rollout
+ck = Path('artifacts/checkpoints/lift_ph_low_dim.pth')
+ok = sum(run_rollout(RolloutConfig(rollout_id=f's{s}', policy_kind='pretrained',
+                                    env_name='Lift', seed=s, max_steps=200,
+                                    checkpoint_path=ck), video_out=None).success for s in range(3))
+print(f'BC-RNN sanity: {ok}/3')
+assert ok == 3, 'sim stack broken — do not run smoke_agent'
+"
+
+# smoke: full Plan-A end-to-end (HITS REAL ANTHROPIC API — ~$18 / 15 min for 16 rollouts)
+python scripts/smoke_agent.py
 
 # launch the dashboard (point at a mirror_root; auto-opens in browser)
 python scripts/run_ui.py
@@ -366,7 +380,7 @@ We track every Anthropic call's tokens via `src/costing.py::CostTracker`. Pricin
 
 - Opus 4.7 input: **$15 / Mtok** · output: **$75 / Mtok** · cache read: **$1.50 / Mtok** · cache write: **$18.75 / Mtok**
 
-Per-rollout cost on the agent flow has stabilized around **~$0.85** (mixed Lift + Nut, with the latest denser vision sampling). Was ~$0.60 before the vision tuning bumped Pass-1 from 14→24 frames and Pass-2 from 10→14 frames. **Confirm before any agent-flow run greater than ~5 rollouts** — the auto-memory `project_smoke_run_costs.md` notes the same.
+Per-rollout cost on the agent flow is **~$1.15** (mixed 8 cal + 8 dep Lift eval, 16 rollouts → $18.38 on the post-scope-cut smoke run of 2026-04-24, with the denser vision sampling we ship). Was ~$0.60 before the vision tuning bumped Pass-1 from 14→24 frames and Pass-2 from 10→14 frames. **Confirm before any agent-flow run greater than ~5 rollouts** — the auto-memory `project_smoke_run_costs.md` notes the same.
 
 The dashboard shows live cost vs two baselines:
 
@@ -425,7 +439,8 @@ Full shot list in `docs/demo_script.md`. Principles:
 - Do not write docs for code that does not exist yet.
 - Do not try to feed mp4s directly to Claude. Opus 4.7 has no `VideoBlockParam`, only image MIME types. Frame-sampling is the only path. (See §11 "No native video input".)
 - Do not use day-tag prefixes (`sat-am:`, `sun-pm:`) in commit messages or status updates. Git timestamps already sequence work; the tag adds no information.
-- Do not present judge metrics on deployment rollouts as if they were measured on the deployment task. They were measured on calibration. The dashboard makes this explicit (Judge Trust banner, per-label `judge P (Lift)` chips); any reporting must too.
+- Do not bump `robosuite` past 1.4.1 without first re-running the BC-RNN sanity gate in §10. 1.5's composite-controller rewrite silently produces 0/16 success — see §16 for the full symptom.
+- Do not reintroduce cross-task evaluation (calibration on one env, deployment on another) without a methodology note. Today both cohorts run Lift so per-label calibration P transfers directly onto deployment findings — if you split them again, the Judge Trust chips stop being honest and need explicit `(env)` tagging.
 
 ---
 
@@ -433,12 +448,12 @@ Full shot list in `docs/demo_script.md`. Principles:
 
 - **MuJoCo on macOS Apple Silicon.** Try `MUJOCO_GL=glfw` first, fallback `egl`. Document whatever works in `docs/install-mujoco-macos.md` the moment it works.
 - **Multiprocessing.** Use `get_context("spawn").Pool`, **never fork** — MuJoCo contexts are not fork-safe. Each worker must create its own env; envs are not pickle-safe across processes. Sequential fallback is fine (< 15 min for 30 rollouts).
-- **robomimic obs shapes.** Must match the checkpoint's training config. Stick to canonical NutAssemblySquare observations; wrap adapters in `src/sim/pretrained.py`, never fork the policy.
+- **robomimic obs shapes.** Must match the checkpoint's training config. Stick to the canonical Lift observation set (`robot0_eef_pos`, `robot0_eef_quat`, `robot0_gripper_qpos`, `object`); robosuite emits `object-state` and we alias it to `object` in `src/sim/pretrained.py::RobomimicPolicy.act`. Wrap any future mismatch there, never fork the policy.
 - **Opus 4.7 literalism.** More literal than 4.6. Be explicit in system prompts; do not expect the model to generalize from one item to another unprompted.
 - **Silent 4.7 breakages.** §11 list. Verify any 4.6-era snippet before reusing.
 - **Tokenizer change.** Up to ~35% more tokens for the same text. Adjust `max_tokens` and `task_budget` upward vs 4.6 baselines.
 - **Cross-task calibration drift — resolved.** Prior design calibrated on Lift and deployed on NutAssemblySquare, so the calibration number was at best a floor on the deployment number. Post scope-cut we run BOTH cohorts on Lift (calibration = scripted policy + output knobs; deployment = BC-RNN + `cube_xy_jitter_m` environmental perturbation), so the per-label calibration precision can legitimately decorate deployment findings. Deployment-finding chips no longer carry the `(Lift)` parenthetical. The remaining gap — engineered-vs-natural failure distribution — is documented in `@docs/eval_methodology.md` and only closable with a human-labeled set.
-- **robomimic 0.1 ↔ robosuite 1.5 drift.** The Lift BC-RNN checkpoint consistently fails on robosuite 1.5 regardless of cube placement (verified by a 16-rollout sweep + a direct test via robomimic's own `env_utils.create_env_from_metadata` path with a `mujoco_py` stub). Root cause is a reference-frame change between 1.4 and 1.5; the `input_ref_frame="world"` override was tried and didn't recover task success. Deployment-cohort failure rate is dominated by this drift floor, not by `cube_xy_jitter_m`. The Pass-2 judge still sees visually diverse failures and the dual-cohort scaffolding is unaffected. Don't claim "the policy failed because of the perturbation" — say "under perturbation + robosuite 1.5 drift" instead.
+- **robosuite version pin.** We pin `robosuite==1.4.1` in `requirements.txt`. Robosuite 1.5's composite-controller rewrite re-scales the 1.4-trained BC-RNN's delta actions into garbage (symptom: arm rises away from cube with gripper closed from step 0, 0/16 success). Stanford publishes only 1.5-compatible *datasets*, not re-trained checkpoints — upstream context in robomimic issues #259 / #283. 1.4.1 is pure Python on the DeepMind mujoco bindings and installs cleanly on Python 3.12 arm64. Don't upgrade robosuite without also re-validating the BC-RNN succeeds at `cube_xy_jitter_m=0.0`.
 - **Frame sampling vs sub-second events.** Pass-1 at 24 frames covers ~0.4 s/frame on a 10 s clip. Failures shorter than a frame interval (e.g. a brief gripper-knock) can be missed — Pass-1 then returns the consequence frames (arm retreating) and Pass-2 mis-labels what it sees there. The current prompt explicitly asks Pass-1 for the *earliest* failure window and walks Pass-2 through temporal reasoning, but the underlying sampling limit is real. Escalation paths if the prompt fix isn't enough: hierarchical zoom-and-refine (two-stage coarse), pixel-difference-driven adaptive sampling, frame tiling. Native video isn't an option (see §11).
 
 ---

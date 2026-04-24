@@ -38,7 +38,7 @@ DEFAULT_GOAL = (
     "Mixed Lift eval: 8 calibration rollouts (scripted policy on Lift — "
     "3 clean, 5 with injected failures covering all four failure-injection "
     "parameters) and 8 deployment rollouts (pretrained BC-RNN on Lift under "
-    "cube_xy_jitter_m=0.08 m perturbation). Use seeds 0..7. Cap each rollout "
+    "cube_xy_jitter_m=0.15 m perturbation). Use seeds 0..7. Cap each rollout "
     "at 200 steps."
 )
 
