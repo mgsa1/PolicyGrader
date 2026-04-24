@@ -253,6 +253,92 @@ def render_judge_calibration_header() -> str:
     )
 
 
+# ---- At-a-glance binary confusion (sim ground truth vs judge verdict) ------------
+
+
+@dataclass(frozen=True)
+class BinaryConfusion:
+    """Judge vs sim binary pass/fail. Sim's `env._check_success()` is ground truth.
+
+    Judge's binary verdict: pass iff `judge_label` is None or "none", else fail.
+    Sim-successes implicitly count as "judged pass" because the judge does not
+    run on them. Sim-failures with the judge still pending are excluded so a
+    half-finished run doesn't inflate FN.
+
+    Both populations (calibration + deployment) are included — sim owns the
+    binary label for everyone.
+    """
+
+    tn: int  # actual pass · judged pass
+    fp: int  # actual pass · judged fail
+    fn: int  # actual fail · judged pass
+    tp: int  # actual fail · judged fail
+
+    @property
+    def total(self) -> int:
+        return self.tn + self.fp + self.fn + self.tp
+
+
+def binary_confusion(rollouts: list[ScoredRollout]) -> BinaryConfusion:
+    none_label = FailureMode.NONE.value
+    tn = fp = fn = tp = 0
+    for r in rollouts:
+        if r.success:
+            judged_pass = r.judge_label is None or r.judge_label == none_label
+            if judged_pass:
+                tn += 1
+            else:
+                fp += 1
+        elif r.judge_label is not None:
+            judged_pass = r.judge_label == none_label
+            if judged_pass:
+                fn += 1
+            else:
+                tp += 1
+        # sim-failure with judge pending: excluded
+    return BinaryConfusion(tn=tn, fp=fp, fn=fn, tp=tp)
+
+
+def render_binary_matrix(counts: BinaryConfusion) -> str:
+    """2×2 summary card: JUDGED × ACTUAL, matching the legacy panel style."""
+    if counts.total == 0:
+        return (
+            "<div class='pg-bcm'>"
+            "<div class='pg-bcm__eyebrow'>Judge vs sim · binary view</div>"
+            "<div class='pg-bcm__empty'>"
+            "Populates once at least one rollout has a complete verdict."
+            "</div></div>"
+        )
+
+    def cell(kind: str, n: int, tag: str) -> str:
+        return (
+            f"<div class='pg-bcm__cell pg-bcm__cell--{kind}'>"
+            f"<div class='pg-bcm__num'>{n}</div>"
+            f"<div class='pg-bcm__tag'>{tag}</div>"
+            "</div>"
+        )
+
+    return (
+        "<div class='pg-bcm'>"
+        "<div class='pg-bcm__eyebrow'>Judge vs sim · binary view</div>"
+        "<div class='pg-bcm__grid'>"
+        "<div></div>"
+        "<div class='pg-bcm__colhead'>Judged · Pass</div>"
+        "<div class='pg-bcm__colhead'>Judged · Fail</div>"
+        "<div class='pg-bcm__rowhead'><span>Actual · Pass</span></div>"
+        + cell("ok", counts.tn, "TN")
+        + cell("err", counts.fp, "FP")
+        + "<div class='pg-bcm__rowhead'><span>Actual · Fail</span></div>"
+        + cell("err", counts.fn, "FN")
+        + cell("ok", counts.tp, "TP")
+        + "</div>"
+        "<div class='pg-bcm__note'>"
+        "Ground truth from <code>env._check_success()</code>. "
+        "Both calibration and deployment rollouts included."
+        "</div></div>"
+    )
+
+
 # ---- Judge trust summary (used by the Deployment-findings header banner) ---------
 
 

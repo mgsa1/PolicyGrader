@@ -47,11 +47,12 @@ SUBMIT_REPORT_TOOL_NAME = "submit_report"
 
 # MuJoCo rollout dispatch is serialized process-wide because GLFW's OpenGL
 # context is global state — two concurrent run_rollout() calls in the same
-# process corrupt each other's env. Plan B's rollout workers may dispatch
-# `rollout` calls concurrently from their independent event-stream threads;
-# the lock below serializes the actual sim step loop so only one rollout
-# is active at a time. Judge calls are pure Messages-API calls and
-# parallelize freely — no lock needed there.
+# process corrupt each other's env. Plan B's rollout phase runs in ONE
+# session on the main thread (see src/multi_orchestrator.py docstring:
+# macOS GLFW/Cocoa init hangs off the main thread), so in normal operation
+# there is no contention. The lock stays as defense-in-depth for tests /
+# future callers. Judge calls are pure Messages-API calls and parallelize
+# freely — no lock needed there.
 _ROLLOUT_LOCK = threading.Lock()
 
 # dispatch_log.jsonl is appended to from every tool dispatch. Under Plan B
@@ -229,8 +230,7 @@ _SUBMIT_RESULTS_INPUT_SCHEMA: dict[str, Any] = {
             "description": (
                 "One JSON object per line, each a RolloutResult record "
                 "(rollout_id, success, steps_taken, video_path, ground_truth_label). "
-                "Host APPENDS these to mirror_root/rollouts/results.jsonl — safe for "
-                "parallel rollout workers to submit their own slices."
+                "Host APPENDS to mirror_root/rollouts/results.jsonl."
             ),
         },
     },

@@ -36,7 +36,13 @@ from src.vision.frames import encode_jpeg_b64, read_frames, resize_long_edge, sa
 # the JPEG payload under the 32 MB Messages-API request limit; the lower floor
 # keeps short clips (e.g. a rollout that terminated after 40 steps) from being
 # under-sampled for CoT reasoning.
-JUDGE_LONG_EDGE_PX = 2576
+#
+# IMPORTANT: Anthropic enforces a 2000 px max-dimension cap on **many-image**
+# requests (distinct from the 2576 px cap they advertise for single-image
+# calls). Sending frames at 2576 px in a multi-image request returns 400:
+# "image dimensions exceed max allowed size for many-image requests".
+# We send N frames per request, so we must stay ≤2000.
+JUDGE_LONG_EDGE_PX = 1920
 JUDGE_FRAMES_PER_SECOND = 3
 JUDGE_MIN_FRAMES = 12
 JUDGE_MAX_FRAMES = 36

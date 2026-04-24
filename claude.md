@@ -56,7 +56,7 @@ Submitted to the Anthropic Opus 4.7 Hackathon.
 Research-preview access to parallel Managed Agents sessions is **confirmed available on our org** — treat it as production-usable, not speculative. Do NOT write code that fences off the multi-agent path behind "if research preview granted" caveats.
 
 - **Plan A (legacy fallback).** ONE Managed Agents session running Opus 4.7 with the full tool suite. The four logical roles — planner, rollout worker, vision judge, report writer — are *phases* within one session, separated by system-prompt markers and distinct artifacts in `/memories/`. Lives in `src/orchestrator.py` + `scripts/smoke_agent.py`. Kept as the sequential control flow for debugging and as the no-parallelism baseline.
-- **Plan B (demo default).** FOUR specialized agents driven in parallel from the host. Planner (1 session) → Rollout workers (K parallel sessions) → Judge workers (K parallel sessions) → Reporter (1 session). Host uses `concurrent.futures.ThreadPoolExecutor` to fan out; shared state (`CostTracker`, `RuntimeState`, `dispatch_log.jsonl`) protected by `threading.Lock`; MuJoCo rollouts serialized by a process-wide `_ROLLOUT_LOCK` because GLFW's OpenGL context is global; vision passes (coarse/fine) fully parallel — that's where the wall-clock win comes from. Lives in `src/multi_orchestrator.py` + `scripts/smoke_agent_parallel.py`. Target wall-clock on the 16-rollout smoke: ~4–6 min vs Plan A's ~15 min. Cost is roughly unchanged (per-session system-prompt tokens are the only overhead, small after cache).
+- **Plan B (demo default).** FOUR specialized agents. Planner (1 session) → Rollout worker (1 session, sequential, **main-thread**) → Judge workers (K parallel sessions) → Reporter (1 session). Only the judge phase fans out via `concurrent.futures.ThreadPoolExecutor` — that's where the wall-clock win comes from (judging is API-bound; rollouts are sim-bound and were already serialized, so fanning them out buys nothing). The rollout phase MUST run on the host's main thread: on macOS, GLFW's Cocoa init called from a pool thread wedges in an `[NSApplication reportException:]` loop and the whole process hangs. Shared state (`CostTracker`, `RuntimeState`, `dispatch_log.jsonl`) protected by `threading.Lock`; `_ROLLOUT_LOCK` stays in `src/agents/tools.py` as defense-in-depth for the global GLFW context. Lives in `src/multi_orchestrator.py` + `scripts/smoke_agent_parallel.py`. Target wall-clock on the 16-rollout smoke: ~4–6 min vs Plan A's ~15 min. Cost is roughly unchanged (per-session system-prompt tokens are the only overhead, small after cache).
 
 **Inter-session artifact hand-off.** Each session's `/memories/` is isolated — the host cannot read one session's `/memories/` from another. Plan B agents therefore hand final artifacts back to the host via a family of `submit_*` custom tools (`submit_plan`, `submit_results`, `submit_findings`, `submit_report`) which write to `mirror_root/`. The reporter then receives plan/matrix/findings inlined in its first user message. Built-in `read`/`write`/`edit`/`bash` remain available for in-session scratch work; the `submit_*` tools are the host-facing boundary.
 
@@ -380,7 +380,7 @@ Migration guide: https://platform.claude.com/docs/en/about-claude/models/whats-n
 
 **Research preview, access confirmed on our org:** parallel Managed Agents sessions (used by Plan B per §3). `outcomes` and cross-session memory are also research preview but we do not currently depend on them. The parallel-sessions path ships in `src/multi_orchestrator.py` — treat it as production-usable; do not reintroduce "gated behind preview" caveats in code or prompts.
 
-**Rate limits:** 60 create/min, 600 read/min per org. Plan B creates 2 + 2K sessions (planner + K rollout workers + K judge workers + reporter). At K=4 that's 10 sessions per eval — well under the limit.
+**Rate limits:** 60 create/min, 600 read/min per org. Plan B creates 3 + K sessions (planner + 1 rollout worker + K judge workers + reporter). At K=4 that's 7 sessions per eval — well under the limit.
 
 ---
 
@@ -392,6 +392,8 @@ We track every Anthropic call's tokens via `src/costing.py::CostTracker`. Pricin
 
 Per-rollout cost on the two-pass flow was **~$1.15** (mixed 8 cal + 8 dep Lift eval, 16 rollouts → $18.38 on 2026-04-24). The single-call CoT migration (§7) changes the vision bill: one ~30-frame call at 2576 px replaces 24 frames at 768 px + 14 frames at 2576 px. Input-image tokens land in the same order of magnitude but can shift either direction depending on the clip-length distribution — **re-baseline on the first post-migration smoke before trusting the banner**, and update `project_smoke_run_costs.md`. **Confirm before any agent-flow run greater than ~5 rollouts.**
 
+**2026-04-24 tracker fix.** Both orchestrators previously scraped `getattr(event, "usage", None)` off every session event, but the Anthropic SDK (`0.96.0`) emits token usage ONLY on `span.model_request_end` events as `model_usage`. Agent/message/thinking/tool_use/status_idle events carry no usage at all — so the entire Managed Agents session spend (planner, rollout worker, judge workers, reporter) was invisible to `CostTracker`, and only the direct `src/vision/judge.py` Messages-API calls were counted. Symptom on Plan B: a run that errored during the judge phase reported `cost_usd=0.0` against a real $7.39 API spend (`evalb_3aace5`, 12 cal + 20 dep). Fix: both orchestrators now listen for `span.model_request_end` and pull `event.model_usage`. The "flight-tested but not formally validated" caveat below is now closed for the Managed Agents side; the Messages-API side was already correct. Historical `runtime.json` numbers from before this fix under-count — use the API-key spend delta, not the cost field, when quoting pre-fix runs.
+
 The dashboard shows live cost vs two baselines:
 
 - **Cost baseline:** $75/hr × 3 min/rollout (loaded labor cost — engineer reviews video, classifies failure, takes notes). Constants in `src/costing.py`. Edit `BASELINE_HOURLY_RATE_USD` / `BASELINE_SECONDS_PER_ROLLOUT` to retune.
@@ -399,7 +401,7 @@ The dashboard shows live cost vs two baselines:
 
 The Live banner renders both as side-by-side columns + a green "Cost saved / Time saved" footer. Headline numbers in the demo recording come from the actual session — never fabricate.
 
-The cost tracker is in **flight-tested but not formally validated** state — known unknown is whether session-event tokens (planner, reporter reasoning) get fully captured or only the Messages-API vision passes. A 5-row probe + Anthropic-console comparison closes this; do it before the demo.
+The cost tracker is now wired to the correct Managed Agents event (`span.model_request_end → model_usage`) as well as to the Messages-API `response.usage`. Still run a 3-row probe + Anthropic-console comparison before the demo to confirm end-to-end accuracy is within ±10% — the previous "only vision counted" regime means our historical baselines are floors, not truth.
 
 ---
 
@@ -460,6 +462,7 @@ Full shot list in `docs/demo_script.md`. Principles:
 ## 16. Known pitfalls
 
 - **MuJoCo on macOS Apple Silicon.** Try `MUJOCO_GL=glfw` first, fallback `egl`. Document whatever works in `docs/install-mujoco-macos.md` the moment it works.
+- **GLFW + Cocoa + worker threads = hang.** On macOS, `glfwInit` can only be called from the process main thread — `NSApplication` enforces it. Calling it from a `ThreadPoolExecutor` worker wedges the process in an `[NSApplication reportException:]` → `_os_log_impl` → `backtrace_symbols` loop (visible at 97% CPU in `sample <pid>`). This is why Plan B's rollout phase runs in ONE session on the host's main thread (see §3 + `src/multi_orchestrator.py::_run_rollout_worker`). Do NOT put rollouts back behind a ThreadPoolExecutor unless you've also moved `MUJOCO_GL` off `glfw` (e.g. `cgl`) or moved dispatch to a subprocess. Rollouts were already serialized by `_ROLLOUT_LOCK` anyway, so fan-out gave nothing.
 - **Multiprocessing.** Use `get_context("spawn").Pool`, **never fork** — MuJoCo contexts are not fork-safe. Each worker must create its own env; envs are not pickle-safe across processes. Sequential fallback is fine (< 15 min for 30 rollouts).
 - **robomimic obs shapes.** Must match the checkpoint's training config. Stick to the canonical Lift observation set (`robot0_eef_pos`, `robot0_eef_quat`, `robot0_gripper_qpos`, `object`); robosuite emits `object-state` and we alias it to `object` in `src/sim/pretrained.py::RobomimicPolicy.act`. Wrap any future mismatch there, never fork the policy.
 - **Opus 4.7 literalism.** More literal than 4.6. Be explicit in system prompts; do not expect the model to generalize from one item to another unprompted.

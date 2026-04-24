@@ -227,11 +227,17 @@ def _run_one_turn(
             ev_type = getattr(event, "type", None)
             logger.debug("event %s", ev_type)
 
-            # Some session events carry a usage field (esp. agent.message and
-            # session.status_idle); accumulate defensively whenever present.
-            usage = getattr(event, "usage", None)
-            if usage is not None:
-                cost_tracker.add_usage(usage)
+            # Managed Agents emits token usage ONLY on span.model_request_end
+            # events, under the field name `model_usage` (not `usage`). Agent
+            # events (message/thinking/tool_use) and session.status_idle do
+            # NOT carry usage — older code that read getattr(event, "usage")
+            # silently captured nothing for the whole session, leaving the
+            # live banner reporting $0 for Plan B runs that died before any
+            # Messages-API vision call landed.
+            if ev_type == "span.model_request_end":
+                model_usage = getattr(event, "model_usage", None)
+                if model_usage is not None:
+                    cost_tracker.add_usage(model_usage)
 
             if ev_type == "agent.message":
                 text = "".join(

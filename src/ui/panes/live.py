@@ -15,7 +15,7 @@ from typing import Any
 
 from src.ui.panes._io import read_chat
 from src.ui.panes.chrome import phase_code, phase_short
-from src.ui.styles import empty, html_escape
+from src.ui.styles import empty, html_escape, render_markdown
 from src.ui.synthesis import ScoredRollout, copy_button, load_scored_rollouts, population_chip
 
 # Plain-language explainer per phase: (short title, subtitle, list of artifacts).
@@ -96,15 +96,52 @@ def _phase_divider(marker: str) -> str:
     )
 
 
+def _worker_chip(worker: str | None) -> str:
+    """Tiny chip identifying which Plan B session produced an event.
+
+    Plan A emits events without a `worker` field (single session per run);
+    returning an empty string then keeps the trace visually identical to
+    the pre-Plan-B look. Under Plan B, the orchestrator tags every event
+    with `planner` / `rollout` / `judge-NN` / `reporter`; the chip color
+    follows the phase that worker belongs to.
+    """
+    if not worker:
+        return ""
+    if worker.startswith("judge"):
+        code = "judge"
+    elif worker == "rollout":
+        code = "rollout"
+    elif worker == "planner":
+        code = "planner"
+    elif worker == "reporter":
+        code = "report"
+    else:
+        code = ""
+    code_cls = f" {code}" if code else ""
+    return f'<span class="pg-worker-chip{code_cls}">{html_escape(worker)}</span>'
+
+
 def _event_html(kind: str, entry: dict[str, Any], phase_marker: str) -> str:
     code = phase_code(phase_marker) or ""
     code_cls = f" {code}" if code else ""
+    worker = entry.get("worker")
+    chip = _worker_chip(worker if isinstance(worker, str) else None)
+    if kind == "session_created":
+        role = str(entry.get("role", worker or "?"))
+        session_id = str(entry.get("session_id", ""))[:12]
+        return (
+            f'<div class="pg-trace-event session-created{code_cls}">'
+            f"{chip}◆ session created "
+            f'<span class="pg-kbd">{html_escape(role)}</span>'
+            f" <code>{html_escape(session_id)}…</code>"
+            "</div>"
+        )
     if kind == "agent_message":
         text = str(entry.get("text", ""))
-        return f'<div class="pg-trace-event say{code_cls}">{html_escape(text)}</div>'
+        return f'<div class="pg-trace-event say{code_cls}">{chip}{render_markdown(text)}</div>'
     if kind == "agent_thinking":
         text = str(entry.get("text", ""))[:600]
-        return f'<div class="pg-trace-event thinking{code_cls}">{html_escape(text)}</div>'
+        return f'<div class="pg-trace-event thinking{code_cls}">{chip}{render_markdown(text)}</div>'
     if kind == "tool_use":
         tool = entry.get("tool", "?")
         args = entry.get("args", {})
@@ -113,7 +150,7 @@ def _event_html(kind: str, entry: dict[str, Any], phase_marker: str) -> str:
         rid_html = f" → <code>{html_escape(str(rid))}</code>" if rid else ""
         return (
             f'<div class="pg-trace-event tool{code_cls}">'
-            f"▸ <b>{html_escape(str(tool))}</b>({html_escape(args_str)}){rid_html}"
+            f"{chip}▸ <b>{html_escape(str(tool))}</b>({html_escape(args_str)}){rid_html}"
             "</div>"
         )
     if kind == "tool_result":
@@ -121,7 +158,7 @@ def _event_html(kind: str, entry: dict[str, Any], phase_marker: str) -> str:
         payload = str(entry.get("payload", ""))[:300]
         return (
             f'<div class="pg-trace-event result{code_cls}">'
-            f"◂ {html_escape(str(tool))} → {html_escape(payload)}"
+            f"{chip}◂ {html_escape(str(tool))} → {html_escape(payload)}"
             "</div>"
         )
     if kind == "tool_error":
@@ -129,7 +166,7 @@ def _event_html(kind: str, entry: dict[str, Any], phase_marker: str) -> str:
         err = str(entry.get("error", ""))
         return (
             f'<div class="pg-trace-event error{code_cls}">'
-            f"✗ {html_escape(str(tool))}: {html_escape(err)}"
+            f"{chip}✗ {html_escape(str(tool))}: {html_escape(err)}"
             "</div>"
         )
     return ""
@@ -138,22 +175,31 @@ def _event_html(kind: str, entry: dict[str, Any], phase_marker: str) -> str:
 # ---- Current rollout ------------------------------------------------------------
 
 
+def _rid_from_entry(entry: dict[str, Any]) -> str | None:
+    """Extract rollout_id from a tool_use or tool_result chat entry, if any."""
+    if entry.get("kind") not in {"tool_use", "tool_result"}:
+        return None
+    args = entry.get("args", {})
+    rid = args.get("rollout_id") if isinstance(args, dict) else None
+    if rid:
+        return str(rid)
+    payload = entry.get("payload")
+    if isinstance(payload, str) and "rollout_id" in payload:
+        try:
+            value = json.loads(payload).get("rollout_id")
+            if value:
+                return str(value)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 def current_video_path(mirror_root: Path) -> str | None:
     """Most-recent rollout_id from chat.jsonl → its mp4 on disk, if present."""
     entries = read_chat(mirror_root)
     rollouts_dir = mirror_root / "rollouts"
     for e in reversed(entries):
-        if e.get("kind") not in {"tool_use", "tool_result"}:
-            continue
-        args = e.get("args", {})
-        rid = args.get("rollout_id") if isinstance(args, dict) else None
-        if not rid:
-            payload = e.get("payload")
-            if isinstance(payload, str) and "rollout_id" in payload:
-                try:
-                    rid = json.loads(payload).get("rollout_id")
-                except json.JSONDecodeError:
-                    rid = None
+        rid = _rid_from_entry(e)
         if rid:
             mp4 = rollouts_dir / f"{rid}.mp4"
             if mp4.exists():
@@ -161,8 +207,36 @@ def current_video_path(mirror_root: Path) -> str | None:
     return None
 
 
+def _per_worker_current_mp4(mirror_root: Path) -> list[tuple[str, str]]:
+    """(worker_label, mp4_name) for each worker, newest tool_use with an rid wins.
+
+    Under Plan B's judge phase, multiple judge-NN workers stream concurrently;
+    each one's most recent rollout_id is what that worker is "looking at" now.
+    Order: deterministic by worker label so the strip doesn't reshuffle on
+    each refresh.
+    """
+    entries = read_chat(mirror_root)
+    rollouts_dir = mirror_root / "rollouts"
+    newest: dict[str, str] = {}
+    for e in entries:
+        worker = e.get("worker")
+        if not isinstance(worker, str):
+            continue
+        rid = _rid_from_entry(e)
+        if not rid:
+            continue
+        if (rollouts_dir / f"{rid}.mp4").exists():
+            newest[worker] = rid  # last-writer wins because we iterate oldest→newest
+    return [(w, f"{rid}.mp4") for w, rid in sorted(newest.items())]
+
+
 def current_video_path_html(mirror_root: Path) -> str:
-    """The mono path chip + copy button shown under the player."""
+    """The mono path chip shown under the player.
+
+    Under Plan A (single session), shows the most-recent mp4. Under Plan B's
+    judge phase, appends a per-worker strip showing which mp4 each judge
+    session is currently watching — that's where concurrency is visible.
+    """
     path = current_video_path(mirror_root)
     if path is None:
         return (
@@ -170,7 +244,7 @@ def current_video_path_html(mirror_root: Path) -> str:
             'font-style:italic;margin-top:4px;">(no rollout selected yet)</div>'
         )
     name = Path(path).name
-    return (
+    head = (
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
         '<span style="font-size:var(--pg-fs-micro);color:var(--pg-ink-3);'
         'text-transform:uppercase;letter-spacing:0.08em;font-weight:500;">Current mp4</span>'
@@ -178,6 +252,31 @@ def current_video_path_html(mirror_root: Path) -> str:
         f"{copy_button(path, kind='mp4', inline=True)}"
         "</div>"
     )
+
+    # Per-worker strip — only meaningful when ≥ 2 distinct workers touched
+    # a rollout, which is effectively "we're in the judge phase of Plan B".
+    per_worker = _per_worker_current_mp4(mirror_root)
+    judge_workers = [(w, mp4) for w, mp4 in per_worker if w.startswith("judge")]
+    if len(judge_workers) < 2:
+        return head
+
+    tiles: list[str] = []
+    for worker, mp4_name in judge_workers:
+        tiles.append(
+            '<div class="pg-live-worker-tile">'
+            f'<span class="pg-worker-chip judge">{html_escape(worker)}</span>'
+            f'<span class="pg-kbd">{html_escape(mp4_name)}</span>'
+            "</div>"
+        )
+    strip = (
+        '<div class="pg-live-workers">'
+        '<div class="pg-live-workers-label">'
+        f"Now judging ({len(judge_workers)} workers in parallel)"
+        "</div>"
+        '<div class="pg-live-workers-grid">' + "".join(tiles) + "</div>"
+        "</div>"
+    )
+    return head + strip
 
 
 # ---- Live gallery ---------------------------------------------------------------

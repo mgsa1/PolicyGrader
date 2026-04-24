@@ -12,6 +12,8 @@ from typing import Any
 
 from src.ui.metrics_view import (
     DrillFilter,
+    binary_confusion,
+    render_binary_matrix,
     render_drill_down,
     render_heatmap_figure,
     render_judge_calibration_header,
@@ -43,6 +45,11 @@ def metrics_blocks(mirror_root: Path) -> tuple[str, str, str]:
             "",
         )
     return render_static_blocks(rollouts)
+
+
+def binary_matrix_html(mirror_root: Path) -> str:
+    """At-a-glance 2×2 confusion of the judge's binary verdict vs sim ground truth."""
+    return render_binary_matrix(binary_confusion(load_scored_rollouts(mirror_root)))
 
 
 def heatmap_figure(mirror_root: Path) -> Any:

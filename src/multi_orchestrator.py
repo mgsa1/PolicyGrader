@@ -1,21 +1,24 @@
-"""Plan B orchestrator: FOUR specialized Managed Agents, driven in parallel.
+"""Plan B orchestrator: FOUR specialized Managed Agents.
 
 CLAUDE.md §3:
   Planner (1 session)
-    → Rollout workers (K parallel sessions)
+    → Rollout worker (1 session, main-thread, sequential sim)
     → Judge workers (K parallel sessions)
     → Reporter (1 session)
 
 The shape mirrors Plan A's phases but each phase is its own agent + session
-with a narrow tool surface, and the middle two phases fan out across K
-worker sessions driven concurrently by a ThreadPoolExecutor.
+with a narrow tool surface. Only the judge phase fans out across K worker
+sessions via a ThreadPoolExecutor — that's where parallelism pays off,
+since judging is API-bound. Rollouts are sim-bound and were previously
+serialized by _ROLLOUT_LOCK anyway, so they run sequentially in one
+session driven from the host's main thread. The main-thread requirement
+is load-bearing on macOS: GLFW's Cocoa init hangs when called from a
+worker thread, so the rollout tool call MUST dispatch on the main thread.
 
 Shared state:
   - CostTracker, RuntimeState — locked internally (see src/costing.py,
     src/runtime_state.py).
   - dispatch_log.jsonl appends — locked in src/agents/tools.py.
-  - MuJoCo rollouts — serialized process-wide via _ROLLOUT_LOCK in tools.py
-    because GLFW's OpenGL context is global.
 
 Artifact hand-off: each session's /memories/ is isolated; agents submit
 final artifacts to the host via submit_* custom tools that write to
@@ -44,6 +47,12 @@ from src.agents.multi_agent_prompts import (
     REPORTER_SYSTEM_PROMPT,
     ROLLOUT_WORKER_SYSTEM_PROMPT,
 )
+from src.agents.system_prompts import (
+    PHASE_MARKER_JUDGE,
+    PHASE_MARKER_PLANNER,
+    PHASE_MARKER_REPORT,
+    PHASE_MARKER_ROLLOUT,
+)
 from src.agents.tools import dispatch as dispatch_custom_tool
 from src.agents.tools import tool_params_for_role
 from src.constants import MANAGED_AGENTS_BETA_HEADER, OPUS_MODEL_ID
@@ -60,12 +69,15 @@ from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
 
-# Phase names for runtime.json / chat.jsonl. The UI's progress strip keys
-# off these strings; keep them stable.
-PHASE_PLANNER = "PLAN B PLANNER"
-PHASE_ROLLOUT = "PLAN B ROLLOUTS"
-PHASE_JUDGE = "PLAN B JUDGE"
-PHASE_REPORT = "PLAN B REPORT"
+# Phase strings for runtime.json / chat.jsonl. We reuse the Plan A marker
+# strings ("BEGIN PHASE N: ...") so the UI's _MARKER_TO_CODE mapping
+# (src/ui/panes/chrome.py) lights up both plans' phase chips identically —
+# and so the live trace pane can segment Plan B events by phase the same
+# way it does Plan A events.
+PHASE_PLANNER = PHASE_MARKER_PLANNER
+PHASE_ROLLOUT = PHASE_MARKER_ROLLOUT
+PHASE_JUDGE = PHASE_MARKER_JUDGE
+PHASE_REPORT = PHASE_MARKER_REPORT
 
 
 @dataclass(frozen=True)
@@ -230,9 +242,16 @@ def _drive_session_to_end_turn(
         for event in _stream_events(client, session_id):
             ev_type = getattr(event, "type", None)
 
-            usage = getattr(event, "usage", None)
-            if usage is not None:
-                cost_tracker.add_usage(usage)
+            # Managed Agents emits per-model-call usage on
+            # span.model_request_end events under `model_usage`. None of the
+            # agent.* or session.status_idle events carry tokens. The prior
+            # code read `event.usage` which doesn't exist, so every Plan B
+            # session's planner/rollout/judge/reporter spend was invisible
+            # to the cost tracker.
+            if ev_type == "span.model_request_end":
+                model_usage = getattr(event, "model_usage", None)
+                if model_usage is not None:
+                    cost_tracker.add_usage(model_usage)
 
             if ev_type == "agent.message":
                 text = "".join(
@@ -381,57 +400,49 @@ def _run_planner(
     )
 
 
-def _run_rollout_workers(
+def _run_rollout_worker(
     client: Anthropic,
     *,
     environment_id: str,
-    chunks: list[list[dict[str, str]]],
+    rows: list[dict[str, str]],
     mirror_root: Path,
     messages_client: Anthropic,
     cost_tracker: CostTracker,
     runtime: RuntimeState,
-) -> list[str]:
-    """Fan out K rollout workers, one per chunk. Returns each worker's stop_reason.
+) -> str:
+    """Run ONE rollout worker session, synchronously, on the caller's thread.
 
-    Each worker gets its assigned matrix rows in the first user message as a
-    JSON array. The ThreadPoolExecutor runs them concurrently; MuJoCo is
-    serialized internally by the sim dispatch lock.
+    The caller's thread MUST be the process main thread on macOS: the sim
+    adapter's first env.reset() triggers GLFW's Cocoa init, which wedges in
+    an infinite [NSApplication reportException:] loop when called from a
+    worker thread. Rollouts do not benefit from fan-out anyway — MuJoCo was
+    already serialized by _ROLLOUT_LOCK — so keeping this phase single-
+    session and single-threaded is the right shape regardless of platform.
+    Only the judge phase (API-bound) parallelizes.
     """
-    results: list[str] = [""] * len(chunks)
-
-    def _worker(i: int, chunk: list[dict[str, str]]) -> str:
-        handle = _create_session(
-            client, "rollout_worker", environment_id=environment_id, worker_index=i
-        )
-        runtime.append_chat(
-            "session_created",
-            worker=f"rollout-{i:02d}",
-            role="rollout_worker",
-            session_id=handle.session_id,
-        )
-        payload = (
-            f"You are rollout worker {i + 1} of {len(chunks)}. "
-            f"Your assigned matrix rows ({len(chunk)} rollouts) are below as JSON. "
-            "Run each one via the `rollout` tool, then submit_results exactly once.\n\n"
-            f"{json.dumps(chunk, indent=2)}"
-        )
-        _send_user_message(client, handle.session_id, payload)
-        return _drive_session_to_end_turn(
-            client,
-            handle.session_id,
-            label=f"rollout-{i:02d}",
-            mirror_root=mirror_root,
-            messages_client=messages_client,
-            cost_tracker=cost_tracker,
-            runtime=runtime,
-        )
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks)) as pool:
-        futures = {pool.submit(_worker, i, chunk): i for i, chunk in enumerate(chunks)}
-        for fut in concurrent.futures.as_completed(futures):
-            i = futures[fut]
-            results[i] = fut.result()
-    return results
+    handle = _create_session(client, "rollout_worker", environment_id=environment_id)
+    runtime.append_chat(
+        "session_created",
+        worker="rollout",
+        role="rollout_worker",
+        session_id=handle.session_id,
+    )
+    payload = (
+        f"Your assigned matrix rows ({len(rows)} rollouts) are below as JSON. "
+        "Run each one sequentially via the `rollout` tool, then submit_results "
+        "exactly once.\n\n"
+        f"{json.dumps(rows, indent=2)}"
+    )
+    _send_user_message(client, handle.session_id, payload)
+    return _drive_session_to_end_turn(
+        client,
+        handle.session_id,
+        label="rollout",
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
 
 
 def _run_judge_workers(
@@ -520,7 +531,7 @@ def _build_reporter_message(
     base_time = baseline_seconds_for(n_rollouts)
 
     buf = io.StringIO()
-    buf.write("The planner, rollout workers, and judge workers have finished. ")
+    buf.write("The planner, rollout worker, and judge workers have finished. ")
     buf.write("Write the final report.md and submit it via submit_report.\n\n")
     buf.write("=== plan.md ===\n")
     buf.write(plan_md.rstrip() + "\n\n")
@@ -635,6 +646,7 @@ def run_multi_agent(
 
     # 1) Planner — single session.
     runtime.set_phase(PHASE_PLANNER)
+    runtime.append_chat("phase_marker", marker=PHASE_PLANNER)
     stop = _run_planner(
         client,
         environment_id=environment_id,
@@ -655,23 +667,25 @@ def run_multi_agent(
             k_workers=k_workers,
         )
 
-    # 2) Rollout workers — parallel.
+    # 2) Rollout worker — ONE session, sequential, main-thread (see the
+    #    module docstring for the GLFW / Cocoa main-thread requirement).
     matrix_rows = _load_matrix_rows(mirror_root)
     runtime.planned_total = len(matrix_rows)
     runtime.write_snapshot()
-    chunks = _split_rows_round_robin(matrix_rows, k_workers)
     runtime.set_phase(PHASE_ROLLOUT)
-    stops["rollout"] = _run_rollout_workers(
+    runtime.append_chat("phase_marker", marker=PHASE_ROLLOUT)
+    rollout_stop = _run_rollout_worker(
         client,
         environment_id=environment_id,
-        chunks=chunks,
+        rows=matrix_rows,
         mirror_root=mirror_root,
         messages_client=messages_client,
         cost_tracker=cost_tracker,
         runtime=runtime,
     )
-    if not all(s == "end_turn" for s in stops["rollout"]):
-        logger.warning("some rollout workers ended non-end_turn: %s", stops["rollout"])
+    stops["rollout"].append(rollout_stop)
+    if rollout_stop != "end_turn":
+        logger.warning("rollout worker ended non-end_turn: %s", rollout_stop)
 
     # 3) Judge workers — parallel.
     results = _load_results(mirror_root)
@@ -686,6 +700,7 @@ def run_multi_agent(
         )
     judge_chunks = _split_rows_round_robin(cast(Any, results), k_workers)
     runtime.set_phase(PHASE_JUDGE)
+    runtime.append_chat("phase_marker", marker=PHASE_JUDGE)
     stops["judge"] = _run_judge_workers(
         client,
         environment_id=environment_id,
@@ -700,6 +715,7 @@ def run_multi_agent(
 
     # 4) Reporter — single session.
     runtime.set_phase(PHASE_REPORT)
+    runtime.append_chat("phase_marker", marker=PHASE_REPORT)
     stop = _run_reporter(
         client,
         environment_id=environment_id,

@@ -220,6 +220,11 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 initial_blocks = calibration.metrics_blocks(initial_path)
                 cal_cohort_html = gr.HTML(value=initial_blocks[0])
                 cal_caption_html = gr.HTML(value=initial_blocks[1])
+                # At-a-glance 2×2 summary (sim-authoritative binary vs judge
+                # verdict) sits above the label breakdown — a single-frame
+                # "is the judge broadly right?" answer before the reader
+                # drills into per-label precision.
+                cal_binary_matrix_html = gr.HTML(value=calibration.binary_matrix_html(initial_path))
                 # Per-label breakdown sits ABOVE the confusion matrix so that
                 # the matrix sits directly above the drill filters + table —
                 # clicking a cell narrows the table immediately below it.
@@ -315,6 +320,11 @@ def build_app(runs_root: Path) -> gr.Blocks:
             fn=lambda r: calibration.matrix_html(_as_path(r)),
             inputs=[selected_run],
             outputs=cm_html,
+        )
+        heavy.tick(
+            fn=lambda r: calibration.binary_matrix_html(_as_path(r)),
+            inputs=[selected_run],
+            outputs=cal_binary_matrix_html,
         )
 
         # JS bridge: cell-button onclick writes "<seq>|exp::jud" into cm_click.
@@ -427,6 +437,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 findings.rollout_table_html(p),
                 calibration.drill_html(p, EMPTY_FILTER),
                 calibration.matrix_html(p),
+                calibration.binary_matrix_html(p),
             )
 
         run_picker.change(
@@ -454,6 +465,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 findings_table_html,
                 drill_html,
                 cm_html,
+                cal_binary_matrix_html,
             ],
         )
 

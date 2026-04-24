@@ -11,7 +11,10 @@ encodes colors or spacings — those live in `tokens.css`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from markdown_it import MarkdownIt
 
 # ---- Paths ----------------------------------------------------------------------
 
@@ -53,6 +56,28 @@ PHASE_CODES: tuple[str, ...] = ("planner", "rollout", "judge", "report")
 def html_escape(text: str) -> str:
     """Minimal HTML-entity escape for user / agent-provided text."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# CommonMark renderer for agent prose in the Live trace. `html=False` means
+# raw HTML inside agent output is escaped (same safety posture as
+# html_escape above); `linkify` turns bare URLs into links; `breaks` keeps
+# soft newlines visible, matching the pre-wrap feel the feed had before.
+_MD = MarkdownIt("commonmark", {"html": False, "linkify": True, "breaks": True})
+
+_UNCLOSED_FENCE_RE = re.compile(r"^```", re.MULTILINE)
+
+
+def render_markdown(text: str) -> str:
+    """Render agent-produced CommonMark to HTML for the Live trace.
+
+    Truncated `agent_thinking` blocks can slice inside a fenced code block —
+    an odd number of ``` lines would then render the rest of the event (and
+    arguably the feed) as one big `<pre>`. We close the dangling fence here
+    so the renderer stays well-formed regardless of upstream slicing.
+    """
+    if len(_UNCLOSED_FENCE_RE.findall(text)) % 2:
+        text = text + "\n```"
+    return str(_MD.render(text))
 
 
 # ---- Tiny HTML primitives ------------------------------------------------------

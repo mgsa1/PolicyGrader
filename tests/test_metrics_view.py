@@ -6,8 +6,10 @@ from src.sim.scripted import FailureMode
 from src.ui.metrics_view import (
     EMPTY_FILTER,
     DrillFilter,
+    binary_confusion,
     cohort_counts,
     filter_rollouts,
+    render_binary_matrix,
     to_labeled_rollouts,
     wilson_ci_95,
 )
@@ -170,3 +172,70 @@ class TestFilterRollouts:
         out = sorted(r.rollout_id for r in filter_rollouts(rollouts, f))
         # Both a (matches) and b (judged as approach_miss) should appear.
         assert out == ["a", "b"]
+
+
+class TestBinaryConfusion:
+    def test_empty(self) -> None:
+        c = binary_confusion([])
+        assert (c.tn, c.fp, c.fn, c.tp, c.total) == (0, 0, 0, 0, 0)
+
+    def test_tp_and_tn(self) -> None:
+        # Sim-success with no judge label → TN. Sim-failure with any failure
+        # label → TP. Both populations (calibration + deployment) count.
+        rollouts = [
+            _scored("a", success=True, judge_label=None, ground_truth_label="none"),
+            _scored("b", success=True, judge_label=None, policy_kind="pretrained"),
+            _scored(
+                "c",
+                success=False,
+                judge_label="slip_during_lift",
+                ground_truth_label="slip_during_lift",
+            ),
+            _scored("d", success=False, judge_label="approach_miss", policy_kind="pretrained"),
+        ]
+        c = binary_confusion(rollouts)
+        assert (c.tn, c.fp, c.fn, c.tp) == (2, 0, 0, 2)
+
+    def test_fn_and_fp(self) -> None:
+        # FN: sim-failure but judge says "none". FP: sim-success but judge
+        # returned a failure label (shouldn't normally happen under the new
+        # single-pass design, but must still be counted if the data says so).
+        rollouts = [
+            _scored("a", success=False, judge_label="none", ground_truth_label="approach_miss"),
+            _scored("b", success=True, judge_label="approach_miss", ground_truth_label="none"),
+        ]
+        c = binary_confusion(rollouts)
+        assert (c.tn, c.fp, c.fn, c.tp) == (0, 1, 1, 0)
+
+    def test_pending_judge_excluded(self) -> None:
+        # Sim-failure with judge not yet labeled is pending → excluded so a
+        # half-finished run doesn't inflate FN.
+        rollouts = [
+            _scored("a", success=False, judge_label=None, ground_truth_label="approach_miss"),
+        ]
+        c = binary_confusion(rollouts)
+        assert c.total == 0
+
+
+class TestRenderBinaryMatrix:
+    def test_empty_shows_placeholder(self) -> None:
+        html = render_binary_matrix(binary_confusion([]))
+        assert "pg-bcm__empty" in html
+        assert "Populates" in html
+
+    def test_populated_renders_four_cells(self) -> None:
+        rollouts = [
+            _scored("a", success=True, judge_label=None, ground_truth_label="none"),
+            _scored(
+                "b",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
+            ),
+        ]
+        html = render_binary_matrix(binary_confusion(rollouts))
+        for tag in ("TN", "FP", "FN", "TP"):
+            assert tag in html
+        assert "pg-bcm__cell--ok" in html
+        assert "pg-bcm__cell--err" in html
+        assert "env._check_success()" in html

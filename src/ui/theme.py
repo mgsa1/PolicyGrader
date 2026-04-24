@@ -238,8 +238,7 @@ html.dark, body.dark, .gradio-container.dark, .gradio-container .dark {{
   min-width: 0 !important;
   width: auto !important;
 }}
-.pg-run-picker .wrap,
-.pg-run-picker .wrap-inner {{
+.pg-run-picker .wrap {{
   background: {SURFACE} !important;
   border: 1px solid {LINE_2} !important;
   border-radius: 999px !important;
@@ -247,6 +246,14 @@ html.dark, body.dark, .gradio-container.dark, .gradio-container .dark {{
   min-height: unset !important;
   height: 28px !important;
   position: relative;
+}}
+.pg-run-picker .wrap-inner {{
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: unset !important;
+  height: 100% !important;
 }}
 .pg-run-picker .wrap::before {{
   content: "●";
