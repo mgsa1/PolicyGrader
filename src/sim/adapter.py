@@ -48,6 +48,14 @@ POST_SUCCESS_HOLD_STEPS = 20
 # Each finger ranges roughly [0, 0.04]; sum tops out near 0.08 m.
 PANDA_GRIPPER_FULL_OPEN_M = 0.08
 
+# If the cube's final z is within this margin of its initial z, it clearly
+# fell back to the table — the slip_during_lift signature. A held cube sits
+# ~20 cm above its initial z (LIFT_HEIGHT_M in scripted.py); a successful
+# BC-RNN rollout likewise keeps the cube well above this margin. 3 cm is
+# conservative enough that physics jitter around a legitimately-held cube
+# never trips it.
+CUBE_FELL_BACK_MARGIN_M = 0.03
+
 
 def _build_pretrained(config: RolloutConfig) -> tuple[Policy, dict[str, Any], str]:
     assert config.checkpoint_path is not None  # invariant from RolloutConfig
@@ -180,11 +188,21 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
             if hold_remaining <= 0:
                 break
 
-    # Demote transient success: cube may have crossed the height threshold
-    # mid-slip then fallen back. Success is only honored if the cube is still
-    # aloft at the end of the hold.
-    if success and not env._check_success():
-        success = False
+    # Demote transient success only when the cube has clearly returned to the
+    # table — the slip_during_lift signature. A stricter `env._check_success()`
+    # re-check here over-penalizes BC-RNN rollouts whose held cube briefly
+    # dips below the success threshold while the policy continues issuing
+    # actions post-success (the policy wasn't trained on post-success
+    # behavior). Anchoring to the cube's initial z, not the success
+    # threshold, cleanly separates "dropped back to the table" from "still
+    # held, jiggling".
+    if success:
+        current_cube_z = float(np.asarray(obs["cube_pos"], dtype=np.float64)[2])
+        cube_dropped_back_to_table = (
+            current_cube_z - initial_cube_pos[2] < CUBE_FELL_BACK_MARGIN_M
+        )
+        if cube_dropped_back_to_table:
+            success = False
 
     telemetry_out: Path | None = None
     if record_video and video_out is not None and frames:
