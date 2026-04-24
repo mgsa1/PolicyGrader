@@ -1,18 +1,24 @@
-"""H2 smoke test: run one pretrained BC-RNN rollout on NutAssemblySquare.
+"""Smoke: run one Lift BC-RNN rollout, optionally as a perturbation sweep.
 
-Acceptance: completes one episode (success or fail), writes an mp4 of the
-frontview camera frames, and prints the success flag.
+Two modes:
 
-We bypass robomimic.utils.env_utils.create_env_from_metadata because robomimic
+  (default)  Single rollout at cube_xy_jitter_m=0.0 — sanity check that the
+             policy loads and succeeds on its training distribution.
+
+  --sweep    Sweep cube_xy_jitter_m over SWEEP_VALUES with SWEEP_SEEDS_PER_VALUE
+             seeds each, reporting the failure rate per value. Used once during
+             scope-cut to pick the deployment perturbation (see
+             docs/eval_methodology.md).
+
+Bypasses robomimic.utils.env_utils.create_env_from_metadata because robomimic
 0.3.0's env_robosuite adapter still imports the legacy `mujoco_py` package,
 which is dead on macOS arm64 / Python 3.12. The checkpoint's env_kwargs give
-us everything needed to build the env via robosuite directly — and the obs
-keys NutAssemblySquare emits already match the policy's expected shape spec
-(object, robot0_eef_pos, robot0_eef_quat, robot0_gripper_qpos).
+us everything needed to build the env via the adapter instead.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -23,73 +29,78 @@ from src.constants import MUJOCO_GL_ENV_KEY  # noqa: E402
 
 os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
 
-import imageio  # noqa: E402
-import numpy as np  # noqa: E402
-import robosuite as suite  # noqa: E402
-
-from src.sim.cameras import NUT_RENDER_CAMERA, apply_nut_eval_camera  # noqa: E402
-from src.sim.pretrained import RobomimicPolicy  # noqa: E402
+from src.schemas import RolloutConfig  # noqa: E402
+from src.sim.adapter import run_rollout  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CHECKPOINT = REPO_ROOT / "artifacts" / "checkpoints" / "square_ph_low_dim.pth"
+CHECKPOINT = REPO_ROOT / "artifacts" / "checkpoints" / "lift_ph_low_dim.pth"
 OUT_DIR = REPO_ROOT / "artifacts" / "smoke"
 OUT_MP4 = OUT_DIR / "pretrained_rollout.mp4"
 
-# Render from the midpoint(frontview, agentview)+30 cm pose (see src.sim.cameras).
-# We need both cameras allocated so that override can read frontview's pose.
-CAMERA = NUT_RENDER_CAMERA
-ALLOCATED_CAMERAS = ["frontview", "agentview"]
-RENDER_W, RENDER_H = 512, 512
-MAX_STEPS = 400  # NutAssemblySquare horizon in robomimic configs is 400
-RENDER_FPS = 20  # matches control_freq from the checkpoint's env_kwargs
+MAX_STEPS = 200  # Lift horizon in robomimic configs is 200
+
+# Sweep parameters — see docs/eval_methodology.md for how the chosen value was
+# picked. Keep this list short — each config runs SWEEP_SEEDS_PER_VALUE episodes.
+SWEEP_VALUES: list[float] = [0.02, 0.05, 0.08, 0.12]
+SWEEP_SEEDS_PER_VALUE = 8
+
+
+def _one_rollout(jitter_m: float, seed: int, record_video: bool) -> bool:
+    """Run one BC-RNN Lift rollout; return True if the policy succeeded."""
+    cfg = RolloutConfig(
+        rollout_id=f"lift-bcrnn-j{jitter_m:.2f}-s{seed}",
+        policy_kind="pretrained",
+        env_name="Lift",
+        seed=seed,
+        max_steps=MAX_STEPS,
+        checkpoint_path=CHECKPOINT,
+        cube_xy_jitter_m=jitter_m,
+    )
+    out = OUT_MP4 if record_video else None
+    result = run_rollout(cfg, video_out=out)
+    return result.success
+
+
+def _single() -> int:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    success = _one_rollout(jitter_m=0.0, seed=0, record_video=True)
+    print(
+        f"OK  success={success}  path={OUT_MP4.relative_to(REPO_ROOT)}",
+        flush=True,
+    )
+    return 0 if success else 2
+
+
+def _sweep() -> int:
+    print(
+        f"Sweep: {len(SWEEP_VALUES)} values × {SWEEP_SEEDS_PER_VALUE} seeds "
+        f"= {len(SWEEP_VALUES) * SWEEP_SEEDS_PER_VALUE} rollouts",
+        flush=True,
+    )
+    print(f"{'jitter_m':>10s}  {'n_ok':>4s}  {'n_fail':>6s}  {'fail_rate':>9s}", flush=True)
+    for jitter_m in SWEEP_VALUES:
+        successes = 0
+        for seed in range(SWEEP_SEEDS_PER_VALUE):
+            ok = _one_rollout(jitter_m=jitter_m, seed=seed, record_video=False)
+            successes += int(ok)
+        n_fail = SWEEP_SEEDS_PER_VALUE - successes
+        rate = n_fail / SWEEP_SEEDS_PER_VALUE
+        print(f"{jitter_m:>10.2f}  {successes:>4d}  {n_fail:>6d}  {rate:>9.0%}", flush=True)
+    return 0
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Sweep cube_xy_jitter_m instead of running one sanity rollout.",
+    )
+    args = parser.parse_args()
     if not CHECKPOINT.exists():
         print(f"ERR  checkpoint missing at {CHECKPOINT} — run scripts/fetch_checkpoints.py")
         return 1
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    policy = RobomimicPolicy(CHECKPOINT)
-
-    env_kwargs = policy.env_kwargs_for_robosuite()
-    # Override training-time renderer settings: we need offscreen frames at
-    # demo resolution, not the 84x84 the policy was trained on.
-    env_kwargs["has_offscreen_renderer"] = True
-    env_kwargs["camera_names"] = ALLOCATED_CAMERAS
-    env_kwargs["camera_heights"] = RENDER_H
-    env_kwargs["camera_widths"] = RENDER_W
-
-    env = suite.make(env_name=policy.env_name, **env_kwargs)
-    obs = env.reset()
-    policy.reset()
-    apply_nut_eval_camera(env)
-
-    frames: list[np.ndarray] = []
-    success = False
-    steps = 0
-    for step in range(1, MAX_STEPS + 1):
-        steps = step
-        action = policy.act(obs)
-        obs, _reward, _done, _info = env.step(action)
-
-        # Direct sim.render avoids needing a public render() (robosuite envs
-        # only expose render() for the on-screen viewer). Frame is RGB but
-        # vertically flipped (OpenGL bottom-left origin).
-        frame = env.sim.render(camera_name=CAMERA, width=RENDER_W, height=RENDER_H)
-        frames.append(frame[::-1])
-
-        if env._check_success():
-            success = True
-            break
-
-    imageio.mimsave(OUT_MP4, frames, fps=RENDER_FPS)
-
-    print(
-        f"OK  steps={steps}  success={success}  frames={len(frames)}  "
-        f"path={OUT_MP4.relative_to(REPO_ROOT)}"
-    )
-    return 0
+    return _sweep() if args.sweep else _single()
 
 
 if __name__ == "__main__":

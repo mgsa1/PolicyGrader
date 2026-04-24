@@ -9,6 +9,15 @@ The judge MUST pick exactly one label from this list when annotating a failed
 rollout. "other" exists only as an escape hatch for genuinely unrecognized
 modes — using it for fuzzy cases will sink precision.
 
+**Not exercised by the current eval set:** `wrong_object_selected` and
+`insertion_misalignment` were relevant to the prior NutAssemblySquare
+deployment env (multi-object + insertion task). Post scope-cut to Lift-only
+they're unreachable from any scenario we run — Lift has one object and no
+placement. They remain in the closed set as escape-hatch labels the judge
+may still emit if it ever sees something it can't otherwise classify, and
+so the `FailureMode` enum stays stable across any future multi-task
+re-expansion.
+
 ## Labels
 
 | Label | When to use | Visual cue |

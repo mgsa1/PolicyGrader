@@ -59,21 +59,42 @@ class TestRolloutConfig:
         cfg = RolloutConfig(
             rollout_id="r5",
             policy_kind="pretrained",
-            env_name="NutAssemblySquare",
+            env_name="Lift",
             checkpoint_path=Path("/tmp/x.pth"),
         )
         assert cfg.ground_truth_label is None
+        assert cfg.cube_xy_jitter_m == 0.0
+
+    def test_pretrained_with_cube_jitter(self) -> None:
+        cfg = RolloutConfig(
+            rollout_id="r5a",
+            policy_kind="pretrained",
+            env_name="Lift",
+            checkpoint_path=Path("/tmp/x.pth"),
+            cube_xy_jitter_m=0.08,
+        )
+        assert cfg.cube_xy_jitter_m == 0.08
+
+    def test_negative_cube_jitter_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            RolloutConfig(
+                rollout_id="r5b",
+                policy_kind="pretrained",
+                env_name="Lift",
+                checkpoint_path=Path("/tmp/x.pth"),
+                cube_xy_jitter_m=-0.01,
+            )
 
     def test_pretrained_missing_checkpoint_rejected(self) -> None:
         with pytest.raises(ValueError, match="checkpoint_path"):
-            RolloutConfig(rollout_id="r6", policy_kind="pretrained", env_name="NutAssemblySquare")
+            RolloutConfig(rollout_id="r6", policy_kind="pretrained", env_name="Lift")
 
     def test_pretrained_with_failures_rejected(self) -> None:
         with pytest.raises(ValueError, match="injected_failures"):
             RolloutConfig(
                 rollout_id="r7",
                 policy_kind="pretrained",
-                env_name="NutAssemblySquare",
+                env_name="Lift",
                 checkpoint_path=Path("/tmp/x.pth"),
                 injected_failures=InjectedFailures(),
             )

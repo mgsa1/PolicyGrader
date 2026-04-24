@@ -103,12 +103,12 @@ class TestClusterByCondition:
 
     def test_pretrained_groups_by_env_policy(self) -> None:
         rollouts = [
-            _scored("a", policy_kind="pretrained", env_name="NutAssemblySquare"),
-            _scored("b", policy_kind="pretrained", env_name="NutAssemblySquare"),
+            _scored("a", policy_kind="pretrained", env_name="Lift"),
+            _scored("b", policy_kind="pretrained", env_name="Lift"),
         ]
         clusters = cluster_by_condition(rollouts)
         assert len(clusters) == 1
-        assert clusters[0].name == "pretrained · NutAssemblySquare"
+        assert clusters[0].name == "pretrained · Lift"
         assert len(clusters[0].rollouts) == 2
 
     def test_one_rollout_can_appear_in_multiple_condition_clusters(self) -> None:

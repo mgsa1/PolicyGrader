@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 import re as _re  # noqa: E402
 
 _PLANNED_TOTAL_PATTERN = _re.compile(
-    r"(\d+)\s+(?:scripted|pretrained|mixed|clean|injected)?\s*"
-    r"(?:Lift|NutAssemblySquare|scenarios|rollouts|rows)",
+    r"(\d+)\s+(?:scripted|pretrained|mixed|clean|injected|calibration|deployment)?\s*"
+    r"(?:Lift|scenarios|rollouts|rows)",
     _re.IGNORECASE,
 )
 

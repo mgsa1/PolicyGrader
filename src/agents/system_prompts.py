@@ -80,9 +80,16 @@ language in those messages:
   - "expected_label"                  → "the failure type we expect"
   - "policy_kind=scripted"            → "the scripted policy"
                                         (a hand-coded controller we can
-                                         deliberately break in known ways)
+                                         deliberately break in known ways —
+                                         this is the calibration cohort)
   - "policy_kind=pretrained"          → "the pretrained BC-RNN policy"
-                                        (a learned controller from robomimic)
+                                        (a learned controller from robomimic —
+                                         this is the deployment cohort)
+  - "cube_xy_jitter_m"                → "cube placement perturbation" (a
+                                        deployment stress condition — widens
+                                        the cube's initial position range
+                                        beyond the policy's training
+                                        distribution)
 
 When you DO mention a failure-injection parameter by name, briefly say what
 it does: "I'll set `injected_angle_deg=20` (a 20° approach-angle offset
@@ -103,7 +110,8 @@ Tools available:
     scratchpad and your deliverable surface.
   - rollout(rollout_id, policy_kind, env_name, seed, max_steps,
             injected_action_noise, injected_premature_close,
-            injected_angle_deg, injected_grip_scale, checkpoint_path):
+            injected_angle_deg, injected_grip_scale,
+            cube_xy_jitter_m, checkpoint_path):
     run one rollout via the sim adapter and get back
     {{rollout_id, success, steps_taken, video_path, ground_truth_label}}.
     The mp4 is written to /memories/rollouts/<rollout_id>.mp4.
@@ -132,36 +140,64 @@ each failure mode").
 
 Deliverables, in /memories/:
   1. plan.md — short markdown: stated goal, success criteria, scenario budget,
-     mix rationale (clean vs injected failures, which failure-injection
-     parameters were chosen and why, which seeds).
+     cohort mix rationale (calibration vs deployment — see below), which
+     failure-injection parameters were chosen for the calibration subset and
+     why, which seeds, and the cube_xy_jitter_m value chosen for the
+     deployment subset.
   2. test_matrix.csv — one row per scenario with columns:
      rollout_id, policy_kind, env_name, seed, max_steps,
      injected_action_noise, injected_premature_close, injected_angle_deg,
-     injected_grip_scale, expected_label.
+     injected_grip_scale, cube_xy_jitter_m, expected_label.
      The injected_* columns are 0/False for clean rollouts and for any
-     pretrained-policy rollout. For expected_label:
-       - clean scripted Lift rollouts:  "none"
-       - injected scripted Lift rollouts: the label per the parameter
-         mapping below
-       - pretrained NutAssemblySquare rollouts: leave EMPTY. Ground truth for
-         these is binary (env._check_success); we don't know which taxonomy
-         label a natural failure would carry. The report writer treats empty
-         expected_label as label-unknown and excludes those rows from per-label
-         metrics, but still uses them for binary judge precision/recall.
+     deployment (pretrained-policy) rollout. The cube_xy_jitter_m column is
+     0.0 for calibration rollouts (scripted) and the chosen perturbation value
+     for deployment rollouts (pretrained). For expected_label:
+       - clean calibration rollouts:    "none"
+       - injected calibration rollouts: the label per the parameter mapping
+         below
+       - deployment rollouts: leave EMPTY. Ground truth for these is binary
+         (env._check_success); we don't know which taxonomy label a natural
+         failure would carry. The report writer treats empty expected_label as
+         label-unknown and excludes those rows from per-label metrics, but
+         still uses them for binary judge precision/recall.
   3. taxonomy.md — copy the failure taxonomy above into /memories/ verbatim
      so future phases can read it without depending on this prompt.
 
-Sizing for the demo run: aim for {DEMO_SCENARIO_COUNT} scenarios with at
-least {int(DEMO_INJECTED_FRACTION * 100)}% carrying an injected failure
-(distributed across the four failure-injection parameters). The remaining
-rows can be clean scripted runs (label "none") and pretrained-policy runs.
-Pretrained NutAssemblySquare rollouts are zero-config: just set
-policy_kind=pretrained and env_name=NutAssemblySquare. The host substitutes
-the checkpoint path automatically — do NOT invent or pass checkpoint_path.
+TWO COHORTS — the dual-population story. Every run mixes:
+
+  • CALIBRATION cohort — scripted IK picker with injected output knobs (see
+    parameters below). Each rollout has a KNOWN expected failure label. This
+    is the judge's measuring stick: we compare the judge's verdicts to the
+    known labels, producing precision/recall numbers that later decorate the
+    deployment findings with a "judge P = X" chip. Always on Lift with
+    cube_xy_jitter_m = 0.0 (the scripted picker is hand-tuned for the default
+    placement range).
+
+  • DEPLOYMENT cohort — the pretrained BC-RNN policy (a real learned policy,
+    ~100% success on its training distribution). We stress-test it by
+    WIDENING the cube's initial xy placement range via cube_xy_jitter_m —
+    this pushes the cube to positions the policy never saw at training time.
+    No output knobs on the policy itself: the forward pass is untouched. This
+    is real policy evaluation under environmental perturbation. Ground truth
+    is unknown (the natural failure taxonomy isn't labeled), so we apply the
+    calibrated judge and trust its verdicts in proportion to the calibration
+    P/R.
+
+Sizing for the demo run: aim for {DEMO_SCENARIO_COUNT} scenarios split
+roughly 50/50 between calibration and deployment. In the calibration half,
+at least {int(DEMO_INJECTED_FRACTION * 100)}% should carry an injected
+failure (distributed across the four failure-injection parameters); the
+remainder are clean (label "none"). Deployment rollouts are zero-config for
+the policy: just set policy_kind=pretrained and env_name=Lift plus a
+cube_xy_jitter_m perturbation value supplied by the user's goal (the user
+either names a value or you pick one from the recommended range below). The
+host substitutes the checkpoint path automatically — do NOT invent or pass
+checkpoint_path.
 
 Failure-injection parameters (from src/sim/scripted.py — keep in sync).
-These are settings on the scripted policy that deliberately trigger a
-specific kind of failure, so we have known ground-truth labels:
+These are settings on the SCRIPTED policy that deliberately trigger a
+specific kind of failure, so we have known ground-truth labels for the
+calibration cohort:
   - injected_action_noise >= 0.10  -> knock_object_off_table
         (jitters every action; cube gets knocked aside before the grasp)
   - injected_angle_deg > 0          -> approach_miss
@@ -173,6 +209,22 @@ specific kind of failure, so we have known ground-truth labels:
   - injected_grip_scale < 0.7       -> slip_during_lift
         (reduces clamp force; gripper grasps but cube slides out mid-lift)
   - otherwise                       -> none (no failure injected)
+
+Environmental perturbation (DEPLOYMENT ONLY — never applied to the scripted
+policy). This is a setting on the ENV, not the policy — the BC-RNN's
+forward pass is untouched. That distinction is load-bearing: the deployment
+cohort is a real policy under environmental stress, not a policy broken
+on purpose.
+  - cube_xy_jitter_m = 0.0          -> robosuite default (~±3 cm, training
+                                       distribution; BC-RNN ~100% success)
+  - cube_xy_jitter_m ≈ 0.05–0.10   -> meaningful stress — cube starts outside
+                                       the policy's training distribution and
+                                       the learned controller degrades in
+                                       predictable + measurable ways.
+If the user's goal doesn't name a specific value, pick one in [0.05, 0.10]
+m and explain the choice in plan.md. Use the SAME value across every
+deployment rollout in the run so the cohort's failure rate is attributable
+to one setting.
 
 Stop after writing all three files.
 

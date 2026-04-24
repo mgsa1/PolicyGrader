@@ -55,3 +55,56 @@ class TestRunRolloutScripted:
         assert result.success is False
         assert result.ground_truth_label == FailureMode.APPROACH_MISS
         assert result.video_path is None
+
+    def test_zero_jitter_matches_default_placement_bounds(self) -> None:
+        """cube_xy_jitter_m=0.0 must NOT mutate the sampler — keeps the default ±3 cm."""
+        import os
+
+        import robosuite as suite
+        from robosuite.controllers import load_composite_controller_config
+
+        from src.constants import MUJOCO_GL_ENV_KEY
+
+        os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
+
+        controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+        env = suite.make(
+            env_name="Lift",
+            robots="Panda",
+            controller_configs=controller_cfg,
+            has_renderer=False,
+            has_offscreen_renderer=False,
+            use_camera_obs=False,
+            control_freq=20,
+            horizon=50,
+        )
+        # Default bounds from robosuite's Lift env (see lift.py:325).
+        assert tuple(env.placement_initializer.x_range) == (-0.03, 0.03)
+        assert tuple(env.placement_initializer.y_range) == (-0.03, 0.03)
+
+    def test_nonzero_jitter_widens_placement_bounds(self) -> None:
+        """cube_xy_jitter_m=J rewrites x_range/y_range to (-J, +J) before reset."""
+        import os
+
+        import robosuite as suite
+        from robosuite.controllers import load_composite_controller_config
+
+        from src.constants import MUJOCO_GL_ENV_KEY
+        from src.sim.adapter import _apply_cube_xy_jitter
+
+        os.environ.setdefault(MUJOCO_GL_ENV_KEY, "glfw")
+
+        controller_cfg = load_composite_controller_config(controller="BASIC", robot="Panda")
+        env = suite.make(
+            env_name="Lift",
+            robots="Panda",
+            controller_configs=controller_cfg,
+            has_renderer=False,
+            has_offscreen_renderer=False,
+            use_camera_obs=False,
+            control_freq=20,
+            horizon=50,
+        )
+        _apply_cube_xy_jitter(env, 0.08)
+        assert tuple(env.placement_initializer.x_range) == (-0.08, 0.08)
+        assert tuple(env.placement_initializer.y_range) == (-0.08, 0.08)

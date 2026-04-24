@@ -297,11 +297,7 @@ def _chat_html(mirror_root: Path) -> str:
         color = PHASE_COLORS.get(current_phase, DEFAULT_PHASE_COLOR)
         body_blocks.append(_chat_block(kind, e, color))
 
-    pinned = (
-        "<div class='pg-chat__pinned'>"
-        + _phase_explainer_card(current_phase)
-        + "</div>"
-    )
+    pinned = "<div class='pg-chat__pinned'>" + _phase_explainer_card(current_phase) + "</div>"
     return "<div class='pg-chat'>" + pinned + "".join(reversed(body_blocks)) + "</div>"
 
 
@@ -595,8 +591,7 @@ def _results_judge_html(binary: Any, rollouts: list[ScoredRollout]) -> str:
     p = binary.pass1_precision
     r = binary.pass1_recall
     binary_sub = (
-        f"TP {binary.pass1_tp} · FP {binary.pass1_fp} · "
-        f"FN {binary.pass1_fn} · TN {binary.pass1_tn}"
+        f"TP {binary.pass1_tp} · FP {binary.pass1_fp} · FN {binary.pass1_fn} · TN {binary.pass1_tn}"
     )
     acc = binary.pass2_label_accuracy
     if acc is None:
@@ -629,9 +624,7 @@ def _results_pipeline_html(rt: dict[str, Any]) -> str:
     n_coarse = int(rt.get("n_coarse_dispatched", 0))
     n_fine = int(rt.get("n_fine_dispatched", 0))
     n_fine_planned = int(rt.get("n_fine_planned", 0))
-    fine_str = (
-        f"{n_fine} / {n_fine_planned}" if n_fine_planned else str(n_fine)
-    )
+    fine_str = f"{n_fine} / {n_fine_planned}" if n_fine_planned else str(n_fine)
     return (
         "<div class='pg-results__section'>"
         "<div class='pg-results__eyebrow'>Pipeline</div>"
@@ -671,8 +664,12 @@ def _results_narrative_html(mirror_root: Path) -> str:
             "</div>"
         )
 
-    body = "<hr style='border:none;border-top:1px solid " + theme.LINE + ";margin:14px 0;'/>".join(
-        f"<div style='white-space:pre-wrap;'>{_escape(m)}</div>" for m in messages
+    body = (
+        "<hr style='border:none;border-top:1px solid "
+        + theme.LINE
+        + ";margin:14px 0;'/>".join(
+            f"<div style='white-space:pre-wrap;'>{_escape(m)}</div>" for m in messages
+        )
     )
     return (
         "<div class='pg-results__section'>"

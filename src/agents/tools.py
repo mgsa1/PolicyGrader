@@ -39,7 +39,7 @@ FINE_TOOL_NAME = "fine"
 # pass `checkpoint_path` explicitly to override.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CHECKPOINTS: dict[str, Path] = {
-    "NutAssemblySquare": _REPO_ROOT / "artifacts" / "checkpoints" / "square_ph_low_dim.pth",
+    "Lift": _REPO_ROOT / "artifacts" / "checkpoints" / "lift_ph_low_dim.pth",
 }
 
 
@@ -72,7 +72,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
         },
         "env_name": {
             "type": "string",
-            "enum": ["Lift", "NutAssemblySquare"],
+            "enum": ["Lift"],
         },
         "seed": {"type": "integer"},
         "max_steps": {"type": "integer", "minimum": 1, "default": 200},
@@ -99,13 +99,27 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": 1.0,
             "description": "scripted only — < 0.7 opens gripper at lift; labels slip_during_lift.",
         },
+        "cube_xy_jitter_m": {
+            "type": "number",
+            "default": 0.0,
+            "minimum": 0.0,
+            "description": (
+                "Environmental perturbation for deployment (pretrained) rollouts: "
+                "widens the cube's initial xy placement range to this half-extent in "
+                "metres. 0.0 = robosuite default (~±3 cm, the policy's training "
+                "distribution). Elevated values (e.g. 0.08) push the cube to positions "
+                "the BC-RNN never saw — that's the deployment stress lever. "
+                "Calibration (scripted-policy) rollouts MUST leave this at 0.0 so the "
+                "scripted picker's behavior stays invariant across the injected-failure knobs."
+            ),
+        },
         "checkpoint_path": {
             "type": "string",
             "description": (
                 "pretrained only — optional path to a robomimic .pth checkpoint. "
                 "If omitted, the host substitutes a default per env_name "
-                "(NutAssemblySquare -> a BC-RNN proficient-human checkpoint that "
-                "ships with the repo). Pass explicitly only to override."
+                "(Lift -> a BC-RNN proficient-human checkpoint that ships with "
+                "the repo). Pass explicitly only to override."
             ),
         },
     },
@@ -205,7 +219,14 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
     policy_kind = args["policy_kind"]
     rollout_id = args["rollout_id"]
 
+    cube_jitter = float(args.get("cube_xy_jitter_m", 0.0))
+
     if policy_kind == "scripted":
+        if cube_jitter != 0.0:
+            raise ValueError(
+                "cube_xy_jitter_m must be 0.0 for scripted rollouts — the calibration "
+                "cohort's scripted policy assumes the default Lift placement range."
+            )
         failures = InjectedFailures(
             action_noise=float(args.get("injected_action_noise", 0.0)),
             gripper_close_prematurely=bool(args.get("injected_premature_close", False)),
@@ -229,6 +250,7 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
             seed=int(args["seed"]),
             max_steps=int(args["max_steps"]),
             checkpoint_path=ckpt,
+            cube_xy_jitter_m=cube_jitter,
         )
 
     video_out = mirror_root / ROLLOUTS_DIR / f"{rollout_id}.mp4"

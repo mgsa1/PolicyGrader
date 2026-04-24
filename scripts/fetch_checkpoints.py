@@ -1,12 +1,14 @@
 """Download robomimic pretrained policy checkpoints into artifacts/checkpoints/.
 
-Currently fetches: BC-RNN, NutAssemblySquare (robomimic name: "Square"),
-proficient-human dataset, low-dim observations, ~84% success on the trained
-policy. Source: Stanford rt_benchmark CDN (Mandlekar et al. 2021).
+Currently fetches: BC-RNN, Lift, proficient-human dataset, low-dim observations,
+~100% success on the trained policy's training distribution. Source: Stanford
+rt_benchmark CDN (Mandlekar et al. 2021, robomimic v0.1 model zoo).
 
-Image-obs variants are larger and 10x slower at inference; we use low-dim
-because the policy doesn't need pixels — the rollout video is rendered
-separately for the vision judge.
+Lift is the only task in use post scope-cut to Lift-only. The deployment cohort
+runs this policy under environmental perturbations (cube xy jitter) — see
+docs/eval_methodology.md. Image-obs variants are larger and 10x slower at
+inference; we use low-dim because the policy doesn't need pixels — the rollout
+video is rendered separately for the vision judge.
 """
 
 from __future__ import annotations
@@ -19,9 +21,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_DIR = REPO_ROOT / "artifacts" / "checkpoints"
 
 CHECKPOINTS: dict[str, str] = {
-    "square_ph_low_dim.pth": (
+    "lift_ph_low_dim.pth": (
         "http://downloads.cs.stanford.edu/downloads/rt_benchmark"
-        "/model_zoo/square/bc_rnn/square_ph_low_dim_epoch_1850_succ_84.pth"
+        "/model_zoo/lift/bc_rnn/lift_ph_low_dim_epoch_1000_succ_100.pth"
     ),
 }
 

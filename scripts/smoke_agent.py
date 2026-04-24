@@ -35,8 +35,11 @@ from src.orchestrator import run_all_phases, setup  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIRROR_ROOT = REPO_ROOT / "artifacts" / "smoke" / "agent"
 DEFAULT_GOAL = (
-    "Smoke run: 5 scripted Lift scenarios — 2 clean and 3 injected (one per "
-    "failure knob). Use seeds 0..4. Cap each rollout at 200 steps."
+    "Mixed Lift eval: 8 calibration rollouts (scripted policy on Lift — "
+    "3 clean, 5 with injected failures covering all four failure-injection "
+    "parameters) and 8 deployment rollouts (pretrained BC-RNN on Lift under "
+    "cube_xy_jitter_m=0.08 m perturbation). Use seeds 0..7. Cap each rollout "
+    "at 200 steps."
 )
 
 

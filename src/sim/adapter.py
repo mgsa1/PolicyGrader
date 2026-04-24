@@ -6,9 +6,12 @@ loop, video encoding, and result packaging. It NEVER returns dicts — only
 schemas — so swapping the underlying sim (cf. CLAUDE.md sec 12 pivot) is a
 local change here.
 
-Both pretrained (robomimic BC-RNN on NutAssemblySquare) and scripted (state
-machine on Lift) cases route through one code path; the only difference is
-which Policy and which env_kwargs are built.
+Both pretrained (robomimic BC-RNN on Lift) and scripted (state machine on Lift)
+cases route through one code path; the only difference is which Policy and
+which env_kwargs are built. Deployment rollouts on the pretrained policy may
+widen the cube xy placement range via config.cube_xy_jitter_m — that's the
+single-axis stress lever that makes the BC-RNN fail under perturbed initial
+conditions (see docs/eval_methodology.md).
 """
 
 from __future__ import annotations
@@ -29,11 +32,6 @@ import robosuite as suite  # noqa: E402
 from robosuite.controllers import load_composite_controller_config  # noqa: E402
 
 from src.schemas import RolloutConfig, RolloutResult  # noqa: E402
-from src.sim.cameras import (  # noqa: E402
-    NUT_ENV_NAME,
-    NUT_RENDER_CAMERA,
-    apply_nut_eval_camera,
-)
 from src.sim.policies import Policy  # noqa: E402
 from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 from src.sim.scripted import ScriptedLiftPolicy  # noqa: E402
@@ -50,12 +48,7 @@ def _build_pretrained(config: RolloutConfig) -> tuple[Policy, dict[str, Any], st
     policy = RobomimicPolicy(config.checkpoint_path)
     env_kwargs = policy.env_kwargs_for_robosuite()
     env_kwargs["has_offscreen_renderer"] = True
-    # NutAssemblySquare needs both frontview and agentview allocated so the
-    # camera-override in cameras.apply_nut_eval_camera can read frontview's
-    # pose and write the midpoint into the agentview slot.
-    env_kwargs["camera_names"] = (
-        ["frontview", "agentview"] if policy.env_name == NUT_ENV_NAME else config.render.camera
-    )
+    env_kwargs["camera_names"] = config.render.camera
     env_kwargs["camera_heights"] = config.render.height
     env_kwargs["camera_widths"] = config.render.width
     return policy, env_kwargs, policy.env_name
@@ -80,6 +73,20 @@ def _build_scripted(config: RolloutConfig) -> tuple[Policy, dict[str, Any], str]
     return policy, env_kwargs, config.env_name
 
 
+def _apply_cube_xy_jitter(env: Any, jitter_m: float) -> None:
+    """Widen Lift's UniformRandomSampler xy bounds in-place before the first reset.
+
+    The sampler is built inside robosuite's Lift._load_model() as an attribute
+    on the env (env.placement_initializer) with default x_range=y_range=(-0.03, 0.03).
+    We overwrite the ranges before env.reset() samples the cube — the sampler
+    re-reads x_range/y_range on every sample() call, so mutation is sufficient.
+    See robosuite/environments/manipulation/lift.py:325 for the default.
+    """
+    sampler = env.placement_initializer
+    sampler.x_range = (-jitter_m, jitter_m)
+    sampler.y_range = (-jitter_m, jitter_m)
+
+
 def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> RolloutResult:
     """Run one scenario end-to-end and return its result.
 
@@ -93,18 +100,12 @@ def run_rollout(config: RolloutConfig, video_out: Path | None = None) -> Rollout
         policy, env_kwargs, env_name = _build_scripted(config)
 
     env = suite.make(env_name=env_name, **env_kwargs)
+    if config.cube_xy_jitter_m > 0.0:
+        _apply_cube_xy_jitter(env, config.cube_xy_jitter_m)
+
     obs = env.reset()
     policy.reset()
-
-    # NutAssemblySquare uses a custom camera pose for the rollout video — the
-    # stock cameras do not show nut/peg alignment clearly enough for the
-    # vision judge to discriminate insertion failures. Other envs render
-    # straight from config.render.camera.
-    if env_name == NUT_ENV_NAME:
-        apply_nut_eval_camera(env)
-        render_camera = NUT_RENDER_CAMERA
-    else:
-        render_camera = config.render.camera
+    render_camera = config.render.camera
 
     record_video = video_out is not None
     frames: list[np.ndarray[Any, Any]] = []

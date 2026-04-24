@@ -40,6 +40,14 @@ def _upgrade_legacy_controller(legacy: dict[str, Any], robot: str) -> dict[str, 
     so we inherit the canonical translation of damping->damping_ratio,
     control_delta->input_type, gripper defaults, etc. Robosuite ships the helper
     but does not call it automatically — env users must invoke it themselves.
+
+    Known limitation: on robosuite 1.5 the upgraded OSC_POSE controller produces
+    delta actions in base frame by default, while robomimic 0.1's BC-RNN
+    checkpoints were collected under 1.4's world-frame default. Forcing
+    input_ref_frame="world" here was tried and did not recover task success
+    across Lift or Square, so the upgrade is left at library defaults. See
+    docs/eval_methodology.md for the downstream implication on deployment
+    failure rate.
     """
     from robosuite.controllers.composite.composite_controller_factory import (
         refactor_composite_controller_config,

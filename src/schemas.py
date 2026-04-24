@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.sim.scripted import FailureMode, InjectedFailures
 
 PolicyKind = Literal["pretrained", "scripted"]
-EnvName = Literal["Lift", "NutAssemblySquare"]
+EnvName = Literal["Lift"]
 
 
 class RenderConfig(BaseModel):
@@ -37,6 +37,13 @@ class RolloutConfig(BaseModel):
 
     `injected_failures` is required for scripted rollouts (it carries the
     ground-truth label) and must be None for pretrained ones.
+
+    `cube_xy_jitter_m` widens the Lift env's cube placement range beyond its
+    ~3 cm training distribution — the deployment-stress lever for the BC-RNN.
+    0.0 means "use robosuite's default range"; positive values push the cube
+    to positions the policy never saw at training time. Calibration rollouts
+    should always use 0.0 so the scripted policy's behavior stays invariant
+    across the injected-failure knobs.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -50,6 +57,7 @@ class RolloutConfig(BaseModel):
 
     injected_failures: InjectedFailures | None = None
     checkpoint_path: Path | None = None
+    cube_xy_jitter_m: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
     def _check_policy_invariants(self) -> RolloutConfig:

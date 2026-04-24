@@ -2,13 +2,9 @@
 
 This is the source of GROUND-TRUTH labels for vision-judge precision/recall:
 each rollout config carries an InjectedFailures and a derivable FailureMode
-label that the judge's output is later compared against.
-
-Lift was chosen over NutAssemblySquare because a 4-phase hand-coded policy
-can reliably succeed on Lift; Square requires nut-peg orientation alignment
-that takes 10x more code to get right. The eval mechanism (inject known
-failure -> render video -> judge sees it -> measure agreement) is identical
-either way.
+label that the judge's output is later compared against. Runs the
+calibration cohort of every eval (the deployment cohort uses the pretrained
+BC-RNN on the same task under cube-placement perturbations instead).
 
 Knob -> label mapping (priority high to low; first match wins):
   action_noise >= 0.1            -> KNOCK_OBJECT_OFF_TABLE

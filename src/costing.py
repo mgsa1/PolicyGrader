@@ -90,12 +90,12 @@ def estimated_video_duration_s(env_name: str, steps_taken: int | None = None) ->
 
     Uses steps_taken when provided (each rollout records at the env's
     control frequency, default 20 Hz, plus our 1 s post-success hold).
-    Falls back to a per-env max if steps_taken is unknown.
+    Falls back to the Lift max if steps_taken is unknown (env_name is
+    accepted for forward-compat but currently unused — we're Lift-only).
     """
+    del env_name  # reserved for future multi-env support
     if steps_taken is not None and steps_taken > 0:
         return steps_taken / 20.0 + 1.0  # +1s for the post-success hold
-    if env_name == "NutAssemblySquare":
-        return 20.0  # 400 max_steps / 20 Hz
     return 10.0  # Lift default (200 max_steps / 20 Hz)
 
 
