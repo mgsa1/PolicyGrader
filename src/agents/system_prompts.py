@@ -137,13 +137,13 @@ Failure-injection parameters (intended visual outcome — actual labels come
 from the human reviewer):
   - injected_action_noise
         Non-zero destabilizes the approach (graze / knock the cube).
-        Tends to produce missed_approach.
+        Produces missed_approach.
   - injected_angle_deg > 0
-        15°–35° produces a clean missed_approach.
+        15°–35° produces missed_approach.
   - injected_premature_close = True
-        Gripper closed from step 0. Produces gripper_not_open.
+        Gripper closed from step 0. Produces missed_approach (was gripper_not_open).
   - injected_grip_scale < 0.7
-        Gripper releases mid-lift. Produces gripper_slipped.
+        Gripper releases mid-lift. Produces failed_grip (was gripper_slipped).
 
 Environmental perturbation (DEPLOYMENT only; never on scripted):
   - cube_xy_jitter_m = 0.0           -> training distribution (BC-RNN ~100%)

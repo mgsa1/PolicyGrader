@@ -60,10 +60,12 @@ def heatmap_figure(mirror_root: Path) -> Any:
 # ---- Clickable confusion matrix --------------------------------------------------
 
 
-# Fixed 9-label list in canonical order. Buttons in build_app are pre-allocated
-# against this list; visibility is toggled per tick based on used_mask.
+# Full taxonomy label list in canonical order. Length grows/shrinks with the
+# FailureMode enum — callers that need a matrix grid should use
+# `_taxonomy_order()` and `_used_labels()` directly rather than hardcoding a
+# dimension.
 def all_labels() -> list[str]:
-    """All FailureMode labels in canonical order (length 9). Stable across runs."""
+    """All FailureMode labels in canonical order. Stable across runs."""
     from src.ui.metrics_view import _taxonomy_order
 
     return [m.value for m in _taxonomy_order()]
@@ -115,6 +117,12 @@ def matrix_html(mirror_root: Path) -> str:
 
     parts: list[str] = [
         bridge,
+        "<div class='pg-cm-axes'>",
+        # Y-axis title (rotated, ground truth = expected = rows)
+        "<div class='pg-cm-yaxis-title'><span>Ground truth (expected)</span></div>",
+        "<div class='pg-cm-axes-inner'>",
+        # X-axis title (predicted = judged = columns)
+        "<div class='pg-cm-xaxis-title'>Predicted (judged)</div>",
         f"<div class='pg-cm-grid' style='grid-template-columns:{grid_cols};'>",
     ]
 
@@ -141,16 +149,19 @@ def matrix_html(mirror_root: Path) -> str:
                 f'onclick="pgCmClick({click_args})">{label}</button>'
             )
 
-    parts.append("</div>")
+    parts.append("</div>")  # .pg-cm-grid
+    parts.append("</div>")  # .pg-cm-axes-inner
+    parts.append("</div>")  # .pg-cm-axes
     return "".join(parts)
 
 
 def clickable_grid_data(mirror_root: Path) -> tuple[list[dict[str, Any]], list[bool]]:
     """Return (cells, used_mask) for the clickable confusion matrix.
 
-    `cells` is a row-major list of length 81 — one dict per (expected, judged)
-    pair in canonical order. Each dict carries: count, diag, show.
-    `used_mask` is length 9 — True when that label appears in the data.
+    `cells` is a row-major list with N*N entries — one dict per (expected,
+    judged) pair in canonical order, where N is the number of taxonomy labels
+    (`_taxonomy_order()`). Each dict carries: count, diag, show.
+    `used_mask` is length N — True when that label appears in the data.
     Headers (rows + cols) get hidden where used_mask is False; non-shown cells
     likewise.
     """
@@ -214,7 +225,7 @@ def filter_status_html(f: DrillFilter) -> str:
 def drill_description_html() -> str:
     return (
         '<div style="font-size:13px;color:var(--pg-ink-3);'
-        'margin:var(--pg-s-4) 0 var(--pg-s-3) 0;line-height:1.5;">'
+        'margin:0 0 var(--pg-s-3) 0;line-height:1.5;">'
         "Pick an expected / judged pair (or either alone) to see the "
         "calibration rollouts behind the number. Leave both blank to clear."
         "</div>"

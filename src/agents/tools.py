@@ -117,7 +117,8 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": False,
             "description": (
                 "scripted only — gripper is commanded closed from step 0, so "
-                "it never opens to grasp. Intended visual: gripper_not_open."
+                "it never opens to grasp. Intended visual: missed_approach "
+                "(hand skims the cube with closed fingers; no grip forms)."
             ),
         },
         "injected_angle_deg": {
@@ -125,7 +126,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": 0.0,
             "description": (
                 "scripted only — radial xy offset on approach. 15°–35° produces "
-                "a clean missed_approach (gripper closes beside the cube)."
+                "missed_approach (gripper closes beside the cube)."
             ),
         },
         "injected_grip_scale": {
@@ -133,7 +134,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
             "default": 1.0,
             "description": (
                 "scripted only — < 0.7 opens the gripper mid-lift after a few "
-                "carry steps. Intended visual: gripper_slipped."
+                "carry steps. Intended visual: failed_grip."
             ),
         },
         "cube_xy_jitter_m": {
@@ -196,10 +197,9 @@ _JUDGE_PARAM: dict[str, Any] = {
         "rollouts where the `rollout` tool returned success=false — "
         "successful rollouts have no failure to classify, so skip them. "
         "Returns a closed-set taxonomy_label (one of missed_approach, "
-        "gripper_slipped, gripper_not_open, other), the ORIGINAL-mp4 "
-        "frame_index the judge named as decisive, a pointing coordinate (or "
-        "null when no gripper-cube contact is visible), and a one-sentence "
-        "description."
+        "failed_grip, other), the ORIGINAL-mp4 frame_index the judge named "
+        "as decisive, a pointing coordinate (or null when no gripper-cube "
+        "contact is visible), and a one-sentence description."
     ),
     "input_schema": _JUDGE_INPUT_SCHEMA,
 }

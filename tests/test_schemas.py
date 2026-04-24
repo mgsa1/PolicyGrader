@@ -173,7 +173,7 @@ class TestFinding:
             rollout_id="r1",
             sim_success=False,
             annotation=JudgeAnnotation(
-                taxonomy_label=FailureMode.GRIPPER_SLIPPED,
+                taxonomy_label=FailureMode.FAILED_GRIP,
                 frame_index=70,
                 point=(123, 456),
                 description="cube slips at frame 70",

@@ -72,22 +72,22 @@ class TestClusterByLabel:
         # any taxonomy cluster.
         rollouts = [
             _scored("a", success=True, judge_label=None),
-            _scored("b", success=False, judge_label="gripper_slipped"),
+            _scored("b", success=False, judge_label="failed_grip"),
         ]
         clusters = cluster_by_label(rollouts)
         assert len(clusters) == 1
-        assert clusters[0].name == "gripper_slipped"
+        assert clusters[0].name == "failed_grip"
         assert [r.rollout_id for r in clusters[0].rollouts] == ["b"]
 
     def test_one_cluster_per_label_sorted_by_size(self) -> None:
         rollouts = [
             _scored("a", judge_label="missed_approach"),
             _scored("b", judge_label="missed_approach"),
-            _scored("c", judge_label="gripper_slipped"),
+            _scored("c", judge_label="failed_grip"),
             _scored("d", judge_label="missed_approach"),
         ]
         clusters = cluster_by_label(rollouts)
-        assert [c.name for c in clusters] == ["missed_approach", "gripper_slipped"]
+        assert [c.name for c in clusters] == ["missed_approach", "failed_grip"]
         assert len(clusters[0].rollouts) == 3
         assert len(clusters[1].rollouts) == 1
 
@@ -121,8 +121,8 @@ class TestComputeMetrics:
             _scored(
                 "f1",
                 success=False,
-                judge_label="gripper_slipped",
-                ground_truth_label="gripper_slipped",
+                judge_label="failed_grip",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)
@@ -145,7 +145,7 @@ class TestComputeMetrics:
                 "f1",
                 success=False,
                 judge_label=None,  # judge hasn't run yet
-                ground_truth_label="gripper_slipped",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)
@@ -155,7 +155,7 @@ class TestComputeMetrics:
         assert m.label_accuracy == 1.0
 
     def test_mismatched_label_not_correct(self) -> None:
-        # Judge says missed_approach but ground truth is gripper_slipped.
+        # Judge says missed_approach but ground truth is failed_grip.
         rollouts = [
             _scored(
                 "f0",
@@ -167,7 +167,7 @@ class TestComputeMetrics:
                 "f1",
                 success=False,
                 judge_label="missed_approach",
-                ground_truth_label="gripper_slipped",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)

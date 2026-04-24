@@ -6,9 +6,9 @@ pretrained BC-RNN on the same task under cube-placement perturbations.
 The knobs control WHAT the scripted policy does, not WHAT the rollout will be
 labeled as: ground truth comes from human labels on a sampled subset of
 rollouts (see src/human_labels.py), because knob-intent and visual-outcome
-diverged too often under the old knob->label mapping (e.g. action_noise=0.10
-was labeled knock_object_off_table but visually produced approach_miss on
-many seeds).
+disagreed often enough that the old knob->label mapping corrupted GT. The
+`to_label()` helper below is a modal-intent reference used by the planner
+prompt and the dispatch tool docstrings, NOT a ground-truth source.
 
 Knob menu:
   action_noise            gaussian perturbation on action[:6] every step
@@ -55,8 +55,8 @@ SLIP_THRESHOLD = 0.7
 # so the arm has time to actually raise the cube to ~LIFT_HEIGHT_M before we
 # command GRIP_OPEN. Without the hold the gripper released before the lift
 # started and the cube never left the table — visually indistinguishable
-# from approach_miss. With it, the cube is clearly airborne when released
-# and falls back, producing the canonical slip silhouette.
+# from a missed_approach. With it, the cube is clearly airborne when released
+# and falls back, producing the canonical failed_grip silhouette.
 SLIP_CARRY_STEPS = 15
 
 # Internal multiplier on action_noise so the user-facing values from claude.md
@@ -71,24 +71,20 @@ NOISE_GAIN = 8.0
 class FailureMode(StrEnum):
     """Visually-distinct failure modes the judge emits on Lift.
 
-    Collapsed from the previous 10-label taxonomy: the fine-grained
-    distinctions (scratch vs knock vs approach_miss; slip vs premature_release)
-    were below the pixel+frame-rate resolution of the judge and were the main
-    driver of multiclass confusion. The new axis is OUTCOME, not mechanism.
+    Collapsed from the previous 3-label outcome taxonomy on 2026-04-24: the
+    gripper_slipped / gripper_not_open distinction was below the pixel+frame-
+    rate resolution of the judge and was the main driver of multiclass
+    confusion. The axis stays OUTCOME, not mechanism — just with fewer bins.
     """
 
     NONE = "none"
-    # Policy never secured the cube — fingers close on empty air, or graze /
-    # knock the cube without grasping it. Subsumes the old approach_miss,
-    # knock_object_off_table, cube_scratched_but_not_moved, gripper_collision.
+    # Arm never established a grip — fingers close on empty air, or stay shut
+    # the whole way down (pushing / scratching the cube), or pass by without
+    # contact. The cube never leaves the table surface inside the gripper.
     MISSED_APPROACH = "missed_approach"
-    # Policy secured the cube but lost it during the lift — fingers opening
-    # mid-lift OR the cube sliding out of a weak grip. Subsumes the old
-    # slip_during_lift and premature_release.
-    GRIPPER_SLIPPED = "gripper_slipped"
-    # Fingers were closed when they should have been open — hand arrives at the
-    # cube already pinched shut and cannot grasp. Was gripper_never_opened.
-    GRIPPER_NOT_OPEN = "gripper_not_open"
+    # Arm gripped the cube then lost it during the lift. At least one frame
+    # shows the cube above the table, held by closed fingers, before falling.
+    FAILED_GRIP = "failed_grip"
     OTHER = "other"
 
 
@@ -106,6 +102,27 @@ class InjectedFailures:
     gripper_close_prematurely: bool = False
     approach_angle_offset_deg: float = 0.0
     grip_force_scale: float = 1.0
+
+    def to_label(self) -> FailureMode:
+        """Modal-intent label for this knob configuration.
+
+        NOT the calibration ground truth — that comes from human labels on a
+        sampled subset (see src/human_labels.py). This helper exists so the
+        planner prompt + tool docstrings + integration tests can reference
+        the intended visual outcome for each knob combination without
+        hardcoding the mapping in three places. Knob variance means the
+        actual per-seed visual outcome can differ; the cell that shows up
+        off-diagonal on the confusion matrix is expected and honest.
+        """
+        if self.grip_force_scale < SLIP_THRESHOLD:
+            return FailureMode.FAILED_GRIP
+        if (
+            self.action_noise >= 0.1
+            or self.approach_angle_offset_deg > 0.0
+            or self.gripper_close_prematurely
+        ):
+            return FailureMode.MISSED_APPROACH
+        return FailureMode.NONE
 
 
 @dataclass

@@ -25,14 +25,14 @@ from src.sim.scripted import FailureMode, InjectedFailures
 PolicyKind = Literal["pretrained", "scripted"]
 EnvName = Literal["Lift"]
 
-# Human labeler's set: the 3 judge labels plus `none` (clean success) and
-# `ambiguous` (can't tell from the video). `other` stays available as the
-# escape hatch the judge also uses.
+# Human labeler's set: the 2 judge failure labels plus `none` (clean success)
+# and `ambiguous` (can't tell from the video). `other` stays available as the
+# escape hatch the judge also uses. Legacy labels from prior taxonomies are
+# remapped at read time — see `_LEGACY_LABEL_MAP` in src/human_labels.py.
 HumanLabelValue = Literal[
     "none",
     "missed_approach",
-    "gripper_slipped",
-    "gripper_not_open",
+    "failed_grip",
     "other",
     "ambiguous",
 ]
@@ -97,9 +97,9 @@ class RolloutResult(BaseModel):
 
     No ground_truth_label field: scripted rollouts used to derive GT from
     their InjectedFailures knobs, but knob-intent and visual-outcome
-    disagreed too often (noise=0.10 labeled as knock but visually an
-    approach_miss, etc.). Ground truth now comes from human labels on a
-    sampled subset; see src/human_labels.py.
+    disagreed too often (noise at 0.10 was labeled as a knock but often
+    looked like a missed_approach on the frames, etc.). Ground truth now
+    comes from human labels on a sampled subset; see src/human_labels.py.
 
     `telemetry_path` points at the per-step sim-telemetry sidecar written next
     to the mp4. Optional: replays of pre-telemetry artifacts (or runs with

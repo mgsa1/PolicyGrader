@@ -11,15 +11,21 @@ borderline cases sinks precision.
 
 The label set is kept in sync with `src/sim/scripted.py::FailureMode` by hand.
 
+> Collapsed from the 3-mode outcome taxonomy on 2026-04-24; legacy labels are
+> remapped at read time per `_LEGACY_LABEL_MAP` in `src/human_labels.py`.
+
 ## Labels
 
 | Label | When to use | Visual cue |
 | --- | --- | --- |
-| `none` | Clean success — cube lifted to target height and held stably. Labeler-only; the judge never emits this. | Cube in the air, gripper fingers around it, arm stationary at lift height. |
-| `missed_approach` | Policy never secured the cube. The fingers close on empty air, OR the gripper grazes / nudges / knocks the cube without grasping it. Use this whenever the rollout failed BEFORE a real grasp was established, regardless of whether there was contact. | Gripper closes beside / above the cube, or bumps it aside. Cube never lifts with the gripper. |
-| `gripper_slipped` | Policy DID secure the cube (the cube is clearly inside the fingers, rising with the arm, at least briefly) and then lost it during the lift — fingers opening mid-lift or the cube sliding out of a weak grip. | Cube briefly airborne inside the gripper, then falls/slides free while the arm keeps rising. |
-| `gripper_not_open` | Fingers are closed (pinched together) when the hand arrives at the cube. Because the fingers never opened, no grasp can form — the hand bumps or skims past the cube with closed fingers. | Gripper arrives at the cube with fingers already touching each other; no open-finger pose during descent. |
-| `other` | Failure that genuinely doesn't match any of the above. Use sparingly. | (varies) |
+| `none` | Clean success — cube ends held above the success-height threshold. Labeler-only; the judge never emits this. | Cube visibly off the table at end of clip, gripper holding it. |
+| `missed_approach` | Arm never established a grip on the cube. The gripper closes on empty air, OR stays closed throughout the descent (pushing / scratching the cube), OR passes by the cube without contact. The cube never leaves the table inside the gripper. | Gripper closes beside / above the cube, or skims past with fingers already shut. Cube never rises with the gripper. |
+| `failed_grip` | Arm gripped the cube but lost it during the lift. There is at least one frame where the cube is above the table surface, held by closed gripper fingers, before falling. | Cube briefly airborne inside the gripper, then falls/slides free while the arm keeps rising. |
+| `other` | Failure that genuinely doesn't match either of the above. Use sparingly. | (varies) |
+
+The decisive cue between the two named modes: **did the cube ever leave the
+table surface inside the gripper?** If yes → `failed_grip`. If no →
+`missed_approach`.
 
 ## How the labels are used
 
@@ -34,31 +40,38 @@ The label set is kept in sync with `src/sim/scripted.py::FailureMode` by hand.
 
 ## The axis: outcome, not mechanism
 
-The previous 10-label taxonomy (approach_miss / knock_object_off_table /
-cube_scratched_but_not_moved / gripper_collision / slip_during_lift /
-premature_release / gripper_never_opened / wrong_object_selected /
-insertion_misalignment / other) tried to separate failures by mechanism.
-Several pairs were below the pixel+frame-rate resolution of the judge
-(scratch vs knock vs approach_miss often hinge on a sub-second contact; slip
-vs premature_release on whether fingers visibly splayed) and were the main
-source of multiclass confusion.
+Prior taxonomies (a 10-label mechanism set, then a 3-label intermediate split
+into `missed_approach` / `gripper_slipped` / `gripper_not_open`) tried to
+separate failures by mechanism. Several pairs were below the pixel+frame-rate
+resolution of the judge (scratch vs knock vs approach_miss hinge on
+sub-second contact; slip vs premature_release on whether fingers visibly
+splayed; closed-fingers-all-the-way-down vs no-contact-miss often look the
+same from the `frontview` camera) and were the main source of multiclass
+confusion.
 
-The new 3-label axis is OUTCOME:
+The current 2-label axis is OUTCOME:
 
-- did the policy **never grasp** the cube? → `missed_approach`
-- did the policy **grasp then lose** the cube? → `gripper_slipped`
-- were the **fingers closed** during the approach so no grasp was possible?
-  → `gripper_not_open`
+- did the policy **never establish a grip**? → `missed_approach` (subsumes
+  the old `missed_approach`, `gripper_not_open`, knock, scratch, approach
+  miss).
+- did the policy **grip then lose** the cube? → `failed_grip` (subsumes the
+  old `gripper_slipped` and `premature_release`).
 
 This is the distinction robotics-ops actually cares about — mechanism is a
 follow-up question. If finer granularity is needed later, re-split from data.
+
+## Pass-wise usage (single-call judge)
+
+The judge is a single Messages-API call per failed rollout (no two-pass
+coarse/fine split). Pick the decisive frame and point in one CoT; the 2-label
+axis lives inside that one prompt. See `src/vision/judge.py`.
 
 ## Binary success is taken from sim, not vision
 
 `RolloutResult.success` is derived from `env._check_success()` plus a
 post-hold re-verification (see `src/sim/adapter.py`): the cube must be above
 the success threshold at the end of the post-success hold, not just
-transiently during the rollout. This is how `gripper_slipped` rollouts are
+transiently during the rollout. This is how `failed_grip` rollouts are
 correctly classified as sim-failures despite the cube briefly crossing the
 success height during the carry phase.
 

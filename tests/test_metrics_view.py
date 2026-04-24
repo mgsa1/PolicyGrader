@@ -103,13 +103,13 @@ class TestToLabeledRollouts:
             _scored(
                 "s0",
                 success=False,
-                judge_label="gripper_slipped",
+                judge_label="failed_grip",
                 ground_truth_label="missed_approach",
             )
         ]
         labeled = to_labeled_rollouts(rollouts)
         assert labeled[0].expected == FailureMode.MISSED_APPROACH
-        assert labeled[0].judged == FailureMode.GRIPPER_SLIPPED
+        assert labeled[0].judged == FailureMode.FAILED_GRIP
 
 
 class TestDrillFilter:
@@ -118,9 +118,9 @@ class TestDrillFilter:
         assert EMPTY_FILTER.label_text() == ""
 
     def test_cell_filter(self) -> None:
-        f = DrillFilter(expected="missed_approach", judged="gripper_slipped")
+        f = DrillFilter(expected="missed_approach", judged="failed_grip")
         assert f.is_active
-        assert "missed_approach" in f.label_text() and "gripper_slipped" in f.label_text()
+        assert "missed_approach" in f.label_text() and "failed_grip" in f.label_text()
 
     def test_row_filter_only_expected(self) -> None:
         f = DrillFilter(expected="missed_approach", judged=None)
@@ -145,7 +145,7 @@ class TestFilterRollouts:
                 "b",
                 success=False,
                 judge_label="missed_approach",
-                ground_truth_label="gripper_slipped",
+                ground_truth_label="failed_grip",
             ),  # mismatch
         ]
         f = DrillFilter(expected="missed_approach", judged="missed_approach")
@@ -164,7 +164,7 @@ class TestFilterRollouts:
                 "b",
                 success=False,
                 judge_label="missed_approach",
-                ground_truth_label="gripper_slipped",
+                ground_truth_label="failed_grip",
             ),
             _scored("c", success=True, judge_label=None, ground_truth_label="none"),
         ]
@@ -188,8 +188,8 @@ class TestBinaryConfusion:
             _scored(
                 "c",
                 success=False,
-                judge_label="gripper_slipped",
-                ground_truth_label="gripper_slipped",
+                judge_label="failed_grip",
+                ground_truth_label="failed_grip",
             ),
             _scored("d", success=False, judge_label="missed_approach", policy_kind="pretrained"),
         ]

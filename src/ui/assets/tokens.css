@@ -1552,6 +1552,53 @@
   padding-bottom: 10px;
   border-bottom: 1px solid var(--pg-line);
 }
+/* Axis titles: y-axis (rows = expected) sits rotated to the left of the row
+   headers; x-axis (cols = judged) sits centred above the column headers. */
+.pg-cm-axes {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 4px;
+}
+.pg-cm-yaxis-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex: 0 0 22px;
+  /* Reserve space below the rotated text so it lines up with the body rows
+     rather than the column-header band above them. */
+  padding-top: 110px;
+}
+.pg-cm-yaxis-title > span {
+  display: inline-block;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+  font-family: var(--pg-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--pg-ink-3);
+}
+.pg-cm-axes-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pg-cm-xaxis-title {
+  font-family: var(--pg-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--pg-ink-3);
+  /* Indent past the row-header column (220px) so the title sits over the
+     cell area, not the row-label area. */
+  padding-left: 220px;
+  margin-bottom: 6px;
+}
 /* Single CSS-grid container — every header + cell is a grid child, no
    inter-row gaps from Gradio. Columns set inline (220px + N×78px). */
 .pg-cm-grid {
@@ -1636,6 +1683,14 @@
   color: var(--pg-ink-4);
   font-style: italic;
   font-size: 13px;
+}
+/* Side panel that sits next to the matrix and holds the drill-down filters. */
+.pg-cm-side {
+  background: var(--pg-surface);
+  border: 1px solid var(--pg-line);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin: 12px 0;
 }
 
 /* ============================================================= */

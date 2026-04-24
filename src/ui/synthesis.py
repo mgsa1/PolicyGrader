@@ -27,7 +27,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from src.agents.tools import DISPATCH_LOG
-from src.human_labels import labels_by_rollout
+from src.human_labels import labels_by_rollout, remap_legacy_label
 from src.ui import theme
 from src.vision.frames import read_frames, resize_long_edge
 from src.vision.judge import JUDGE_LONG_EDGE_PX
@@ -145,8 +145,8 @@ def copy_button(
 # Mirrors the knob-to-intent mapping in src.agents.system_prompts:
 #   action_noise >= 0.10 => missed_approach (chaotic approach)
 #   angle_deg > 0        => missed_approach
-#   premature_close=True => gripper_not_open
-#   grip_scale < 0.7     => gripper_slipped
+#   premature_close=True => missed_approach (was gripper_not_open)
+#   grip_scale < 0.7     => failed_grip (was gripper_slipped)
 _NOISE_PERTURBED_THRESHOLD = 0.10
 _GRIP_SCALE_PERTURBED_THRESHOLD = 0.7
 
@@ -372,6 +372,13 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
         host_video = rollouts_dir / f"{rid}.mp4"
         judge_frame_raw = judge.get("frame_index")
         human_label_record = human_labels.get(rid)
+        # Remap legacy judge labels from prior-run dispatch logs (e.g.
+        # "gripper_slipped") so the UI renders against the current 2-mode
+        # taxonomy without rewriting past artifacts.
+        raw_judge_label = judge.get("taxonomy_label")
+        judge_label_str = (
+            remap_legacy_label(raw_judge_label) if isinstance(raw_judge_label, str) else None
+        )
         out.append(
             ScoredRollout(
                 rollout_id=rid,
@@ -382,7 +389,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
                 steps_taken=int(result.get("steps_taken", 0)),
                 human_label=human_label_record.label if human_label_record else None,
                 injection_knobs=knobs,
-                judge_label=judge.get("taxonomy_label"),
+                judge_label=judge_label_str,
                 judge_frame_index=int(judge_frame_raw) if judge_frame_raw is not None else None,
                 judge_point=(
                     (int(judge_point[0]), int(judge_point[1])) if judge_point is not None else None

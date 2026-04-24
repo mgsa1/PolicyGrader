@@ -1,8 +1,9 @@
 """Single-call vision judge over a recorded rollout mp4.
 
-Three labels, no rigid per-frame CoT, no anti-default heuristics. The judge
-gets the failure-mode question + the frames + (optional) sim telemetry rows,
-and returns one label, the earliest decisive frame, an optional pixel point,
+Two named failure labels (`missed_approach` / `failed_grip`) plus `other`,
+no rigid per-frame CoT, no anti-default heuristics. The judge gets the
+failure-mode question + the frames + (optional) sim telemetry rows, and
+returns one label, the earliest decisive frame, an optional pixel point,
 and a short description. That's it.
 
 The prior version forced a per-frame gripper/cube/contact table over ≤36
@@ -79,31 +80,22 @@ The simulator has already confirmed this rollout FAILED. Your only job is to \
 name the failure mode, point to the decisive frame, and (when applicable) \
 pixel-point at the evidence.
 {telemetry_anchor}
-Pick exactly ONE label from this closed set of three visually-distinct modes \
-(plus `other` as a last resort):
+There are two named failure modes. Pick the one that matches the visual \
+evidence:
 
-  • `missed_approach` — the gripper never secured the cube. Fingers close on \
-empty air, or graze/knock the cube aside without grasping it. The cube \
-never leaves the table inside the gripper. Use this whenever the rollout \
-failed BEFORE a grasp was established, regardless of whether the gripper \
-touched the cube.
+  missed_approach — The arm never established a grip. Visual signature: the \
+    gripper closes on empty space, OR stays closed throughout the descent \
+    (pushing or scratching the cube), OR passes by the cube without contact. \
+    The cube does not visibly leave the table surface during the rollout.
 
-  • `gripper_slipped` — the gripper DID secure the cube (you see the cube \
-between the fingers, at least briefly lifting with the arm), then lost it \
-during the lift. The cube falls or slides out of the grip while the arm \
-keeps rising. Requires visible possession of the cube at some point.
+  failed_grip — The arm gripped the cube but lost it during the lift. Visual \
+    signature: the cube briefly rises with the gripper before falling. There \
+    is at least one frame where the cube is above the table surface, held \
+    by closed gripper fingers.
 
-  • `gripper_not_open` — the fingers are already closed / pinched together \
-when the hand arrives at the cube, so no grasp can form. The hand bumps or \
-skims past the cube with closed fingers. Look at the gripper state during \
-the descent — if it's closed the whole way down, it's this.
-
-  • `other` — genuinely doesn't match any of the three above. Use sparingly.
-
-The decisive signal between `missed_approach` and `gripper_slipped` is \
-whether the cube was ever clearly INSIDE the gripper and rising with the \
-arm. No lift with the cube → missed_approach, even if the gripper touched or \
-knocked the cube.
+The decisive cue is: did the cube ever leave the table surface? If yes → \
+failed_grip. If no → missed_approach. Use `other` only for genuine failures \
+that fit neither (very rare on Lift).
 
 Return `frame_index` as the earliest frame that shows the decisive event \
 (the missed close, the slip, the impact with closed fingers) — NOT the \

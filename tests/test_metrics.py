@@ -22,7 +22,7 @@ class TestCompute:
         rows = [
             _row("a", FailureMode.NONE, FailureMode.NONE),
             _row("b", FailureMode.MISSED_APPROACH, FailureMode.MISSED_APPROACH),
-            _row("c", FailureMode.GRIPPER_SLIPPED, FailureMode.GRIPPER_SLIPPED),
+            _row("c", FailureMode.FAILED_GRIP, FailureMode.FAILED_GRIP),
         ]
         m = compute(rows)
         assert m.overall_label_accuracy == 1.0
@@ -38,12 +38,12 @@ class TestCompute:
     def test_binary_failure_detection(self) -> None:
         rows = [
             # Judge missed a failure (FN for the binary detector)
-            _row("a", FailureMode.GRIPPER_SLIPPED, FailureMode.NONE),
+            _row("a", FailureMode.FAILED_GRIP, FailureMode.NONE),
             # Judge invented a failure (FP)
             _row("b", FailureMode.NONE, FailureMode.MISSED_APPROACH),
             # Judge correctly flagged
             _row("c", FailureMode.MISSED_APPROACH, FailureMode.MISSED_APPROACH),
-            _row("d", FailureMode.GRIPPER_SLIPPED, FailureMode.GRIPPER_SLIPPED),
+            _row("d", FailureMode.FAILED_GRIP, FailureMode.FAILED_GRIP),
         ]
         m = compute(rows)
         # binary TP = 2 (c, d), FP = 1 (b), FN = 1 (a)
@@ -54,8 +54,8 @@ class TestCompute:
         # Both rollouts are failures and the judge said "fail" on both, just with
         # the wrong specific label. Binary detector is perfect; multi-class is 0.
         rows = [
-            _row("a", FailureMode.MISSED_APPROACH, FailureMode.GRIPPER_SLIPPED),
-            _row("b", FailureMode.GRIPPER_SLIPPED, FailureMode.MISSED_APPROACH),
+            _row("a", FailureMode.MISSED_APPROACH, FailureMode.FAILED_GRIP),
+            _row("b", FailureMode.FAILED_GRIP, FailureMode.MISSED_APPROACH),
         ]
         m = compute(rows)
         assert m.overall_label_accuracy == 0.0
@@ -66,7 +66,7 @@ class TestCompute:
         rows = [
             _row("a", FailureMode.MISSED_APPROACH, FailureMode.MISSED_APPROACH),
             _row("b", FailureMode.MISSED_APPROACH, FailureMode.MISSED_APPROACH),
-            _row("c", FailureMode.MISSED_APPROACH, FailureMode.GRIPPER_SLIPPED),  # FN for AM
+            _row("c", FailureMode.MISSED_APPROACH, FailureMode.FAILED_GRIP),  # FN for AM
             _row("d", FailureMode.NONE, FailureMode.MISSED_APPROACH),  # FP for AM
         ]
         m = compute(rows)
@@ -81,10 +81,10 @@ class TestCompute:
     def test_confusion_matrix_counts(self) -> None:
         rows = [
             _row("a", FailureMode.MISSED_APPROACH, FailureMode.MISSED_APPROACH),
-            _row("b", FailureMode.MISSED_APPROACH, FailureMode.GRIPPER_SLIPPED),
+            _row("b", FailureMode.MISSED_APPROACH, FailureMode.FAILED_GRIP),
             _row("c", FailureMode.NONE, FailureMode.NONE),
         ]
         m = compute(rows)
         assert m.confusion[FailureMode.MISSED_APPROACH][FailureMode.MISSED_APPROACH] == 1
-        assert m.confusion[FailureMode.MISSED_APPROACH][FailureMode.GRIPPER_SLIPPED] == 1
+        assert m.confusion[FailureMode.MISSED_APPROACH][FailureMode.FAILED_GRIP] == 1
         assert m.confusion[FailureMode.NONE][FailureMode.NONE] == 1

@@ -18,6 +18,7 @@ subjects of calibration trust, not inputs to it.
 
 from __future__ import annotations
 
+import json
 import random
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -25,6 +26,36 @@ from pathlib import Path
 
 from src.memory_layout import HUMAN_LABELS_FILE
 from src.schemas import HumanLabel, HumanLabelValue
+
+# On-disk human_labels.jsonl files from prior taxonomies carry labels that no
+# longer exist in the HumanLabelValue Literal. We remap on READ — disk artifacts
+# are never rewritten — so old runs open cleanly in the UI without requiring a
+# migration script. In-memory typed values are always the current 2-mode set.
+# Keep this table synced with the FailureMode enum + the taxonomy collapse
+# history; see the "judge simplification history" pitfall in claude.md §16.
+_LEGACY_LABEL_MAP: dict[str, HumanLabelValue] = {
+    "gripper_slipped": "failed_grip",
+    "gripper_not_open": "missed_approach",  # see semantic boundary in docs/taxonomy.md
+    "knock_object_off_table": "missed_approach",
+    "premature_release": "failed_grip",
+    "approach_miss": "missed_approach",  # older alias for missed_approach
+    "insertion_misalignment": "other",
+    "wrong_object_selected": "other",
+    "gripper_collision": "other",
+    "slip_during_lift": "failed_grip",  # older alias
+}
+
+
+def remap_legacy_label(raw: str) -> str:
+    """Return the current-taxonomy label string for `raw`.
+
+    Applied at every read site so past-run artifacts render with 2-mode
+    labels without requiring on-disk migration. Unknown labels pass through
+    unchanged — Pydantic validation downstream will reject them loudly
+    rather than silently coercing.
+    """
+    return _LEGACY_LABEL_MAP.get(raw, raw)
+
 
 # Default sample-size policy: clamp(10% of scripted rollouts, 6, 20). The floor
 # keeps small runs labelable; the cap keeps big runs from overwhelming the
@@ -123,7 +154,12 @@ def submit_label(
 
 
 def read_labels(mirror_root: Path) -> list[HumanLabel]:
-    """Read all HumanLabel records. Malformed lines are skipped silently."""
+    """Read all HumanLabel records. Malformed lines are skipped silently.
+
+    Legacy labels from prior taxonomies (e.g. `gripper_slipped`) are remapped
+    to the current 2-mode set at read time — see `_LEGACY_LABEL_MAP`. The
+    JSONL file itself is never rewritten; old runs open cleanly in the UI.
+    """
     path = labels_path(mirror_root)
     if not path.exists():
         return []
@@ -133,10 +169,18 @@ def read_labels(mirror_root: Path) -> list[HumanLabel]:
         if not line:
             continue
         try:
-            out.append(HumanLabel.model_validate_json(line))
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        raw_label = payload.get("label")
+        if isinstance(raw_label, str):
+            payload["label"] = remap_legacy_label(raw_label)
+        try:
+            out.append(HumanLabel.model_validate(payload))
         except Exception:
-            # Tolerate hand-edits / partial flushes — the labeling UI is the
-            # canonical writer and emits well-formed lines.
+            # Tolerate hand-edits / partial flushes / labels that don't map
+            # into the current taxonomy — the labeling UI is the canonical
+            # writer and emits well-formed lines.
             continue
     return out
 

@@ -23,14 +23,13 @@ from src.ui.styles import empty, html_escape, num
 
 # Radio choices are (display label, stored value). `none` appears first because
 # it's the expected outcome on the successes in the sampled set; the
-# failure modes appear in taxonomy order. `ambiguous` is the escape hatch.
+# failure modes appear in taxonomy order. `other` is the escape hatch for
+# anything that doesn't fit the named modes.
 LABELING_CHOICES: list[tuple[str, HumanLabelValue]] = [
     ("success (clean pick)", "none"),
     ("missed_approach", "missed_approach"),
-    ("gripper_slipped", "gripper_slipped"),
-    ("gripper_not_open", "gripper_not_open"),
+    ("failed_grip", "failed_grip"),
     ("other", "other"),
-    ("ambiguous / can't tell", "ambiguous"),
 ]
 
 
@@ -72,6 +71,12 @@ def load_state(mirror_root: Path) -> LabelingState:
     queue, skipped = read_queue(mirror_root)
     done_ids = set(labels_by_rollout(mirror_root).keys())
     return LabelingState(queue=queue, skipped=skipped, done_ids=done_ids)
+
+
+def panel_visible(mirror_root: Path) -> bool:
+    """True when the labeling panel should be shown — there's a queue with work
+    left to do AND the user hasn't opted out via --skip-labeling."""
+    return load_state(mirror_root).has_work
 
 
 def queue_status_html(mirror_root: Path) -> str:
