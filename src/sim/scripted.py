@@ -69,6 +69,13 @@ class FailureMode(StrEnum):
     PREMATURE_RELEASE = "premature_release"
     SLIP_DURING_LIFT = "slip_during_lift"
     KNOCK_OBJECT_OFF_TABLE = "knock_object_off_table"
+    # Judge-emit-only labels — no scripted injection produces these. Listed in
+    # docs/taxonomy.md as legitimate failure modes the vision judge can choose,
+    # mostly relevant to multi-object / insertion envs (NutAssemblySquare).
+    WRONG_OBJECT_SELECTED = "wrong_object_selected"
+    INSERTION_MISALIGNMENT = "insertion_misalignment"
+    GRIPPER_COLLISION = "gripper_collision"
+    OTHER = "other"
 
 
 class _Phase(StrEnum):

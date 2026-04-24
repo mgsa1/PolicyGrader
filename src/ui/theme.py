@@ -639,6 +639,18 @@ html.dark, body.dark, .gradio-container.dark,
   color: {INK_4}; font-style: italic;
 }}
 
+.pg-chat__pinned {{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: {BG};
+  margin: 0 -4px 14px -4px;
+  padding: 10px 8px 12px 8px;
+  border-bottom: 1px solid {LINE};
+}}
+.pg-chat__pinned .pg-chat__phase-hd {{
+  margin: 0;
+}}
 .pg-chat__phase-hd {{
   margin: 28px 0 12px 0;
 }}
@@ -676,6 +688,87 @@ html.dark, body.dark, .gradio-container.dark,
 .pg-chat__phase-writes strong {{
   text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
   margin-right: 6px;
+}}
+
+/* --- scope strip (top of Judge calibration / Deployment findings) -------- */
+.pg-scope {{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 24px;
+  background: {SURFACE};
+  border: 1px solid {LINE};
+  border-radius: 12px;
+  padding: 14px 22px;
+  margin: 4px 0 12px 0;
+}}
+.pg-scope__label {{
+  font-family: {FONT_MONO};
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.18em;
+}}
+.pg-scope__nums {{
+  display: flex; align-items: baseline; gap: 18px;
+}}
+.pg-scope__num {{
+  display: flex; flex-direction: column; align-items: flex-end;
+  line-height: 1.05;
+}}
+.pg-scope__value {{
+  font-family: {FONT_DISPLAY};
+  font-size: 28px; font-weight: 600;
+}}
+.pg-scope__caption {{
+  font-size: 11px;
+  color: {INK_4};
+  margin-top: 4px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}}
+.pg-scope__sep {{
+  color: {INK_5};
+  font-size: 24px;
+  align-self: center;
+}}
+
+/* --- results tab --------------------------------------------------------- */
+.pg-results {{
+  display: flex; flex-direction: column; gap: 28px;
+  padding: 8px 4px 16px 4px;
+}}
+.pg-results__section {{
+  background: {SURFACE};
+  border: 1px solid {LINE};
+  border-radius: 12px;
+  padding: 18px 20px;
+}}
+.pg-results__eyebrow {{
+  font-family: {FONT_MONO};
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.18em;
+  color: {INK_3};
+  margin-bottom: 14px;
+}}
+.pg-results__eyebrow-note {{
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: {INK_4};
+  margin-left: 8px;
+  font-family: {FONT_DISPLAY};
+  font-size: 12px;
+}}
+.pg-results__pipeline {{
+  display: flex; align-items: center; gap: 14px;
+  font-size: 14px;
+  color: {INK_2};
+}}
+.pg-results__arrow {{
+  color: {INK_5};
+}}
+.pg-results__narrative {{
+  font-size: 14px;
+  line-height: 1.6;
+  color: {INK_2};
+  max-height: 600px;
+  overflow-y: auto;
 }}
 
 /* --- live gallery -------------------------------------------------------- */

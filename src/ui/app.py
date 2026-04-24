@@ -26,6 +26,7 @@ from typing import Any
 
 import gradio as gr
 
+from src.agents.system_prompts import PHASE_MARKER_REPORT
 from src.costing import (
     BASELINE_HOURLY_RATE_USD,
     baseline_cost_for,
@@ -47,6 +48,7 @@ from src.ui.metrics_view import (
     render_heatmap_figure,
     render_judge_calibration_header,
     render_judge_trust_banner,
+    render_scope_strip,
     render_static_blocks,
 )
 from src.ui.synthesis import (
@@ -276,23 +278,31 @@ def _phase_short_name(phase: str) -> str:
 
 
 def _chat_html(mirror_root: Path) -> str:
-    """Render the chat pane: phase-color-accented, with phase explainers."""
+    """Active phase pinned on top; agent stream below in reverse-chronological order.
+
+    Each event block keeps the color of the phase it was emitted under, so as
+    you scroll down (back in time) the color shift marks phase boundaries.
+    """
     entries = _read_chat(mirror_root)
     if not entries:
         return "<div class='pg-chat__empty'>Waiting for the agent to start…</div>"
 
     current_phase = "starting"
-    blocks: list[str] = []
+    body_blocks: list[str] = []
     for e in entries:
         kind = e.get("kind", "?")
         if kind == "phase_marker":
             current_phase = str(e.get("marker", ""))
-            blocks.append(_phase_explainer_card(current_phase))
             continue
         color = PHASE_COLORS.get(current_phase, DEFAULT_PHASE_COLOR)
-        blocks.append(_chat_block(kind, e, color))
+        body_blocks.append(_chat_block(kind, e, color))
 
-    return "<div class='pg-chat'>" + "".join(blocks) + "</div>"
+    pinned = (
+        "<div class='pg-chat__pinned'>"
+        + _phase_explainer_card(current_phase)
+        + "</div>"
+    )
+    return "<div class='pg-chat'>" + pinned + "".join(reversed(body_blocks)) + "</div>"
 
 
 def _phase_explainer_card(marker: str) -> str:
@@ -487,10 +497,189 @@ def _metrics_blocks(mirror_root: Path) -> tuple[str, str, str, str]:
     return render_static_blocks(rollouts, binary)
 
 
+def _scope_strip_html(mirror_root: Path, scope: str) -> str:
+    return render_scope_strip(load_scored_rollouts(mirror_root), scope)
+
+
 def _heatmap_figure(mirror_root: Path) -> Any:
     """Build the Plotly confusion heatmap for the current mirror."""
     rollouts = load_scored_rollouts(mirror_root)
     return render_heatmap_figure(rollouts)
+
+
+def _results_html(mirror_root: Path) -> str:
+    """Phase-4 Results tab — exec summary of the completed run.
+
+    Hard numbers (cost, time, P/R) come from runtime.json + scored rollouts so
+    the headline is auditable independently of what the agent's prose claims.
+    The agent's narrative from chat.jsonl is appended below for color.
+    """
+    rt = _read_runtime(mirror_root)
+    phase = str(rt.get("phase", ""))
+
+    if phase != "complete":
+        short = _phase_short_name(phase) if phase else "Idle"
+        return (
+            "<div class='pg-results'>"
+            "<div class='pg-empty'>"
+            "Final results appear once Phase 4 (Report) finishes. "
+            f"Current phase: <b>{_escape(short)}</b>."
+            "</div></div>"
+        )
+
+    rollouts = load_scored_rollouts(mirror_root)
+    binary = compute_metrics(rollouts) if rollouts else None
+    n_cal, n_dep = cohort_split(rollouts)
+
+    return (
+        "<div class='pg-results'>"
+        + _results_summary_html(rt, rollouts, n_cal, n_dep)
+        + _results_judge_html(binary, rollouts)
+        + _results_pipeline_html(rt)
+        + _results_narrative_html(mirror_root)
+        + "</div>"
+    )
+
+
+def _results_summary_html(
+    rt: dict[str, Any],
+    rollouts: list[ScoredRollout],
+    n_cal: int,
+    n_dep: int,
+) -> str:
+    cost = float(rt.get("cost_usd", 0.0))
+    elapsed = float(rt.get("elapsed_seconds", 0.0))
+    n = int(rt.get("n_rollouts", 0))
+
+    durations = [estimated_video_duration_s(r.env_name, r.steps_taken or None) for r in rollouts]
+    baseline_time = (
+        baseline_time_seconds_for_videos(durations) if durations else baseline_seconds_for(n)
+    )
+    baseline_cost = baseline_cost_for(n)
+    cost_save = max(baseline_cost - cost, 0.0)
+    time_save = max(baseline_time - elapsed, 0.0)
+    cost_pct = (cost_save / baseline_cost * 100) if baseline_cost > 0 else 0.0
+    time_pct = (time_save / baseline_time * 100) if baseline_time > 0 else 0.0
+
+    scenarios_sub = (
+        f"<span style='color:{theme.CAL};font-weight:500;'>{n_cal} cal</span>"
+        f" <span style='color:{theme.INK_4};'>+</span> "
+        f"<span style='color:{theme.DEP};font-weight:500;'>{n_dep} dep</span>"
+    )
+    cards = (
+        _metric_card("Cost", format_cost(cost), f"baseline {format_cost(baseline_cost)}")
+        + _metric_card(
+            "Wall time", format_duration(elapsed), f"baseline {format_duration(baseline_time)}"
+        )
+        + _metric_card("Scenarios", str(n), scenarios_sub, sub_is_html=True)
+    )
+    return (
+        "<div class='pg-results__section'>"
+        "<div class='pg-results__eyebrow'>Run summary</div>"
+        f"<div class='pg-metric-grid'>{cards}</div>"
+        f"{_savings_row(cost_save, cost_pct, time_save, time_pct)}"
+        "</div>"
+    )
+
+
+def _results_judge_html(binary: Any, rollouts: list[ScoredRollout]) -> str:
+    """Judge scorecard pulled from compute_metrics — calibration only."""
+    if not rollouts or binary is None or binary.n_total == 0:
+        return (
+            "<div class='pg-results__section'>"
+            "<div class='pg-results__eyebrow'>Judge calibration</div>"
+            "<div class='pg-empty'>No rollouts scored.</div>"
+            "</div>"
+        )
+
+    p = binary.pass1_precision
+    r = binary.pass1_recall
+    binary_sub = (
+        f"TP {binary.pass1_tp} · FP {binary.pass1_fp} · "
+        f"FN {binary.pass1_fn} · TN {binary.pass1_tn}"
+    )
+    acc = binary.pass2_label_accuracy
+    if acc is None:
+        acc_value = "—"
+        acc_sub = "no labeled calibration rollouts yet"
+    else:
+        acc_value = f"{acc:.0%}"
+        acc_sub = f"{binary.pass2_correct} / {binary.pass2_labeled} exact match on injected GT"
+
+    cards = (
+        _metric_card("Binary precision", f"{p:.0%}", binary_sub)
+        + _metric_card("Binary recall", f"{r:.0%}", binary_sub)
+        + _metric_card("Pass-2 label accuracy", acc_value, acc_sub)
+    )
+    return (
+        "<div class='pg-results__section'>"
+        "<div class='pg-results__eyebrow'>Judge scorecard "
+        "<span class='pg-results__eyebrow-note'>"
+        "(calibration rollouts only — known ground truth)"
+        "</span></div>"
+        f"<div class='pg-metric-grid'>{cards}</div>"
+        "</div>"
+    )
+
+
+def _results_pipeline_html(rt: dict[str, Any]) -> str:
+    """One-line strip: rollouts dispatched → coarse → fine."""
+    n_total = int(rt.get("n_rollouts", 0))
+    n_disp = int(rt.get("n_rollouts_dispatched", 0))
+    n_coarse = int(rt.get("n_coarse_dispatched", 0))
+    n_fine = int(rt.get("n_fine_dispatched", 0))
+    n_fine_planned = int(rt.get("n_fine_planned", 0))
+    fine_str = (
+        f"{n_fine} / {n_fine_planned}" if n_fine_planned else str(n_fine)
+    )
+    return (
+        "<div class='pg-results__section'>"
+        "<div class='pg-results__eyebrow'>Pipeline</div>"
+        "<div class='pg-results__pipeline'>"
+        f"<span><b>{n_disp}</b> / {n_total} rollouts</span>"
+        "<span class='pg-results__arrow'>→</span>"
+        f"<span><b>{n_coarse}</b> coarse passes</span>"
+        "<span class='pg-results__arrow'>→</span>"
+        f"<span><b>{fine_str}</b> fine passes</span>"
+        "</div>"
+        "</div>"
+    )
+
+
+def _results_narrative_html(mirror_root: Path) -> str:
+    """Concatenate agent_message events that fall under the REPORT phase."""
+    entries = _read_chat(mirror_root, limit=400)
+    in_report = False
+    messages: list[str] = []
+    for e in entries:
+        kind = e.get("kind")
+        if kind == "phase_marker":
+            in_report = str(e.get("marker", "")) == PHASE_MARKER_REPORT
+            continue
+        if not in_report:
+            continue
+        if kind == "agent_message":
+            text = str(e.get("text", "")).strip()
+            if text:
+                messages.append(text)
+
+    if not messages:
+        return (
+            "<div class='pg-results__section'>"
+            "<div class='pg-results__eyebrow'>Agent's report</div>"
+            "<div class='pg-empty'>No report narrative captured yet.</div>"
+            "</div>"
+        )
+
+    body = "<hr style='border:none;border-top:1px solid " + theme.LINE + ";margin:14px 0;'/>".join(
+        f"<div style='white-space:pre-wrap;'>{_escape(m)}</div>" for m in messages
+    )
+    return (
+        "<div class='pg-results__section'>"
+        "<div class='pg-results__eyebrow'>Agent's report</div>"
+        f"<div class='pg-results__narrative'>{body}</div>"
+        "</div>"
+    )
 
 
 def _drill_html(mirror_root: Path, f: DrillFilter) -> str:
@@ -898,6 +1087,9 @@ def build_app(mirror_root: Path) -> gr.Blocks:
     def synth_by_condition() -> str:
         return _synthesis_html(mirror_root, "condition")
 
+    def results() -> str:
+        return _results_html(mirror_root)
+
     with gr.Blocks(title="PolicyGrader") as app:
         gr.HTML(value=_topbar_html())
         banner_html = gr.HTML(value=banner())
@@ -925,6 +1117,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                         gr.Markdown("### All rollouts")
                         live_gallery_html = gr.HTML(value=_live_gallery_html(mirror_root))
             with gr.Tab("Judge calibration"):
+                judge_scope_html = gr.HTML(value=_scope_strip_html(mirror_root, "calibration"))
                 gr.HTML(value=render_judge_calibration_header())
                 _initial_blocks = metrics_blocks()
                 metrics_cohort_html = gr.HTML(value=_initial_blocks[0])
@@ -961,6 +1154,7 @@ def build_app(mirror_root: Path) -> gr.Blocks:
             with gr.Tab("Deployment findings"):
                 # Banner sits above the sub-tabs so a viewer landing here sees
                 # judge-trust info before any cluster card.
+                dep_scope_html = gr.HTML(value=_scope_strip_html(mirror_root, "deployment"))
                 deployment_trust_html = gr.HTML(value=_judge_trust_html(mirror_root))
                 with gr.Tabs():
                     with gr.Tab("By label"):
@@ -979,6 +1173,8 @@ def build_app(mirror_root: Path) -> gr.Blocks:
                             "decorated with its calibration precision where available."
                         )
                         synth_condition_html = gr.HTML(value=synth_by_condition())
+            with gr.Tab("Results"):
+                results_html = gr.HTML(value=results())
 
         # Fast-refresh outputs: banner + chat + current video. These are cheap
         # to recompute (small JSON reads, a directory listing).
@@ -1013,6 +1209,15 @@ def build_app(mirror_root: Path) -> gr.Blocks:
             fn=lambda: _judge_trust_html(mirror_root),
             outputs=deployment_trust_html,
         )
+        heavy_timer.tick(
+            fn=lambda: _scope_strip_html(mirror_root, "calibration"),
+            outputs=judge_scope_html,
+        )
+        heavy_timer.tick(
+            fn=lambda: _scope_strip_html(mirror_root, "deployment"),
+            outputs=dep_scope_html,
+        )
+        heavy_timer.tick(fn=results, outputs=results_html)
 
         # Dropdown changes → drill-down filter. (gr.Plot in Gradio 6 only emits
         # .change, not .select, so cell clicks aren't wired; a pair of label

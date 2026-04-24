@@ -172,6 +172,47 @@ def render_caption() -> str:
     )
 
 
+def render_scope_strip(rollouts: list[ScoredRollout], scope: str) -> str:
+    """Big top-of-tab strip: 'N videos · M failures' for the cohort in view.
+
+    `scope` is "calibration" or "deployment". Failure denominator depends on
+    cohort: calibration uses env truth, deployment uses the judge.
+    """
+    if scope == "calibration":
+        cohort = [r for r in rollouts if r.population == "calibration"]
+        n_videos = len(cohort)
+        n_failures = sum(1 for r in cohort if r.is_failure)
+        accent = theme.CAL
+        cohort_label = "Calibration cohort"
+        failures_caption = "env-reported failures (ground truth)"
+    elif scope == "deployment":
+        cohort = [r for r in rollouts if r.population == "deployment"]
+        n_videos = len(cohort)
+        n_failures = sum(1 for r in cohort if r.judged_failure)
+        accent = theme.DEP
+        cohort_label = "Deployment cohort"
+        failures_caption = "rollouts the judge flagged as failure"
+    else:
+        raise ValueError(f"unknown scope: {scope!r}")
+
+    return (
+        "<div class='pg-scope'>"
+        f"<div class='pg-scope__label' style='color:{accent};'>{cohort_label}</div>"
+        "<div class='pg-scope__nums'>"
+        f"<div class='pg-scope__num'>"
+        f"<div class='pg-scope__value' style='color:{accent};'>{n_videos}</div>"
+        "<div class='pg-scope__caption'>videos in scope</div>"
+        "</div>"
+        "<div class='pg-scope__sep'>·</div>"
+        "<div class='pg-scope__num'>"
+        f"<div class='pg-scope__value' style='color:{accent};'>{n_failures}</div>"
+        f"<div class='pg-scope__caption'>{failures_caption}</div>"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
 def render_judge_calibration_header() -> str:
     """Framed purpose-line strip at the top of the Judge calibration tab.
 
