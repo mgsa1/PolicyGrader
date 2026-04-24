@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import secrets
 import sys
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from src.costing import (  # noqa: E402
 from src.orchestrator import run_all_phases, setup  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MIRROR_ROOT = REPO_ROOT / "artifacts" / "smoke" / "agent"
+DEFAULT_RUNS_ROOT = REPO_ROOT / "artifacts" / "runs"
 DEFAULT_GOAL = (
     "Mixed Lift eval: 8 calibration rollouts (scripted policy on Lift — "
     "3 clean, 5 with injected failures covering all four failure-injection "
@@ -43,17 +44,30 @@ DEFAULT_GOAL = (
 )
 
 
+def _mint_run_id() -> str:
+    """Generate a short, human-readable run ID. 6 hex chars = 16M space."""
+    return f"eval_{secrets.token_hex(3)}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--goal", default=DEFAULT_GOAL, help="One-line evaluation goal.")
     parser.add_argument(
-        "--mirror-root",
+        "--runs-root",
         type=Path,
-        default=DEFAULT_MIRROR_ROOT,
-        help="Local mirror of /memories/ where rollout mp4s land.",
+        default=DEFAULT_RUNS_ROOT,
+        help="Parent dir for all run artifact trees. Each run lives under <runs-root>/<run_id>/.",
+    )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Explicit run ID. Defaults to a freshly-minted eval_<6hex>.",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+
+    run_id = args.run_id or _mint_run_id()
+    mirror_root = args.runs_root / run_id
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -63,15 +77,18 @@ def main() -> int:
     client = Anthropic()
     handle = setup(client)
     print(
-        f"agent={handle.agent_id} env={handle.environment_id} session={handle.session_id}",
+        f"run_id={run_id} agent={handle.agent_id} "
+        f"env={handle.environment_id} session={handle.session_id}",
         flush=True,
     )
+    print(f"mirror_root={mirror_root}", flush=True)
 
     result = run_all_phases(
         client,
         handle,
         user_goal=args.goal,
-        mirror_root=args.mirror_root,
+        mirror_root=mirror_root,
+        run_id=run_id,
     )
 
     print("\n=== Phase stop reasons ===", flush=True)
@@ -93,7 +110,7 @@ def main() -> int:
     print(f"  pipeline time:    {format_duration(result.elapsed_seconds)}")
     print(f"  baseline time:    {format_duration(base_time)}  (sequential reviewer)")
 
-    print(f"\nArtifacts mirrored under: {args.mirror_root}", flush=True)
+    print(f"\nArtifacts mirrored under: {mirror_root}", flush=True)
     return 0 if all(s == "end_turn" for s in result.stops) else 1
 
 

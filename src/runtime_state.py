@@ -20,6 +20,7 @@ Two files in mirror_root:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -31,6 +32,7 @@ from src.costing import CostTracker
 
 RUNTIME_JSON = "runtime.json"
 CHAT_JSONL = "chat.jsonl"
+META_JSON = "meta.json"
 
 
 @dataclass
@@ -48,6 +50,29 @@ class RuntimeState:
     # tell — the UI then shows progress without a denominator until Phase 2
     # finishes (at which point the actual count becomes the denominator).
     planned_total: int | None = None
+    # Run identity (set once at session start). The UI run-picker keys on
+    # run_id; goal + started_at are surfaced in the picker's display label.
+    run_id: str = ""
+    goal: str = ""
+
+    def write_meta(self) -> None:
+        """One-shot, immutable per-run metadata. Written once at session start.
+
+        runtime.json mutates every event; meta.json is the frozen record of
+        what this run *was*: when it started, what was asked, what command
+        kicked it off. Useful for forensics later when the live state has
+        already been overwritten many times.
+        """
+        snapshot = {
+            "run_id": self.run_id,
+            "session_id": self.session_id,
+            "goal": self.goal,
+            "started_at": self.start_time,
+            "planned_total": self.planned_total,
+        }
+        path = self.mirror_root / META_JSON
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(snapshot, indent=2))
 
     def set_phase(self, phase: str) -> None:
         self.phase = phase
@@ -96,6 +121,9 @@ class RuntimeState:
         """Atomic write of the runtime.json snapshot."""
         n_roll, n_coarse, n_fine, n_fine_planned = self._dispatch_counts()
         snapshot = {
+            "run_id": self.run_id,
+            "goal": self.goal,
+            "started_at": self.start_time,
             "phase": self.phase,
             "elapsed_seconds": time.time() - self.start_time,
             "cost_usd": self.cost_tracker.total_cost_usd,
@@ -125,3 +153,59 @@ class RuntimeState:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
+
+
+@dataclass(frozen=True)
+class RunInfo:
+    """One past or in-progress run, surfaced to the UI's run picker."""
+
+    run_id: str
+    mirror_root: Path
+    started_at: float  # epoch seconds; 0.0 if missing
+    goal: str
+    phase: str  # 'starting' | a phase marker | 'complete' | 'idle'
+    n_rollouts: int
+    cost_usd: float
+
+
+def discover_runs(runs_root: Path) -> list[RunInfo]:
+    """Scan runs_root for run dirs. Returns newest-first by started_at.
+
+    A "run dir" is any subdirectory with at least one of meta.json or
+    runtime.json — meta.json is the authoritative identity (frozen at
+    start), runtime.json carries the live phase/cost/etc. We tolerate
+    either being absent so a half-written run still shows up.
+    """
+    if not runs_root.exists():
+        return []
+    out: list[RunInfo] = []
+    for child in runs_root.iterdir():
+        if not child.is_dir():
+            continue
+        meta_path = child / META_JSON
+        runtime_path = child / RUNTIME_JSON
+        if not meta_path.exists() and not runtime_path.exists():
+            continue
+        meta: dict[str, Any] = {}
+        runtime: dict[str, Any] = {}
+        if meta_path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                meta = json.loads(meta_path.read_text())
+        if runtime_path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                runtime = json.loads(runtime_path.read_text())
+        # Prefer meta for identity (immutable); fall back to runtime.
+        run_id = str(meta.get("run_id") or runtime.get("run_id") or child.name)
+        out.append(
+            RunInfo(
+                run_id=run_id,
+                mirror_root=child,
+                started_at=float(meta.get("started_at") or runtime.get("started_at") or 0.0),
+                goal=str(meta.get("goal") or runtime.get("goal") or ""),
+                phase=str(runtime.get("phase") or "idle"),
+                n_rollouts=int(runtime.get("n_rollouts") or 0),
+                cost_usd=float(runtime.get("cost_usd") or 0.0),
+            )
+        )
+    out.sort(key=lambda r: r.started_at, reverse=True)
+    return out

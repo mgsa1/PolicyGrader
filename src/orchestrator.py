@@ -360,6 +360,7 @@ def run_all_phases(
     *,
     user_goal: str,
     mirror_root: Path,
+    run_id: str = "",
     messages_client: Anthropic | None = None,
     cost_tracker: CostTracker | None = None,
 ) -> SessionResult:
@@ -384,7 +385,10 @@ def run_all_phases(
         start_time=start_time,
         session_id=handle.session_id,
         planned_total=_parse_planned_total(user_goal),
+        run_id=run_id,
+        goal=user_goal,
     )
+    runtime.write_meta()
     runtime.set_phase("starting")
 
     stops: list[str] = []

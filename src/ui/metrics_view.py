@@ -140,8 +140,8 @@ def render_cohort_strip(counts: CohortCounts) -> str:
     """Three-pill cohort strip: calibration / in-this-tab / excluded(deployment)."""
     pills = [
         ("Calibration rollouts", counts.n_calibration, theme.CAL),
-        ("In this tab", counts.n_calibration_with_findings, theme.CAL),
-        ("Excluded (deployment, no GT)", counts.n_deployment, theme.DEP),
+        ("Pass-2 eligible", counts.n_calibration_with_findings, theme.CAL),
+        ("Pass-2 excluded (deployment)", counts.n_deployment, theme.DEP),
     ]
     chips: list[str] = []
     for label, n, accent in pills:
