@@ -14,8 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import gradio as gr  # noqa: E402
-
+from src.ui import theme  # noqa: E402
 from src.ui.app import build_app  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,8 +34,7 @@ def main() -> int:
     app.launch(
         server_port=args.port,
         inbrowser=True,
-        theme=gr.themes.Soft(),
-        css=".gradio-container {max-width: 1400px !important;}",
+        css=theme.CSS,
         allowed_paths=[str(mirror_root)],
     )
     return 0

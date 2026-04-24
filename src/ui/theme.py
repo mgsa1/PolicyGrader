@@ -79,20 +79,31 @@ FONT_MONO = '"Roboto Mono", "SF Mono", "Menlo", "Consolas", ui-monospace, monosp
 CSS = f"""
 /* --- force light color-scheme everywhere --------------------------------- */
 /* Gradio 6 ships a dark-mode stylesheet keyed off @media (prefers-color-scheme:
-   dark) AND/OR a .dark class. Three lines of defense:
+   dark) AND/OR a .dark class. Four lines of defense:
      1. color-scheme: light disables the browser's auto dark-mode form styling.
      2. html.dark / body.dark / .gradio-container.dark selectors revert to
         light if Gradio auto-applied the class.
      3. Every theme variable below is pinned to a light palette value so
         Gradio's own components (Accordion, Block, Panel, Markdown body) can't
-        drift back to dark via var() fallbacks. */
-html, body, .gradio-container {{
+        drift back to dark via var() fallbacks.
+     4. Outer shell (html / body / gradio-app custom element / main / #root)
+        gets an explicit light background — the .gradio-container is
+        center-constrained to 1400px, so without this the uncovered viewport
+        margin would show whatever Gradio's outer host element inherited. */
+html, body, gradio-app, .main, #root,
+main, .gradio-container,
+body > div {{
   color-scheme: light !important;
   background: {BG} !important;
+}}
+html, body {{
+  margin: 0 !important;
+  min-height: 100vh !important;
 }}
 html.dark, body.dark, .gradio-container.dark,
 .gradio-container .dark {{
   color-scheme: light !important;
+  background: {BG} !important;
 }}
 
 .gradio-container {{
