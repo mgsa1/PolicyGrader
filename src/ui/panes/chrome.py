@@ -124,31 +124,32 @@ def hero_html(mirror_root: Path) -> str:
     time_save_pct = ((baseline_time - elapsed) / baseline_time * 100) if baseline_time > 0 else 0.0
 
     metrics = compute_metrics(rollouts) if rollouts else None
-    if metrics and metrics.pass1_tp + metrics.pass1_fp > 0:
-        p_pct = f"{metrics.pass1_precision * 100:.0f}"
-        p_lo, p_hi = wilson_ci_95(metrics.pass1_tp, metrics.pass1_tp + metrics.pass1_fp)
-        p_ci = f"CI {int(p_lo * 100)}–{int(p_hi * 100)}"
+    trust = judge_trust(rollouts) if rollouts else None
+    if metrics and metrics.n_labeled > 0:
+        acc = metrics.label_accuracy or 0.0
+        acc_pct = f"{acc * 100:.0f}"
+        acc_lo, acc_hi = wilson_ci_95(metrics.label_correct, metrics.n_labeled)
+        acc_ci = f"CI {int(acc_lo * 100)}–{int(acc_hi * 100)}"
     else:
-        p_pct, p_ci = "—", "no data"
-    if metrics and metrics.pass1_tp + metrics.pass1_fn > 0:
-        r_pct = f"{metrics.pass1_recall * 100:.0f}"
-        r_lo, r_hi = wilson_ci_95(metrics.pass1_tp, metrics.pass1_tp + metrics.pass1_fn)
-        r_ci = f"CI {int(r_lo * 100)}–{int(r_hi * 100)}"
+        acc_pct, acc_ci = "—", "no data"
+    if trust and trust.per_label_recall_avg is not None:
+        r_pct = f"{trust.per_label_recall_avg * 100:.0f}"
+        r_ci = f"{trust.n_labels_with_support} labels · support ≥ 3"
     else:
         r_pct, r_ci = "—", "no data"
     n_clusters = len(cluster_by_label(rollouts)) if rollouts else 0
 
-    if metrics and metrics.pass2_labeled > 0:
+    if metrics and metrics.n_labeled > 0:
         agree = (
-            f"agreed with injected ground truth on <b>{metrics.pass2_correct} of "
-            f"{metrics.pass2_labeled}</b> decisions."
+            f"agreed with injected ground truth on <b>{metrics.label_correct} of "
+            f"{metrics.n_labeled}</b> calibration rollouts."
         )
     else:
         agree = "judge calibration runs once Phase 3 finishes."
 
     return (
         '<div class="pg-hero-banner">'
-        + _hero_left(run_id, n, n_cal, n_dep, agree, p_pct, r_pct)
+        + _hero_left(run_id, n, n_cal, n_dep, agree, acc_pct, r_pct)
         + _hero_right(
             cost,
             baseline_cost,
@@ -159,8 +160,8 @@ def hero_html(mirror_root: Path) -> str:
             n,
             n_cal,
             n_dep,
-            p_pct,
-            p_ci,
+            acc_pct,
+            acc_ci,
             r_pct,
             r_ci,
             n_clusters,
@@ -175,12 +176,12 @@ def _hero_left(
     n_cal: int,
     n_dep: int,
     agree: str,
-    p_pct: str,
+    acc_pct: str,
     r_pct: str,
 ) -> str:
     cal_chip = styles.chip(f"{n_cal} calibration", variant="cal")
     dep_chip = styles.chip(f"{n_dep} deployment", variant="dep")
-    pr_chip = styles.chip(f"P {p_pct}% · R {r_pct}%", variant="ok") if p_pct != "—" else ""
+    pr_chip = styles.chip(f"acc {acc_pct}% · R {r_pct}%", variant="ok") if acc_pct != "—" else ""
     return (
         '<div class="pg-hero-left">'
         f'<div class="pg-hero-eyebrow-row">LIVE · SESSION '
@@ -189,7 +190,7 @@ def _hero_left(
         "<em>hours to minutes.</em></h1>"
         '<div class="pg-hero-sub">'
         f"An Opus 4.7 agent designed the test suite, ran <b>{n}</b> rollouts, "
-        f"watched every video twice, and {agree}"
+        f"watched every failure in a single dense-frame CoT pass, and {agree}"
         "</div>"
         '<div class="pg-hero-chiprow">'
         f"{cal_chip}{dep_chip}{pr_chip}"
@@ -208,8 +209,8 @@ def _hero_right(
     n: int,
     n_cal: int,
     n_dep: int,
-    p_pct: str,
-    p_ci: str,
+    acc_pct: str,
+    acc_ci: str,
     r_pct: str,
     r_ci: str,
     n_clusters: int,
@@ -236,7 +237,7 @@ def _hero_right(
         f'<span style="color:var(--pg-dep);">{num(str(n_dep))} dep</span>'
     )
 
-    p_value = f'{num(p_pct)}<span class="unit">%</span>' if p_pct != "—" else "—"
+    acc_value = f'{num(acc_pct)}<span class="unit">%</span>' if acc_pct != "—" else "—"
     r_value = f'{num(r_pct)}<span class="unit">%</span>' if r_pct != "—" else "—"
 
     return (
@@ -246,8 +247,8 @@ def _hero_right(
         + cell("Cost", num(html_escape(format_cost(cost))), cost_sub)
         + cell("Wall time", num(html_escape(format_duration(elapsed))), time_sub)
         + cell("Scenarios", num(str(n)), scen_sub)
-        + cell("Precision", p_value, p_ci)
-        + cell("Recall", r_value, r_ci)
+        + cell("Label accuracy", acc_value, acc_ci)
+        + cell("Avg recall", r_value, r_ci)
         + cell("Clusters", num(str(n_clusters)), "from 1M ctx")
         + "</div>"
         "</div>"
@@ -262,9 +263,8 @@ def phase_progress_html(mirror_root: Path) -> str:
     rt = read_runtime(mirror_root)
     cur = str(rt.get("phase", "starting"))
     n_roll = int(rt.get("n_rollouts_dispatched", 0))
-    n_coarse = int(rt.get("n_coarse_dispatched", 0))
-    n_fine = int(rt.get("n_fine_dispatched", 0))
-    n_fine_planned = int(rt.get("n_fine_planned", 0))
+    n_judge = int(rt.get("n_judge_dispatched", 0))
+    n_judge_planned = int(rt.get("n_judge_planned", 0))
     planned: int | None = rt.get("planned_total")
 
     cur_code = phase_code(cur)
@@ -290,21 +290,20 @@ def phase_progress_html(mirror_root: Path) -> str:
     )
     if rollout_total and state_for(1) == "active":
         rollout = _append_bar(rollout, "rollout", n_roll, rollout_total)
-    judge_sub = f"coarse {n_coarse}/{rollout_total or '?'} · fine {n_fine}/{n_fine_planned or '?'}"
-    judge_done = n_coarse + n_fine
-    judge_total = (rollout_total or 0) + (n_fine_planned or 0) if rollout_total else None
+    judge_total = n_judge_planned or None
+    judge_sub = f"{n_judge}/{judge_total or '?'} failed rollouts judged"
     judge = styles.phase_chip(
         "judge",
         state_for(2),
         counter=(
-            f"{judge_done} / {judge_total}"
+            f"{n_judge} / {judge_total}"
             if judge_total
-            else (f"{judge_done} done" if judge_done else None)
+            else (f"{n_judge} done" if n_judge else None)
         ),
         sub=judge_sub,
     )
     if judge_total and state_for(2) == "active":
-        judge = _append_bar(judge, "judge", judge_done, judge_total)
+        judge = _append_bar(judge, "judge", n_judge, judge_total)
     report = styles.phase_chip("report", state_for(3))
 
     return f'<div class="pg-phase-strip">{planner}{rollout}{judge}{report}</div>'

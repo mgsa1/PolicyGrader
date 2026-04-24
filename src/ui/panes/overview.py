@@ -103,9 +103,8 @@ def _kpi_strip(
 def _pipeline_cards(rt: dict[str, Any]) -> str:
     """4-card strip: planner / rollout / judge / report with current counters."""
     n_roll = int(rt.get("n_rollouts_dispatched", 0) or 0)
-    n_coarse = int(rt.get("n_coarse_dispatched", 0) or 0)
-    n_fine = int(rt.get("n_fine_dispatched", 0) or 0)
-    n_fine_planned = int(rt.get("n_fine_planned", 0) or 0)
+    n_judge = int(rt.get("n_judge_dispatched", 0) or 0)
+    n_judge_planned = int(rt.get("n_judge_planned", 0) or 0)
     planned = rt.get("planned_total")
 
     def card(phase: str, title: str, top: str, bottom: str) -> str:
@@ -124,13 +123,17 @@ def _pipeline_cards(rt: dict[str, Any]) -> str:
     planner_sub = f"designed {num(str(planned))} scenarios" if planned else "designing suite…"
     planner_top = "Plan drafted" if planned else "Pending"
     rollout_sub = f"of {num(str(planned))} planned" if planned else "— no denominator yet"
-    judge_sub = f"coarse {num(str(n_coarse))} · fine {num(f'{n_fine}/{n_fine_planned}')}"
+    judge_sub = (
+        f"of {num(str(n_judge_planned))} sim failures"
+        if n_judge_planned
+        else "waiting on sim failures"
+    )
 
     return (
         '<div class="pg-pipeline-grid">'
         + card("planner", "Planner", planner_top, planner_sub)
         + card("rollout", "Rollout", f"{num(str(n_roll))} executed", rollout_sub)
-        + card("judge", "Judge", f"{num(str(n_coarse + n_fine))} calls", judge_sub)
+        + card("judge", "Judge", f"{num(str(n_judge))} calls", judge_sub)
         + card(
             "report",
             "Report",
@@ -139,5 +142,3 @@ def _pipeline_cards(rt: dict[str, Any]) -> str:
         )
         + "</div>"
     )
-
-

@@ -124,7 +124,7 @@ def _memories_for(run: str) -> str:
     return live.memories_tree_html(_as_path(run))
 
 
-def _cal_metrics_for(run: str) -> tuple[str, str, str, str]:
+def _cal_metrics_for(run: str) -> tuple[str, str, str]:
     return calibration.metrics_blocks(_as_path(run))
 
 
@@ -220,74 +220,30 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 initial_blocks = calibration.metrics_blocks(initial_path)
                 cal_cohort_html = gr.HTML(value=initial_blocks[0])
                 cal_caption_html = gr.HTML(value=initial_blocks[1])
-                cal_binary_html = gr.HTML(value=initial_blocks[2])
-                gr.HTML(value=calibration.heatmap_caption_html())
+                # Per-label breakdown sits ABOVE the confusion matrix so that
+                # the matrix sits directly above the drill filters + table —
+                # clicking a cell narrows the table immediately below it.
+                cal_per_label_html = gr.HTML(value=initial_blocks[2])
 
-                # Clickable confusion matrix — pre-allocated 9×9 grid of gr.Buttons.
-                # Each button binds its own (expected, judged) pair to the drill
-                # filter, so clicking a cell selects both dropdowns + refreshes
-                # the drill table in one shot.
-                cm_labels = calibration.all_labels()  # 9 canonical labels
-                cm_initial_cells, cm_initial_used = calibration.clickable_grid_data(initial_path)
-                cm_initial_used_set = {
-                    m for m, u in zip(cm_labels, cm_initial_used, strict=True) if u
-                }
                 with gr.Column(elem_classes=["pg-cm"]):
                     gr.HTML(
                         value=(
                             "<div class='pg-cm-eyebrow'>"
-                            "Pass-2 — confusion matrix (click a cell to filter)"
+                            "Multiclass confusion matrix (click a cell to filter)"
                             "</div>"
                         )
                     )
-                    # Column-header row (corner spacer + 9 labels)
-                    with gr.Row(elem_classes=["pg-cm-row"]):
-                        gr.HTML(value="<div class='pg-cm-corner'></div>")
-                        cm_col_headers: list[Any] = []
-                        for lab in cm_labels:
-                            cm_col_headers.append(
-                                gr.HTML(
-                                    value=f"<div class='pg-cm-colhead'>{lab}</div>",
-                                    visible=lab in cm_initial_used_set,
-                                )
-                            )
-                    # 9 body rows
-                    cm_row_headers: list[Any] = []
-                    cm_buttons: list[Any] = []
-                    for i, exp in enumerate(cm_labels):
-                        with gr.Row(elem_classes=["pg-cm-row"]):
-                            cm_row_headers.append(
-                                gr.HTML(
-                                    value=f"<div class='pg-cm-rowhead'>{exp}</div>",
-                                    visible=cm_initial_used[i],
-                                )
-                            )
-                            for j, _jud in enumerate(cm_labels):
-                                idx = i * len(cm_labels) + j
-                                cell = cm_initial_cells[idx]
-                                if not cell["show"]:
-                                    btn_value, btn_classes, btn_visible = "", ["pg-cm-cell"], False
-                                else:
-                                    cnt = cell["count"]
-                                    btn_value = str(cnt) if cnt > 0 else "·"
-                                    if cell["diag"]:
-                                        btn_classes = ["pg-cm-cell", "diag"] + (
-                                            ["zero"] if cnt == 0 else []
-                                        )
-                                    else:
-                                        btn_classes = ["pg-cm-cell"] + (
-                                            ["miss"] if cnt > 0 else []
-                                        )
-                                    btn_visible = True
-                                cm_buttons.append(
-                                    gr.Button(
-                                        value=btn_value,
-                                        elem_classes=btn_classes,
-                                        visible=btn_visible,
-                                    )
-                                )
+                    cm_html = gr.HTML(value=calibration.matrix_html(initial_path))
 
-                cal_per_label_html = gr.HTML(value=initial_blocks[3])
+                # Hidden bridge: an inline-script onclick on the matrix cells
+                # writes "<seq>|<expected>::<judged>" into this textbox; the
+                # leading sequence number ensures repeat clicks on the same
+                # cell still fire .input (the textbox sees a different value).
+                cm_click = gr.Textbox(
+                    value="",
+                    visible=False,
+                    elem_id="pg-cm-payload",
+                )
 
                 gr.HTML(value=calibration.drill_description_html())
                 initial_labels = calibration.heatmap_labels(initial_path)
@@ -313,8 +269,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 with gr.Tabs():
                     with gr.Tab("By label"):
                         gr.Markdown(
-                            "**Each card** = one Pass-2 taxonomy label seen across "
-                            "all judged failures. Each rollout in the card carries "
+                            "**Each card** = one judge taxonomy label seen across "
+                            "all failed rollouts. Each rollout in the card carries "
                             "its population chip (calibration vs deployment). "
                             "Click a keyframe to open the source mp4."
                         )
@@ -352,63 +308,35 @@ def build_app(runs_root: Path) -> gr.Blocks:
         heavy.tick(
             fn=_cal_metrics_for,
             inputs=[selected_run],
-            outputs=[cal_cohort_html, cal_caption_html, cal_binary_html, cal_per_label_html],
+            outputs=[cal_cohort_html, cal_caption_html, cal_per_label_html],
         )
-        # Confusion-matrix grid refresh: 81 buttons + 9 col headers + 9 row headers.
-        def _refresh_confusion_matrix(run: str) -> tuple[Any, ...]:
-            cells, used = calibration.clickable_grid_data(_as_path(run))
-            out: list[Any] = []
-            for cell in cells:
-                if not cell["show"]:
-                    out.append(gr.update(value="", visible=False))
-                    continue
-                cnt = cell["count"]
-                value = str(cnt) if cnt > 0 else "·"
-                if cell["diag"]:
-                    classes = ["pg-cm-cell", "diag"] + (["zero"] if cnt == 0 else [])
-                else:
-                    classes = ["pg-cm-cell"] + (["miss"] if cnt > 0 else [])
-                out.append(gr.update(value=value, visible=True, elem_classes=classes))
-            for j, lab in enumerate(cm_labels):
-                out.append(
-                    gr.update(
-                        value=f"<div class='pg-cm-colhead'>{lab}</div>", visible=used[j]
-                    )
-                )
-            for i, lab in enumerate(cm_labels):
-                out.append(
-                    gr.update(
-                        value=f"<div class='pg-cm-rowhead'>{lab}</div>", visible=used[i]
-                    )
-                )
-            return tuple(out)
-
+        # Confusion-matrix HTML refresh on the slow timer.
         heavy.tick(
-            fn=_refresh_confusion_matrix,
+            fn=lambda r: calibration.matrix_html(_as_path(r)),
             inputs=[selected_run],
-            outputs=[*cm_buttons, *cm_col_headers, *cm_row_headers],
+            outputs=cm_html,
         )
 
-        # Per-cell click → set both filter dropdowns + status + drill table.
-        def _make_cell_click(exp: str, jud: str) -> Any:
-            def handler(run: str) -> tuple[Any, Any, str, str]:
-                f = DrillFilter(expected=exp, judged=jud)
-                return (
-                    gr.update(value=exp),
-                    gr.update(value=jud),
-                    calibration.filter_status_html(f),
-                    calibration.drill_html(_as_path(run), f),
-                )
+        # JS bridge: cell-button onclick writes "<seq>|exp::jud" into cm_click.
+        # Parse, drop the seq prefix, dispatch the drill update.
+        def _on_cm_click(payload: str, run: str) -> tuple[Any, Any, str, str]:
+            if not payload or "::" not in payload:
+                return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+            after_seq = payload.split("|", 1)[-1]
+            exp, jud = after_seq.split("::", 1)
+            f = DrillFilter(expected=exp, judged=jud)
+            return (
+                gr.update(value=exp),
+                gr.update(value=jud),
+                calibration.filter_status_html(f),
+                calibration.drill_html(_as_path(run), f),
+            )
 
-            return handler
-
-        for i, exp_label in enumerate(cm_labels):
-            for j, jud_label in enumerate(cm_labels):
-                cm_buttons[i * len(cm_labels) + j].click(
-                    fn=_make_cell_click(exp_label, jud_label),
-                    inputs=[selected_run],
-                    outputs=[filter_expected, filter_judged, filter_status, drill_html],
-                )
+        cm_click.input(
+            fn=_on_cm_click,
+            inputs=[cm_click, selected_run],
+            outputs=[filter_expected, filter_judged, filter_status, drill_html],
+        )
         heavy.tick(fn=_cal_scope_for, inputs=[selected_run], outputs=cal_scope_html)
         heavy.tick(fn=_dep_scope_for, inputs=[selected_run], outputs=dep_scope_html)
         heavy.tick(fn=_trust_for, inputs=[selected_run], outputs=trust_html)
@@ -417,6 +345,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
             fn=_findings_condition_for, inputs=[selected_run], outputs=findings_condition_html
         )
         heavy.tick(fn=_findings_table_for, inputs=[selected_run], outputs=findings_table_html)
+
         # Refresh the picker's choices AND auto-switch to the most-recent run if
         # the current selection has gone stale (placeholder, deleted, etc.). The
         # state update lets every panel pick the new run up on its next tick.
@@ -476,7 +405,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
         def _on_run_change(new_run: str) -> tuple[Any, ...]:
             p = Path(new_run)
             blocks = calibration.metrics_blocks(p)
-            cm_updates = _refresh_confusion_matrix(new_run)
             return (
                 new_run,
                 chrome.topbar_meta_html(p),
@@ -492,14 +420,13 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 blocks[0],
                 blocks[1],
                 blocks[2],
-                blocks[3],
                 chrome.scope_strip_html(p, "deployment"),
                 chrome.judge_trust_banner_html(p),
                 findings.cluster_cards_html(p, "label"),
                 findings.cluster_cards_html(p, "condition"),
                 findings.rollout_table_html(p),
                 calibration.drill_html(p, EMPTY_FILTER),
-                *cm_updates,
+                calibration.matrix_html(p),
             )
 
         run_picker.change(
@@ -519,7 +446,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 cal_scope_html,
                 cal_cohort_html,
                 cal_caption_html,
-                cal_binary_html,
                 cal_per_label_html,
                 dep_scope_html,
                 trust_html,
@@ -527,9 +453,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 findings_condition_html,
                 findings_table_html,
                 drill_html,
-                *cm_buttons,
-                *cm_col_headers,
-                *cm_row_headers,
+                cm_html,
             ],
         )
 

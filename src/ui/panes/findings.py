@@ -34,7 +34,7 @@ def cluster_cards_html(mirror_root: Path, mode: str) -> str:
     """Render all cluster cards for the Deployment findings tab.
 
     `mode` ∈ {'label', 'condition'} selects between cluster_by_label and
-    cluster_by_condition — the former groups by Pass-2 taxonomy output, the
+    cluster_by_condition — the former groups by judge taxonomy label, the
     latter by perturbation condition (scripted) or (env, policy) pair (BC-RNN).
     """
     rollouts = load_scored_rollouts(mirror_root)
@@ -47,7 +47,10 @@ def cluster_cards_html(mirror_root: Path, mode: str) -> str:
     keyframes = render_all_keyframes(rollouts, mirror_root)
     total_failures = sum(1 for r in rollouts if r.judged_failure)
     if total_failures == 0:
-        return empty("No judged failures yet — Pass-1 hasn't flagged any rollout as fail.")
+        return empty(
+            "No judged failures yet — either every rollout succeeded, or the "
+            "judge hasn't finished labeling the sim failures."
+        )
 
     cal_stats = per_label_calibration(rollouts)
     clusters = cluster_by_label(rollouts) if mode == "label" else cluster_by_condition(rollouts)
@@ -80,7 +83,7 @@ def _cluster_card(
         )
     )
 
-    summary = cluster.rollouts[0].pass2_description if cluster.rollouts else None
+    summary = cluster.rollouts[0].judge_description if cluster.rollouts else None
     summary_html = (
         f'<div class="pg-cluster-summary">{html_escape(str(summary)[:240])}</div>'
         if summary
@@ -201,13 +204,13 @@ def _rollout_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
         if r.video_path_host
         else f'<span class="pg-drill-link">{html_escape(r.rollout_id)}</span>'
     )
-    judged = r.pass2_label or ("none" if r.pass1_verdict == "pass" else "(pending)")
+    judged = r.judge_label or ("none" if r.success else "(pending)")
     success_badge = (
         '<span class="pg-match-badge ok">success</span>'
         if r.success
         else '<span class="pg-match-badge err">failure</span>'
     )
-    desc = (r.pass2_description or "—")[:160]
+    desc = (r.judge_description or "—")[:160]
     return (
         f'<div class="pg-ptable-row" '
         f'style="{_ROLLOUT_TABLE_COLS}align-items:start;padding:12px 10px;">'

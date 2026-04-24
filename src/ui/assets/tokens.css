@@ -1450,28 +1450,46 @@
   padding-bottom: 10px;
   border-bottom: 1px solid var(--pg-line);
 }
-.pg-cm-row { gap: 4px !important; align-items: stretch !important; flex-wrap: nowrap !important; }
-.pg-cm-row > * { min-width: 0 !important; flex: 0 0 70px !important; }
-.pg-cm-row > .pg-cm-rowhead { flex: 0 0 160px !important; }
-.pg-cm-corner { flex: 0 0 160px !important; }
-
-.pg-cm-colhead, .pg-cm-rowhead {
-  font-family: var(--pg-font-mono);
-  font-size: 10px; font-weight: 600;
-  color: var(--pg-ink-4);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  display: flex; align-items: center;
-  padding: 4px 6px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* Single CSS-grid container — every header + cell is a grid child, no
+   inter-row gaps from Gradio. Columns set inline (220px + N×78px). */
+.pg-cm-grid {
+  display: grid;
+  gap: 4px;
+  align-items: stretch;
+  margin-top: 4px;
 }
-.pg-cm-colhead { justify-content: center; height: 28px; transform: rotate(-20deg); transform-origin: center; }
-.pg-cm-rowhead { justify-content: flex-end; }
-
-/* Cell button: small rounded square, mono numerals, color by diag/off-diag. */
-.pg-cm-cell button, button.pg-cm-cell {
-  width: 100% !important;
-  min-width: 0 !important;
-  height: 44px !important;
+.pg-cm-corner {
+  /* Top-left blank cell, sized to row-header width × col-header height. */
+  height: 110px;
+}
+.pg-cm-colhead {
+  height: 110px;
+  display: flex; align-items: flex-end; justify-content: flex-start;
+  overflow: visible;
+  padding-bottom: 4px;
+}
+.pg-cm-colhead > span {
+  font-family: var(--pg-font-mono);
+  font-size: 11px; font-weight: 500;
+  color: var(--pg-ink-3);
+  white-space: nowrap;
+  transform: rotate(-40deg);
+  transform-origin: left bottom;
+  display: inline-block;
+  /* Pull right so the rotated text starts roughly at the cell's center. */
+  margin-left: 28px;
+}
+.pg-cm-rowhead {
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 10px 0 0;
+  font-family: var(--pg-font-mono);
+  font-size: 11px; font-weight: 500;
+  color: var(--pg-ink-3);
+  white-space: nowrap;
+  height: 44px;
+}
+.pg-cm-cell {
+  height: 44px;
   padding: 0 !important;
   border: 1px solid var(--pg-line) !important;
   border-radius: 6px !important;
@@ -1481,26 +1499,39 @@
   color: var(--pg-ink-4) !important;
   background: var(--pg-surface-2) !important;
   cursor: pointer;
-  transition: transform 80ms ease, box-shadow 80ms ease;
+  transition: transform 80ms ease, box-shadow 80ms ease, filter 80ms ease;
 }
-.pg-cm-cell button:hover, button.pg-cm-cell:hover {
+.pg-cm-cell:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+  filter: brightness(1.05);
 }
-/* Diagonal cells (matches): green tint when count > 0, faint when zero. */
-.pg-cm-cell.diag button, button.pg-cm-cell.diag {
+.pg-cm-cell.diag {
   background: rgba(19,115,51,0.10) !important;
   color: var(--pg-ok) !important;
-  border-color: rgba(19,115,51,0.20) !important;
+  border-color: rgba(19,115,51,0.22) !important;
 }
-.pg-cm-cell.diag.zero button, button.pg-cm-cell.diag.zero {
+.pg-cm-cell.diag-zero {
+  /* Diagonal but no support — keep it diagonal-coloured-faintly so the eye
+     can still see the diagonal even on sparse matrices. */
+  background: rgba(19,115,51,0.04) !important;
+  color: var(--pg-ink-5) !important;
+  border-color: rgba(19,115,51,0.12) !important;
+}
+.pg-cm-cell.miss {
+  background: rgba(179,38,30,0.08) !important;
+  color: var(--pg-err) !important;
+  border-color: rgba(179,38,30,0.20) !important;
+}
+.pg-cm-cell.empty {
   background: var(--pg-surface-2) !important;
   color: var(--pg-ink-5) !important;
   border-color: var(--pg-line) !important;
 }
-/* Off-diagonal cells with content (mis-labels): red tint. */
-.pg-cm-cell.miss button, button.pg-cm-cell.miss {
-  background: rgba(179,38,30,0.08) !important;
-  color: var(--pg-err) !important;
-  border-color: rgba(179,38,30,0.18) !important;
+.pg-cm-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--pg-ink-4);
+  font-style: italic;
+  font-size: 13px;
 }

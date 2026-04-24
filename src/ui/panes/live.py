@@ -36,9 +36,10 @@ _PHASE_EXPLAINERS: dict[str, tuple[str, str, list[str]]] = {
     ),
     "BEGIN PHASE 3: JUDGE": (
         "Vision judge",
-        "Watches every rollout video twice. Pass-1: cheap binary pass/fail. "
-        "Pass-2 (only on failures): high-res frames, picks a failure label, "
-        "points at the visual evidence.",
+        "Single dense-frame chain-of-thought call per sim-failed rollout. "
+        "Walks through ~30 high-res frames, names the decisive frame, picks a "
+        "failure label, points at the evidence (or abstains on no-contact "
+        "failures). Sim handles the binary pass/fail decision.",
         ["findings.jsonl"],
     ),
     "BEGIN PHASE 4: REPORT": (

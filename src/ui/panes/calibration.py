@@ -18,7 +18,7 @@ from src.ui.metrics_view import (
     render_static_blocks,
 )
 from src.ui.styles import empty, html_escape
-from src.ui.synthesis import compute_metrics, load_scored_rollouts, render_all_keyframes
+from src.ui.synthesis import load_scored_rollouts, render_all_keyframes
 
 
 def calibration_header_html() -> str:
@@ -26,8 +26,13 @@ def calibration_header_html() -> str:
     return render_judge_calibration_header()
 
 
-def metrics_blocks(mirror_root: Path) -> tuple[str, str, str, str]:
-    """(cohort, caption, binary_panel, per_label_table) HTML for the tab body."""
+def metrics_blocks(mirror_root: Path) -> tuple[str, str, str]:
+    """(cohort, caption, per_label_table) HTML for the tab body.
+
+    Binary panel retired with the single-pass CoT migration — sim owns the
+    binary verdict, so the only worthwhile metric here is the multiclass
+    label breakdown.
+    """
     rollouts = load_scored_rollouts(mirror_root)
     if not rollouts:
         return (
@@ -36,10 +41,8 @@ def metrics_blocks(mirror_root: Path) -> tuple[str, str, str, str]:
             ),
             "",
             "",
-            "",
         )
-    binary = compute_metrics(rollouts)
-    return render_static_blocks(rollouts, binary)
+    return render_static_blocks(rollouts)
 
 
 def heatmap_figure(mirror_root: Path) -> Any:
@@ -49,6 +52,7 @@ def heatmap_figure(mirror_root: Path) -> Any:
 
 # ---- Clickable confusion matrix --------------------------------------------------
 
+
 # Fixed 9-label list in canonical order. Buttons in build_app are pre-allocated
 # against this list; visibility is toggled per tick based on used_mask.
 def all_labels() -> list[str]:
@@ -56,6 +60,82 @@ def all_labels() -> list[str]:
     from src.ui.metrics_view import _taxonomy_order
 
     return [m.value for m in _taxonomy_order()]
+
+
+def matrix_html(mirror_root: Path) -> str:
+    """Single-block HTML confusion matrix using CSS Grid.
+
+    Each cell is an HTML <button>; the onclick fires a JS bridge that sets a
+    hidden gr.Textbox's value (the textbox's `.input` handler in build_app
+    does the actual drill filter + table update). One gr.HTML widget instead
+    of 99 widgets — much tighter layout, no inter-row gaps from Gradio.
+    """
+    from src.metrics import compute as compute_label_metrics
+    from src.ui.metrics_view import _taxonomy_order, _used_labels, to_labeled_rollouts
+
+    rollouts = load_scored_rollouts(mirror_root)
+    labeled = to_labeled_rollouts(rollouts)
+    metrics = compute_label_metrics(labeled)
+    order = _taxonomy_order()
+    used = _used_labels(metrics, order)
+
+    if not used:
+        return (
+            "<div class='pg-cm-empty'>"
+            "Confusion matrix populates once the judge has scored at least "
+            "one calibration rollout."
+            "</div>"
+        )
+
+    n = len(used)
+    grid_cols = f"220px repeat({n}, 78px)"
+
+    # JS bridge — defined once via window guard so re-renders are idempotent.
+    bridge = (
+        "<script>"
+        "if (!window.pgCmClick) { window.pgCmClick = function(exp, jud) {"
+        "  const root = document.getElementById('pg-cm-payload');"
+        "  if (!root) return;"
+        "  const ta = root.querySelector('textarea, input');"
+        "  if (!ta) return;"
+        "  const seq = (parseInt(ta.dataset.seq || '0') + 1).toString();"
+        "  ta.dataset.seq = seq;"
+        "  ta.value = seq + '|' + exp + '::' + jud;"
+        "  ta.dispatchEvent(new Event('input', {bubbles: true}));"
+        "} }"
+        "</script>"
+    )
+
+    parts: list[str] = [
+        bridge,
+        f"<div class='pg-cm-grid' style='grid-template-columns:{grid_cols};'>",
+    ]
+
+    # Top-left corner + col headers
+    parts.append("<div class='pg-cm-corner'></div>")
+    for jud in used:
+        parts.append(f"<div class='pg-cm-colhead'><span>{html_escape(jud.value)}</span></div>")
+
+    # Body rows
+    for exp in used:
+        parts.append(f"<div class='pg-cm-rowhead'>{html_escape(exp.value)}</div>")
+        for jud in used:
+            count = metrics.confusion.get(exp, {}).get(jud, 0)
+            diag = exp == jud
+            classes = ["pg-cm-cell"]
+            if diag:
+                classes.append("diag" if count > 0 else "diag-zero")
+            else:
+                classes.append("miss" if count > 0 else "empty")
+            label = str(count) if count > 0 else "·"
+            click_args = f"'{exp.value}','{jud.value}'"
+            parts.append(
+                f"<button type='button' class='{' '.join(classes)}' "
+                f'onclick="pgCmClick({click_args})">{label}</button>'
+            )
+
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def clickable_grid_data(mirror_root: Path) -> tuple[list[dict[str, Any]], list[bool]]:
@@ -138,7 +218,7 @@ def heatmap_caption_html() -> str:
     return (
         '<div style="font-size:13px;color:var(--pg-ink-3);'
         'margin:var(--pg-s-4) 0 var(--pg-s-2) 0;line-height:1.5;">'
-        "<b>Pass-2 — multiclass confusion.</b> Rows = expected, cols = judged. "
+        "<b>Multiclass confusion.</b> Rows = expected, cols = judged. "
         "Diagonal (green) = matches, off-diagonal (red) = mis-labels. "
         "Zero cells are neutral with a middle dot."
         "</div>"
