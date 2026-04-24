@@ -4,10 +4,12 @@ CLAUDE.md sec 8: "Schemas at boundaries. Every cross-module function takes and
 returns Pydantic models. No dicts across module boundaries." This file is the
 canonical source of those types.
 
-Three core models:
-  RolloutConfig  - one row of the test matrix; what to run
-  RolloutResult  - what came back; carries ground-truth label for grading
-  Finding        - vision judge output for one rollout (pass1 + optional pass2)
+Core models:
+  RolloutConfig    - one row of the test matrix; what to run
+  RolloutResult    - what came back; carries ground-truth label for grading
+  FrameObservation - one line of the judge's per-frame chain of thought
+  JudgeAnnotation  - single-call judge output (label + frame + optional point + CoT)
+  Finding          - one row of findings.jsonl: sim success + optional annotation
 """
 
 from __future__ import annotations
@@ -96,42 +98,84 @@ class RolloutResult(BaseModel):
     seed: int
 
 
-class Pass1Verdict(BaseModel):
-    """Coarse vision pass: did the rollout succeed, and roughly when did it break?"""
+# ---- Judge output (single-call CoT pass; see src/vision/judge.py) -------------
+
+
+GripperState = Literal["open", "closing", "closed", "opening"]
+CubeState = Literal[
+    "still_on_table",
+    "moving_on_table",
+    "in_gripper",
+    "falling",
+    "off_table",
+]
+ContactState = Literal["none", "touching_cube", "grasped"]
+
+
+class FrameObservation(BaseModel):
+    """One row of the judge's explicit per-frame chain of thought.
+
+    The judge emits one of these per frame it was shown, in chronological order.
+    Forcing this structured walkthrough before the final label is what keeps the
+    judge from defaulting to approach_miss when it sees an empty-gripper
+    consequence frame.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    verdict: Literal["pass", "fail"]
-    failure_frame_range: tuple[int, int] | None = None
-
-    @model_validator(mode="after")
-    def _range_only_on_fail(self) -> Pass1Verdict:
-        if self.verdict == "pass" and self.failure_frame_range is not None:
-            raise ValueError("failure_frame_range must be None when verdict=='pass'")
-        return self
+    frame_index: int = Field(..., ge=0)
+    gripper_state: GripperState
+    cube_state: CubeState
+    contact: ContactState
 
 
-class Pass2Annotation(BaseModel):
-    """Fine vision pass: taxonomy label + 2576px point on the failure frame."""
+class JudgeAnnotation(BaseModel):
+    """Single-call judge output for one failed rollout.
+
+    `frame_index` is in the ORIGINAL mp4's frame indexing — the judge module
+    converts from its sampled-frame indexing before returning, so downstream
+    consumers (keyframe rendering, UI) can index the raw video directly.
+
+    `point` is (x, y) in the 2576-px long-edge grid of the chosen frame, OR
+    None when no gripper-cube contact is visible (e.g. approach_miss,
+    gripper_collision). `None` is a first-class output: a wrong pixel is
+    strictly worse than an abstention.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     taxonomy_label: FailureMode
-    point: tuple[int, int]
+    frame_index: int = Field(..., ge=0)
+    point: tuple[int, int] | None = None
     description: str = Field(..., min_length=1)
+    per_frame_observations: list[FrameObservation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _label_not_none(self) -> JudgeAnnotation:
+        if self.taxonomy_label == FailureMode.NONE:
+            raise ValueError(
+                "JudgeAnnotation must not use FailureMode.NONE — the judge only "
+                "runs on sim-confirmed failures; successes skip the judge entirely"
+            )
+        return self
 
 
 class Finding(BaseModel):
-    """One row of /memories/findings.jsonl: judge's full output for one rollout."""
+    """One row of /memories/findings.jsonl: judge's output for one rollout.
+
+    Binary success comes from the simulator (`env._check_success()`), not from
+    vision. The judge only runs on sim failures, so `annotation` is non-None
+    exactly when `sim_success` is False (and the judge has finished).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     rollout_id: str
-    pass1: Pass1Verdict
-    pass2: Pass2Annotation | None = None
+    sim_success: bool
+    annotation: JudgeAnnotation | None = None
 
     @model_validator(mode="after")
-    def _pass2_only_on_fail(self) -> Finding:
-        if self.pass1.verdict == "pass" and self.pass2 is not None:
-            raise ValueError("pass2 annotation must be None when pass1.verdict=='pass'")
+    def _annotation_only_on_failure(self) -> Finding:
+        if self.sim_success and self.annotation is not None:
+            raise ValueError("annotation must be None when sim_success=True")
         return self

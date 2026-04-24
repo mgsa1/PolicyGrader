@@ -22,13 +22,20 @@ def _scored(
     rid: str,
     *,
     success: bool = False,
-    pass1: str | None = "fail",
-    pass2_label: str | None = "approach_miss",
+    judge_label: str | None = "approach_miss",
     knobs: dict[str, Any] | None = None,
     policy_kind: str = "scripted",
     env_name: str = "Lift",
     ground_truth_label: str | None = None,
 ) -> ScoredRollout:
+    """Minimal ScoredRollout factory matching the single-judge model.
+
+    The judge only runs on sim-confirmed failures, so callers that set
+    success=True should normally pass judge_label=None. A non-None
+    judge_label with success=True is legal in the dataclass but semantically
+    "judge disagrees with sim" — useful for exercising the compute_metrics
+    success-implies-none branch.
+    """
     base_knobs = {
         "injected_action_noise": 0.0,
         "injected_premature_close": False,
@@ -46,12 +53,10 @@ def _scored(
         steps_taken=42,
         ground_truth_label=ground_truth_label,
         injection_knobs=base_knobs,
-        pass1_verdict=pass1,
-        pass1_failure_frame_range=(3, 13) if pass1 == "fail" else None,
-        pass1_coarse_total_frames=14 if pass1 == "fail" else None,
-        pass2_label=pass2_label,
-        pass2_point=(100, 200) if pass2_label else None,
-        pass2_description="x" if pass2_label else None,
+        judge_label=judge_label,
+        judge_frame_index=70 if judge_label else None,
+        judge_point=(100, 200) if judge_label else None,
+        judge_description="x" if judge_label else None,
         video_path_host=None,
     )
 
@@ -60,11 +65,12 @@ class TestClusterByLabel:
     def test_empty(self) -> None:
         assert cluster_by_label([]) == []
 
-    def test_excludes_passes(self) -> None:
-        # Pass-1 = pass should not appear in any cluster.
+    def test_excludes_successes(self) -> None:
+        # A successful rollout has no judge label — it should not appear in
+        # any taxonomy cluster.
         rollouts = [
-            _scored("a", pass1="pass", pass2_label=None, success=True),
-            _scored("b", pass1="fail", pass2_label="slip_during_lift"),
+            _scored("a", success=True, judge_label=None),
+            _scored("b", success=False, judge_label="slip_during_lift"),
         ]
         clusters = cluster_by_label(rollouts)
         assert len(clusters) == 1
@@ -73,10 +79,10 @@ class TestClusterByLabel:
 
     def test_one_cluster_per_label_sorted_by_size(self) -> None:
         rollouts = [
-            _scored("a", pass2_label="approach_miss"),
-            _scored("b", pass2_label="approach_miss"),
-            _scored("c", pass2_label="slip_during_lift"),
-            _scored("d", pass2_label="approach_miss"),
+            _scored("a", judge_label="approach_miss"),
+            _scored("b", judge_label="approach_miss"),
+            _scored("c", judge_label="slip_during_lift"),
+            _scored("d", judge_label="approach_miss"),
         ]
         clusters = cluster_by_label(rollouts)
         assert [c.name for c in clusters] == ["approach_miss", "slip_during_lift"]
@@ -85,9 +91,9 @@ class TestClusterByLabel:
 
     def test_breakdown_counts_conditions_within_label(self) -> None:
         rollouts = [
-            _scored("a", pass2_label="approach_miss", knobs={"injected_angle_deg": 20}),
-            _scored("b", pass2_label="approach_miss", knobs={"injected_angle_deg": 15}),
-            _scored("c", pass2_label="approach_miss"),  # clean knobs
+            _scored("a", judge_label="approach_miss", knobs={"injected_angle_deg": 20}),
+            _scored("b", judge_label="approach_miss", knobs={"injected_angle_deg": 15}),
+            _scored("c", judge_label="approach_miss"),  # clean knobs
         ]
         clusters = cluster_by_label(rollouts)
         assert len(clusters) == 1
@@ -117,7 +123,7 @@ class TestClusterByCondition:
         rollouts = [
             _scored(
                 "multi",
-                pass2_label="approach_miss",
+                judge_label="approach_miss",
                 knobs={"injected_action_noise": 0.15, "injected_grip_scale": 0.3},
             )
         ]
@@ -129,15 +135,14 @@ class TestClusterByCondition:
     def test_breakdown_counts_labels_within_condition(self) -> None:
         rollouts = [
             _scored(
-                "a", pass2_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
+                "a", judge_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
             ),
             _scored(
-                "b", pass2_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
+                "b", judge_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
             ),
-            _scored("c", pass2_label="approach_miss", knobs={"injected_action_noise": 0.15}),
+            _scored("c", judge_label="approach_miss", knobs={"injected_action_noise": 0.15}),
         ]
         clusters = cluster_by_condition(rollouts)
-        # All three are high-noise.
         noise_cluster = next(c for c in clusters if "noise" in c.name)
         assert len(noise_cluster.rollouts) == 3
         assert noise_cluster.breakdown["knock_object_off_table"] == 2
@@ -145,71 +150,93 @@ class TestClusterByCondition:
 
 
 class TestComputeMetrics:
-    def test_perfect_pass1(self) -> None:
-        # 2 clean (env=success, judge=pass) + 2 fail (env=fail, judge=fail).
+    def test_perfect_label_accuracy(self) -> None:
+        # 2 successes on 'none'-labelled scripted rollouts + 2 judged failures
+        # where the judge's label matches ground truth.
         rollouts = [
-            _scored("c0", success=True, pass1="pass", pass2_label=None),
-            _scored("c1", success=True, pass1="pass", pass2_label=None),
-            _scored("f0", success=False, pass1="fail", pass2_label="approach_miss"),
-            _scored("f1", success=False, pass1="fail", pass2_label="slip_during_lift"),
-        ]
-        m = compute_metrics(rollouts)
-        assert m.pass1_tp == 2
-        assert m.pass1_fp == 0
-        assert m.pass1_fn == 0
-        assert m.pass1_tn == 2
-        assert m.pass1_precision == 1.0
-        assert m.pass1_recall == 1.0
-
-    def test_pass1_false_positives(self) -> None:
-        # Judge cried wolf on a clean rollout.
-        rollouts = [
-            _scored("c0", success=True, pass1="fail", pass2_label="approach_miss"),
-            _scored("f0", success=False, pass1="fail", pass2_label="approach_miss"),
-        ]
-        m = compute_metrics(rollouts)
-        assert m.pass1_tp == 1
-        assert m.pass1_fp == 1
-        assert m.pass1_precision == 0.5
-        assert m.pass1_recall == 1.0
-
-    def test_pass2_label_accuracy(self) -> None:
-        rollouts = [
+            _scored("c0", success=True, judge_label=None, ground_truth_label="none"),
+            _scored("c1", success=True, judge_label=None, ground_truth_label="none"),
             _scored(
                 "f0",
                 success=False,
-                pass1="fail",
-                pass2_label="approach_miss",
-                ground_truth_label="approach_miss",  # match
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
             ),
             _scored(
                 "f1",
                 success=False,
-                pass1="fail",
-                pass2_label="approach_miss",
-                ground_truth_label="slip_during_lift",  # mismatch
+                judge_label="slip_during_lift",
+                ground_truth_label="slip_during_lift",
             ),
         ]
         m = compute_metrics(rollouts)
-        assert m.pass2_labeled == 2
-        assert m.pass2_correct == 1
-        assert m.pass2_label_accuracy == 0.5
+        assert m.n_total == 4
+        assert m.n_with_ground_truth == 4
+        assert m.n_labeled == 4
+        assert m.label_correct == 4
+        assert m.label_accuracy == 1.0
 
-    def test_pass2_accuracy_none_when_no_ground_truth(self) -> None:
-        # All rollouts pretrained — no ground truth label.
+    def test_judge_pending_excluded_from_denominator(self) -> None:
+        # One failure judged, one failure with no judge output yet (pending).
         rollouts = [
-            _scored("p0", success=False, pass1="fail", pass2_label="approach_miss"),
+            _scored(
+                "f0",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
+            ),
+            _scored(
+                "f1",
+                success=False,
+                judge_label=None,  # judge hasn't run yet
+                ground_truth_label="slip_during_lift",
+            ),
         ]
         m = compute_metrics(rollouts)
-        assert m.pass2_labeled == 0
-        assert m.pass2_label_accuracy is None
+        assert m.n_with_ground_truth == 2
+        assert m.n_labeled == 1  # f1 is pending
+        assert m.label_correct == 1
+        assert m.label_accuracy == 1.0
+
+    def test_mismatched_label_not_correct(self) -> None:
+        # Judge says approach_miss but ground truth is slip_during_lift.
+        rollouts = [
+            _scored(
+                "f0",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
+            ),
+            _scored(
+                "f1",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="slip_during_lift",
+            ),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.n_labeled == 2
+        assert m.label_correct == 1
+        assert m.label_accuracy == 0.5
+
+    def test_deployment_rollouts_excluded(self) -> None:
+        # Deployment rollouts have ground_truth_label=None and must not
+        # contribute to label-accuracy denominators.
+        rollouts = [
+            _scored("p0", success=False, judge_label="approach_miss", ground_truth_label=None),
+        ]
+        m = compute_metrics(rollouts)
+        assert m.n_total == 1
+        assert m.n_with_ground_truth == 0
+        assert m.n_labeled == 0
+        assert m.label_accuracy is None
 
 
 class TestLoadScoredRollouts:
     def test_no_log_returns_empty(self, tmp_path: Path) -> None:
         assert load_scored_rollouts(tmp_path) == []
 
-    def test_joins_rollout_coarse_fine_by_id(self, tmp_path: Path) -> None:
+    def test_joins_rollout_and_judge_by_id(self, tmp_path: Path) -> None:
         log = tmp_path / DISPATCH_LOG
         records = [
             {
@@ -233,24 +260,15 @@ class TestLoadScoredRollouts:
             },
             {
                 "ts": 2.0,
-                "tool": "coarse",
+                "tool": "judge",
                 "args": {"rollout_id": "r1", "video_path": "/memories/rollouts/r1.mp4"},
                 "result": {
                     "rollout_id": "r1",
-                    "verdict": "fail",
-                    "failure_frame_range": [3, 12],
-                    "coarse_total_frames": 14,
-                },
-            },
-            {
-                "ts": 3.0,
-                "tool": "fine",
-                "args": {"rollout_id": "r1"},
-                "result": {
-                    "rollout_id": "r1",
                     "taxonomy_label": "knock_object_off_table",
+                    "frame_index": 73,
                     "point": [400, 250],
                     "description": "cube knocked aside",
+                    "per_frame_observations": [],
                 },
             },
         ]
@@ -261,7 +279,7 @@ class TestLoadScoredRollouts:
         r = out[0]
         assert r.rollout_id == "r1"
         assert r.injection_knobs["injected_action_noise"] == pytest.approx(0.15)
-        assert r.pass1_verdict == "fail"
-        assert r.pass1_failure_frame_range == (3, 12)
-        assert r.pass2_label == "knock_object_off_table"
-        assert r.pass2_point == (400, 250)
+        assert r.judge_label == "knock_object_off_table"
+        assert r.judge_frame_index == 73
+        assert r.judge_point == (400, 250)
+        assert r.judge_description == "cube knocked aside"

@@ -23,21 +23,27 @@ class TestCohortCounts:
 
     def test_mixed(self) -> None:
         rollouts = [
-            _scored("s0", pass1="pass", pass2_label=None, ground_truth_label="none"),
+            # Calibration success — judge doesn't run, but "scored" counts it.
+            _scored("s0", success=True, judge_label=None, ground_truth_label="none"),
+            # Calibration failure with judge complete.
             _scored(
-                "s1", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+                "s1",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
             ),
-            _scored("p0", pass1="fail", pass2_label="approach_miss", policy_kind="pretrained"),
+            # Deployment rollout (no ground_truth_label).
+            _scored("p0", success=False, judge_label="approach_miss", policy_kind="pretrained"),
         ]
         c = cohort_counts(rollouts)
         assert c.n_calibration == 2  # s0, s1 have ground truth
-        assert c.n_calibration_with_findings == 2  # both have pass1 verdicts
+        assert c.n_calibration_with_findings == 2  # both have a verdict
         assert c.n_deployment == 1  # p0
 
     def test_calibration_pending_judge(self) -> None:
-        # Calibration rollout exists but judge hasn't run yet → not in tab.
+        # Calibration failure but judge hasn't run → not yet scored.
         rollouts = [
-            _scored("s0", pass1=None, pass2_label=None, ground_truth_label="approach_miss"),
+            _scored("s0", success=False, judge_label=None, ground_truth_label="approach_miss"),
         ]
         c = cohort_counts(rollouts)
         assert c.n_calibration == 1
@@ -69,35 +75,33 @@ class TestWilsonCI:
 
 class TestToLabeledRollouts:
     def test_skips_no_ground_truth(self) -> None:
-        rollouts = [_scored("p0", policy_kind="pretrained")]  # ground_truth_label=None
+        # Deployment rollouts have ground_truth_label=None and never get scored.
+        rollouts = [_scored("p0", policy_kind="pretrained")]
         assert to_labeled_rollouts(rollouts) == []
 
-    def test_skips_pass1_pending(self) -> None:
-        rollouts = [_scored("s0", pass1=None, ground_truth_label="approach_miss")]
-        assert to_labeled_rollouts(rollouts) == []
-
-    def test_skips_pass2_pending(self) -> None:
-        # Pass-1 said fail but Pass-2 hasn't returned yet.
+    def test_skips_judge_pending(self) -> None:
+        # Sim said fail but judge hasn't run — not yet scorable.
         rollouts = [
-            _scored("s0", pass1="fail", pass2_label=None, ground_truth_label="approach_miss")
+            _scored("s0", success=False, judge_label=None, ground_truth_label="approach_miss")
         ]
         assert to_labeled_rollouts(rollouts) == []
 
-    def test_pass1_pass_maps_to_none(self) -> None:
-        rollouts = [
-            _scored("s0", pass1="pass", pass2_label=None, ground_truth_label="none", success=True)
-        ]
+    def test_success_maps_to_none(self) -> None:
+        # Sim success on a scripted rollout with expected="none" → implicit
+        # judge verdict of FailureMode.NONE (judge doesn't run on successes).
+        rollouts = [_scored("s0", success=True, judge_label=None, ground_truth_label="none")]
         labeled = to_labeled_rollouts(rollouts)
         assert len(labeled) == 1
         assert labeled[0].expected == FailureMode.NONE
         assert labeled[0].judged == FailureMode.NONE
 
-    def test_pass2_label_round_trip(self) -> None:
+    def test_judge_label_round_trip(self) -> None:
+        # Sim fail + judge label → round-trip through FailureMode enum.
         rollouts = [
             _scored(
                 "s0",
-                pass1="fail",
-                pass2_label="slip_during_lift",
+                success=False,
+                judge_label="slip_during_lift",
                 ground_truth_label="approach_miss",
             )
         ]
@@ -130,12 +134,15 @@ class TestFilterRollouts:
     def test_cell_filter_strict(self) -> None:
         rollouts = [
             _scored(
-                "a", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+                "a",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
             ),
             _scored(
                 "b",
-                pass1="fail",
-                pass2_label="approach_miss",
+                success=False,
+                judge_label="approach_miss",
                 ground_truth_label="slip_during_lift",
             ),  # mismatch
         ]
@@ -146,15 +153,18 @@ class TestFilterRollouts:
     def test_row_filter_loose(self) -> None:
         rollouts = [
             _scored(
-                "a", pass1="fail", pass2_label="approach_miss", ground_truth_label="approach_miss"
+                "a",
+                success=False,
+                judge_label="approach_miss",
+                ground_truth_label="approach_miss",
             ),
             _scored(
                 "b",
-                pass1="fail",
-                pass2_label="approach_miss",
+                success=False,
+                judge_label="approach_miss",
                 ground_truth_label="slip_during_lift",
             ),
-            _scored("c", pass1="pass", pass2_label=None, ground_truth_label="none", success=True),
+            _scored("c", success=True, judge_label=None, ground_truth_label="none"),
         ]
         f = DrillFilter(expected="approach_miss", judged=None)
         out = sorted(r.rollout_id for r in filter_rollouts(rollouts, f))

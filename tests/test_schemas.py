@@ -1,4 +1,4 @@
-"""Tests for src.schemas: RolloutConfig invariants, Finding pass1/pass2 coupling.
+"""Tests for src.schemas: RolloutConfig invariants, Finding sim_success/annotation coupling.
 
 These pin down the validators that protect downstream consumers from malformed
 configs (e.g. a "scripted" rollout missing its injected-failures payload, which
@@ -13,8 +13,7 @@ import pytest
 
 from src.schemas import (
     Finding,
-    Pass1Verdict,
-    Pass2Annotation,
+    JudgeAnnotation,
     RenderConfig,
     RolloutConfig,
     RolloutResult,
@@ -150,36 +149,64 @@ class TestRolloutResult:
 
 
 class TestFinding:
-    def test_pass_with_no_pass2(self) -> None:
-        f = Finding(rollout_id="r1", pass1=Pass1Verdict(verdict="pass"))
-        assert f.pass2 is None
+    def test_success_without_annotation(self) -> None:
+        f = Finding(rollout_id="r1", sim_success=True)
+        assert f.annotation is None
 
-    def test_pass_with_pass2_rejected(self) -> None:
-        with pytest.raises(ValueError, match="pass2"):
+    def test_success_with_annotation_rejected(self) -> None:
+        with pytest.raises(ValueError, match="annotation"):
             Finding(
                 rollout_id="r1",
-                pass1=Pass1Verdict(verdict="pass"),
-                pass2=Pass2Annotation(
-                    taxonomy_label=FailureMode.APPROACH_MISS, point=(100, 200), description="x"
+                sim_success=True,
+                annotation=JudgeAnnotation(
+                    taxonomy_label=FailureMode.APPROACH_MISS,
+                    frame_index=42,
+                    point=(100, 200),
+                    description="x",
                 ),
             )
 
-    def test_pass1_range_only_on_fail(self) -> None:
-        with pytest.raises(ValueError, match="failure_frame_range"):
-            Pass1Verdict(verdict="pass", failure_frame_range=(10, 20))
-
-    def test_fail_with_pass2(self) -> None:
+    def test_failure_with_annotation(self) -> None:
         f = Finding(
             rollout_id="r1",
-            pass1=Pass1Verdict(verdict="fail", failure_frame_range=(50, 80)),
-            pass2=Pass2Annotation(
+            sim_success=False,
+            annotation=JudgeAnnotation(
                 taxonomy_label=FailureMode.SLIP_DURING_LIFT,
+                frame_index=70,
                 point=(123, 456),
                 description="cube slips at frame 70",
             ),
         )
-        assert f.pass2 is not None
-        assert f.pass2.point == (123, 456)
+        assert f.annotation is not None
+        assert f.annotation.point == (123, 456)
+        assert f.annotation.frame_index == 70
+
+    def test_failure_without_point_is_valid(self) -> None:
+        """approach_miss / gripper_collision failures have no gripper-cube contact,
+        so the judge may legitimately return point=None. Confirm the schema allows it."""
+        f = Finding(
+            rollout_id="r2",
+            sim_success=False,
+            annotation=JudgeAnnotation(
+                taxonomy_label=FailureMode.APPROACH_MISS,
+                frame_index=30,
+                point=None,
+                description="gripper closes on empty air",
+            ),
+        )
+        assert f.annotation is not None
+        assert f.annotation.point is None
+
+    def test_annotation_rejects_none_label(self) -> None:
+        """JudgeAnnotation must never use FailureMode.NONE — the judge only runs
+        on sim-confirmed failures, so "no failure" is nonsensical here."""
+        with pytest.raises(ValueError, match="FailureMode.NONE"):
+            JudgeAnnotation(
+                taxonomy_label=FailureMode.NONE,
+                frame_index=0,
+                point=None,
+                description="should be rejected",
+            )
 
 
 class TestRenderConfig:

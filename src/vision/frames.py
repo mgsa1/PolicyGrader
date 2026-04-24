@@ -1,9 +1,9 @@
-"""Frame-IO helpers shared by both vision passes.
+"""Frame-IO helpers used by the single-call CoT vision judge.
 
 Reads an mp4 with imageio, samples frames at requested indices, resizes to a
-target long-edge while preserving aspect, and base64-encodes as PNG for the
-Anthropic Messages API. Kept separate so coarse_pass and fine_pass don't each
-re-implement video loading.
+target long-edge while preserving aspect, and base64-encodes as JPEG (or PNG)
+for the Anthropic Messages API. Kept in its own module so the judge stays
+focused on prompt + orchestration logic.
 """
 
 from __future__ import annotations
@@ -67,9 +67,8 @@ def encode_jpeg_b64(frame: np.ndarray[Any, Any], quality: int = 88) -> str:
 
     Robot sim frames are natural-ish images (smooth lighting, uniform
     backgrounds) — JPEG at quality 88 is visually indistinguishable from PNG
-    but 5-10x smaller, which matters for the Pass-2 fine pass (14 × 2576 px
-    frames per request; PNG blows through the 32 MB payload cap, JPEG fits
-    easily).
+    but 5-10x smaller, which matters for the judge (~30 × 2576 px frames per
+    request; PNG blows through the 32 MB payload cap, JPEG fits easily).
     """
     img = Image.fromarray(frame)
     buf = io.BytesIO()

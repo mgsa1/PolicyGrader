@@ -11,8 +11,7 @@ The agent has these tools (wired up in src/orchestrator.py):
   - read / write / edit / bash: built-in agent_toolset_20260401. Use these
     to read and write files under /memories/ in your environment.
   - rollout:  custom — runs one scenario via src.sim.adapter.run_rollout
-  - coarse:   custom — runs Pass-1 vision judge on a recorded mp4
-  - fine:     custom — runs Pass-2 vision judge on a windowed slice
+  - judge:    custom — runs the single-call CoT vision judge on a recorded mp4
 
 Each phase prompt below is a section the agent re-reads when the orchestrator
 sends the corresponding phase marker. Phases never run concurrently in Plan A.
@@ -96,10 +95,10 @@ it does: "I'll set `injected_angle_deg=20` (a 20° approach-angle offset
 that should cause an approach miss)."
 
 What stays as-is, no translation needed:
-  - tool names (`rollout`, `coarse`, `fine`)
+  - tool names (`rollout`, `judge`)
   - file paths (`/memories/test_matrix.csv`)
   - taxonomy labels (`approach_miss`, `slip_during_lift`, etc.)
-  - column names in CSV / JSON ("rollout_id", "verdict", etc.)
+  - column names in CSV / JSON ("rollout_id", "success", etc.)
 
 Your `agent.thinking` content can use whatever vocabulary is most precise —
 the rule applies only to messages that go to the user-visible feed.
@@ -115,15 +114,13 @@ Tools available:
     run one rollout via the sim adapter and get back
     {{rollout_id, success, steps_taken, video_path, ground_truth_label}}.
     The mp4 is written to /memories/rollouts/<rollout_id>.mp4.
-  - coarse(rollout_id, video_path): run Pass-1 vision judge on the recorded
-    mp4. Returns {{verdict: "pass"|"fail",
-                  failure_frame_range: [start,end] | null,
-                  coarse_total_frames: int}}.
-    `coarse_total_frames` is the number of frames Pass 1 actually sampled —
-    pass it to `fine` so it can window correctly.
-  - fine(rollout_id, video_path, failure_frame_range, coarse_total_frames):
-    run Pass-2 vision judge on a windowed slice. Returns
-    {{taxonomy_label, point: [x,y], description}}.
+  - judge(rollout_id, video_path): run the single-call CoT vision judge on
+    a recorded mp4. Only call on rollouts where the `rollout` tool returned
+    success=false — successful rollouts skip the judge entirely. Returns
+    {{taxonomy_label, frame_index, point: [x,y] | null, description,
+      per_frame_observations}}. `frame_index` is the original-mp4 frame the
+    judge named as decisive. `point` is null when no gripper-cube contact
+    is visible (e.g. approach_miss, gripper_collision).
 
 The failure taxonomy is the closed set the judge MUST emit from. Reproduced
 in full here so you can quote it back to yourself when needed:
@@ -246,25 +243,31 @@ Stop after every row in the matrix has a corresponding line in results.jsonl.
 
 PHASE 3 — JUDGE
 
-Read /memories/rollouts/results.jsonl. For each result, run Pass 1
-(coarse). For results where Pass 1 returns verdict="fail", also run Pass 2
-(fine) windowed on the failure_frame_range.
+Read /memories/rollouts/results.jsonl. For each result:
 
-For each rollout, append a Finding to /memories/findings.jsonl with shape:
-  {{
-    "rollout_id": str,
-    "pass1": {{"verdict": "pass"|"fail",
-              "failure_frame_range": [start, end] | null}},
-    "pass2": {{"taxonomy_label": str,
-              "point": [x, y],
-              "description": str}} | null
-  }}
+  • If `success` is TRUE: append a Finding directly to
+    /memories/findings.jsonl with shape
+        {{"rollout_id": <id>, "sim_success": true, "annotation": null}}
+    Do NOT call the `judge` tool on successful rollouts — the simulator's
+    success flag is authoritative, and there is no failure mode to classify.
 
-Pass 2 is null when Pass 1 said "pass". The taxonomy_label MUST be one of
-the strings from the taxonomy table above. Do not invent labels.
+  • If `success` is FALSE: call `judge(rollout_id, video_path)` on the mp4,
+    then append a Finding with shape
+        {{"rollout_id": <id>, "sim_success": false,
+          "annotation": {{"taxonomy_label": <str>,
+                         "frame_index": <int>,
+                         "point": [x, y] | null,
+                         "description": <str>,
+                         "per_frame_observations": [{{...}}, ...]}}}}
+    Copy the judge tool's output verbatim into `annotation`. The
+    `taxonomy_label` MUST be one of the strings from the taxonomy table
+    above — do not invent labels. The `point` field is null when no
+    gripper-cube contact is visible (this is CORRECT for approach_miss /
+    gripper_collision failures, not a tool error).
 
-Do not look at the test_matrix's expected_label column during this phase.
-The judge must be blind to ground truth.
+One judge call per failed rollout — do NOT call twice on the same video.
+Do NOT look at the test_matrix's expected_label column during this phase;
+the judge must be blind to ground truth.
 
 Stop after every rollout has a corresponding line in findings.jsonl.
 
@@ -301,7 +304,8 @@ Write /memories/report.md with this structure:
   ## Per-Label Confusion
     A small table: rows=expected_label, columns=judged_label, values=count.
     For pretrained rows with empty expected_label, exclude from this table
-    (no ground truth) but include in the binary detection numbers in Summary.
+    (no ground truth) but include in the policy success-rate numbers in
+    Summary (sim success flags are authoritative for pretrained rollouts).
   ## Methodology Notes
     A short paragraph on what the eval covered and what it does NOT cover.
     Include the token breakdown the orchestrator provided (input/output/

@@ -37,9 +37,12 @@ from src.sim.pretrained import RobomimicPolicy  # noqa: E402
 from src.sim.scripted import ScriptedLiftPolicy  # noqa: E402
 
 # After success, keep stepping for ~1 s so the recorded video shows the cube
-# clearly held aloft over an empty table. Without this, the rollout cuts the
-# instant success triggers and Pass-1 mistakes the ambiguous final frames for
-# a failure. Does not affect steps_taken, which still reflects success step.
+# clearly held aloft over an empty table. Without this the rollout would cut
+# the instant success triggers, leaving ambiguous final frames that tripped
+# the old Pass-1 judge into labeling the rollout as a failure. The current
+# single-call CoT judge only runs on sim-confirmed failures, so the hold is
+# now cosmetic (cleaner gallery thumbnails for successes). Does not affect
+# steps_taken, which still reflects the success step.
 POST_SUCCESS_HOLD_STEPS = 20
 
 

@@ -2,12 +2,16 @@
 
 The tab is organised top-to-bottom (per the redesign spec):
 
-  1. Cohort strip          — denominators visible before any percentage
-  2. Caption               — single-line "what these numbers mean"
-  3. Binary detector panel — Pass-1: 2x2 confusion + 4 stats with Wilson CI
-  4. Multiclass heatmap    — Pass-2: clickable confusion matrix
-  5. Per-label table       — support, predicted-as, P/R/F1, all as fractions
-  6. Drill-down table      — populated when a heatmap cell or label is clicked
+  1. Cohort strip      — denominators visible before any percentage
+  2. Caption           — single-line "what these numbers mean"
+  3. Multiclass heatmap — clickable confusion matrix (the headline content)
+  4. Per-label table    — support, predicted-as, P/R/F1, all as fractions
+  5. Drill-down table   — populated when a heatmap cell or label is clicked
+
+Binary detection (did the judge think this rollout failed?) no longer has
+its own panel — sim success flags are authoritative now, so there is no
+vision-vs-sim binary comparison worth rendering. The entire tab measures
+the judge's taxonomy label against the injected ground-truth label.
 
 The tab consumes the joined (test_matrix.csv × findings.jsonl) view that
 src.ui.synthesis.load_scored_rollouts already returns. No new backend.
@@ -28,7 +32,6 @@ from src.sim.scripted import FailureMode
 from src.ui import theme
 from src.ui.synthesis import (
     KEYFRAMES_DIR_NAME,
-    JudgeMetrics,
     ScoredRollout,
     copy_button,
     html_escape,
@@ -46,13 +49,26 @@ class CohortCounts:
     """The calibration / deployment denominators that frame this tab."""
 
     n_calibration: int  # rollouts with injected ground-truth label
-    n_calibration_with_findings: int  # of those, ones the judge has finished
+    n_calibration_with_findings: int  # of those, ones scored (success OR judge done)
     n_deployment: int  # rollouts with no ground-truth label (pretrained etc.)
+
+
+def _calibration_is_scored(r: ScoredRollout) -> bool:
+    """True iff this calibration rollout has a complete verdict to score.
+
+    Successful rollouts are implicitly "none" (judge doesn't run). Failed
+    rollouts are scored once the judge has produced a label.
+    """
+    if not r.ground_truth_label:
+        return False
+    if r.success:
+        return True
+    return r.judge_label is not None
 
 
 def cohort_counts(rollouts: list[ScoredRollout]) -> CohortCounts:
     n_cal = sum(1 for r in rollouts if r.ground_truth_label)
-    n_cal_done = sum(1 for r in rollouts if r.ground_truth_label and r.pass1_verdict is not None)
+    n_cal_done = sum(1 for r in rollouts if _calibration_is_scored(r))
     n_dep = len(rollouts) - n_cal
     return CohortCounts(
         n_calibration=n_cal,
@@ -80,13 +96,19 @@ def wilson_ci_95(successes: int, n: int) -> tuple[float, float]:
 # ---- ScoredRollout → LabeledRollout adapter --------------------------------------
 # The src.metrics module operates on LabeledRollout (FailureMode-typed). For the
 # multiclass heatmap and per-label table we feed it the subset of rollouts that
-# (a) have ground-truth labels and (b) the judge has finished (Pass-2 done OR
-# Pass-1 said pass). A rollout in the in-between state — Pass-1 said fail, Pass-2
-# pending — is excluded so it doesn't pollute "judged as none".
+# (a) have ground-truth labels and (b) have a complete verdict — either sim said
+# success (→ implicit "none") or sim said fail AND the judge has produced a
+# label. Failed rollouts with the judge still pending are excluded so they
+# don't pollute the "judged as none" cell.
 
 
 def to_labeled_rollouts(rollouts: list[ScoredRollout]) -> list[LabeledRollout]:
-    """Convert to LabeledRollout for rollouts that have ground truth AND a complete verdict."""
+    """Convert to LabeledRollout for rollouts that have ground truth AND a complete verdict.
+
+    A calibration rollout is "complete" when either (a) sim said success (we
+    treat that as judge_label="none" because the judge doesn't run on
+    successes) or (b) sim said fail AND the judge has produced a label.
+    """
     out: list[LabeledRollout] = []
     for r in rollouts:
         if not r.ground_truth_label:
@@ -95,17 +117,15 @@ def to_labeled_rollouts(rollouts: list[ScoredRollout]) -> list[LabeledRollout]:
             expected = FailureMode(r.ground_truth_label)
         except ValueError:
             continue
-        if r.pass1_verdict is None:
-            continue  # judge incomplete
-        if r.pass1_verdict == "pass":
+        if r.success:
             judged: FailureMode | None = FailureMode.NONE
-        elif r.pass2_label:
+        elif r.judge_label:
             try:
-                judged = FailureMode(r.pass2_label)
+                judged = FailureMode(r.judge_label)
             except ValueError:
                 continue  # label not in the FailureMode enum (taxonomy drift); skip
         else:
-            continue  # Pass-1 fail but Pass-2 pending — judge incomplete
+            continue  # sim said fail but judge is pending — not yet scorable
         out.append(LabeledRollout(rollout_id=r.rollout_id, expected=expected, judged=judged))
     return out
 
@@ -137,11 +157,11 @@ def _used_labels(metrics: JudgeMetrics_label, order: list[FailureMode]) -> list[
 
 
 def render_cohort_strip(counts: CohortCounts) -> str:
-    """Three-pill cohort strip: calibration / in-this-tab / excluded(deployment)."""
+    """Three-pill cohort strip: calibration / scored / excluded(deployment)."""
     pills = [
         ("Calibration rollouts", counts.n_calibration, theme.CAL),
-        ("Pass-2 eligible", counts.n_calibration_with_findings, theme.CAL),
-        ("Pass-2 excluded (deployment)", counts.n_deployment, theme.DEP),
+        ("Scored by judge", counts.n_calibration_with_findings, theme.CAL),
+        ("Excluded (deployment)", counts.n_deployment, theme.DEP),
     ]
     chips: list[str] = []
     for label, n, accent in pills:
@@ -165,9 +185,11 @@ def render_caption() -> str:
         "<div style='font-size:12px;color:"
         + theme.INK_3
         + ";margin-bottom:18px;line-height:1.55;'>"
-        "<b>Pass-1</b>: binary pass/fail vs <code>env._check_success()</code>. "
-        "<b>Pass-2</b>: taxonomy label vs the failure-injection parameter used in the "
-        "scripted policy. Pretrained rollouts enter Pass-1 only."
+        "Binary success comes from <code>env._check_success()</code> (sim-authoritative). "
+        "This tab measures the judge's <b>taxonomy label</b> against the failure-injection "
+        "parameter used in the scripted policy. Pretrained (deployment) rollouts have no "
+        "injected ground truth and are excluded from these numbers — see the Deployment "
+        "findings tab."
         "</div>"
     )
 
@@ -175,8 +197,9 @@ def render_caption() -> str:
 def render_scope_strip(rollouts: list[ScoredRollout], scope: str) -> str:
     """Big top-of-tab strip: 'N videos · M failures' for the cohort in view.
 
-    `scope` is "calibration" or "deployment". Failure denominator depends on
-    cohort: calibration uses env truth, deployment uses the judge.
+    `scope` is "calibration" or "deployment". Failure denominator comes from
+    sim (`env._check_success()`) for both cohorts — binary success is no
+    longer a vision-side decision.
     """
     if scope == "calibration":
         cohort = [r for r in rollouts if r.population == "calibration"]
@@ -184,14 +207,14 @@ def render_scope_strip(rollouts: list[ScoredRollout], scope: str) -> str:
         n_failures = sum(1 for r in cohort if r.is_failure)
         accent = theme.CAL
         cohort_label = "Calibration cohort"
-        failures_caption = "env-reported failures (ground truth)"
+        failures_caption = "sim failures (ground truth)"
     elif scope == "deployment":
         cohort = [r for r in rollouts if r.population == "deployment"]
         n_videos = len(cohort)
-        n_failures = sum(1 for r in cohort if r.judged_failure)
+        n_failures = sum(1 for r in cohort if r.is_failure)
         accent = theme.DEP
         cohort_label = "Deployment cohort"
-        failures_caption = "rollouts the judge flagged as failure"
+        failures_caption = "sim failures (labeled by judge)"
     else:
         raise ValueError(f"unknown scope: {scope!r}")
 
@@ -235,40 +258,36 @@ def render_judge_calibration_header() -> str:
 
 @dataclass(frozen=True)
 class JudgeTrust:
-    """Compact summary of judge calibration for the Deployment findings banner."""
+    """Compact summary of judge calibration for the Deployment findings banner.
+
+    Binary detection is no longer measured — sim success is authoritative.
+    The trust numbers now focus on multiclass: overall label accuracy across
+    the calibration cohort, plus per-label precision/recall averaged over
+    labels with enough support (>=3) to publish a number.
+    """
 
     n_calibration: int
-    binary_precision_correct: int
-    binary_precision_n: int
-    binary_recall_correct: int
-    binary_recall_n: int
+    n_scored: int  # calibration rollouts with a complete verdict
+    label_correct: int  # of n_scored, ones where judge matched GT
     per_label_precision_avg: float | None  # None if no labels with support
     per_label_recall_avg: float | None
     n_labels_with_support: int  # taxonomy labels with cal support >= 3
     total_taxonomy_labels: int
 
+    @property
+    def label_accuracy(self) -> float | None:
+        if self.n_scored == 0:
+            return None
+        return self.label_correct / self.n_scored
+
 
 def judge_trust(rollouts: list[ScoredRollout]) -> JudgeTrust:
     """Summarize judge calibration for the trust banner."""
-    binary = compute_label_metrics([])  # placeholder; replaced below if there's data
     labeled = to_labeled_rollouts(rollouts)
     label_metrics = compute_label_metrics(labeled)
 
-    # Binary precision/recall (pass-vs-fail) on calibration rollouts.
-    tp = fp = fn = tn = 0
-    for r in rollouts:
-        if r.population != "calibration" or r.pass1_verdict is None:
-            continue
-        env_failed = not r.success
-        judge_failed = r.judged_failure
-        if env_failed and judge_failed:
-            tp += 1
-        elif not env_failed and judge_failed:
-            fp += 1
-        elif env_failed and not judge_failed:
-            fn += 1
-        else:
-            tn += 1
+    n_scored = label_metrics.n_scored
+    label_correct = int(round(label_metrics.overall_label_accuracy * n_scored)) if n_scored else 0
 
     # Per-label precision/recall averaged across labels with support >= 3.
     qual_labels = [s for s in label_metrics.per_label if (s.tp + s.fn) >= 3 or (s.tp + s.fp) >= 3]
@@ -278,13 +297,10 @@ def judge_trust(rollouts: list[ScoredRollout]) -> JudgeTrust:
     n_cal = sum(1 for r in rollouts if r.population == "calibration")
     n_taxonomy_total = len([m for m in FailureMode if m != FailureMode.NONE])
 
-    _ = binary  # quiet the unused warning above
     return JudgeTrust(
         n_calibration=n_cal,
-        binary_precision_correct=tp,
-        binary_precision_n=tp + fp,
-        binary_recall_correct=tp,
-        binary_recall_n=tp + fn,
+        n_scored=n_scored,
+        label_correct=label_correct,
         per_label_precision_avg=avg_p,
         per_label_recall_avg=avg_r,
         n_labels_with_support=len(qual_labels),
@@ -305,12 +321,12 @@ def render_judge_trust_banner(trust: JudgeTrust) -> str:
             "</div></div>"
         )
 
-    bp = trust.binary_precision_correct
-    bp_n = trust.binary_precision_n
-    br = trust.binary_recall_correct
-    br_n = trust.binary_recall_n
-    bp_pct = (bp / bp_n * 100) if bp_n else 0.0
-    br_pct = (br / br_n * 100) if br_n else 0.0
+    acc = trust.label_accuracy
+    acc_html = (
+        f"<b>{trust.label_correct}/{trust.n_scored}</b> · {acc * 100:.1f}%"
+        if acc is not None
+        else f"<span style='color:{theme.INK_4};'>no calibration verdicts yet</span>"
+    )
     avg_p = (
         f"<b>{trust.per_label_precision_avg:.2f}</b>"
         if trust.per_label_precision_avg is not None
@@ -330,9 +346,8 @@ def render_judge_trust_banner(trust: JudgeTrust) -> str:
         f"pulled from {trust.n_calibration} calibration rollouts</span>"
         "</div>"
         "<div class='pg-callout__grid'>"
-        "<div class='pg-callout__grid-label'>Binary detection</div>"
-        f"<div>precision <b>{bp}/{bp_n}</b> · {bp_pct:.1f}%  ·  "
-        f"recall <b>{br}/{br_n}</b> · {br_pct:.1f}%</div>"
+        "<div class='pg-callout__grid-label'>Label accuracy</div>"
+        f"<div>{acc_html}</div>"
         "<div class='pg-callout__grid-label'>Per-label average</div>"
         f"<div>precision {avg_p}   ·   recall {avg_r}</div>"
         "<div class='pg-callout__grid-label'>Coverage</div>"
@@ -392,124 +407,6 @@ def render_calibration_chip(label: str, stats: dict[str, LabelStats]) -> str:
         f"style='font-family:{theme.FONT_MONO};margin-left:6px;'>"
         f"{text}</span>"
     )
-
-
-# ---- Binary detector panel -------------------------------------------------------
-
-
-def render_binary_panel(metrics: JudgeMetrics) -> str:
-    """2x2 confusion + Precision/Recall/F1/Accuracy as fractions, with Wilson 95% CI."""
-    tp, fp, fn, tn = metrics.pass1_tp, metrics.pass1_fp, metrics.pass1_fn, metrics.pass1_tn
-    n = tp + fp + fn + tn
-    if n == 0:
-        return "<div class='pg-empty pg-empty--small'>No Pass-1 verdicts yet.</div>"
-
-    prec_n = tp + fp
-    rec_n = tp + fn
-    prec_lo, prec_hi = wilson_ci_95(tp, prec_n)
-    rec_lo, rec_hi = wilson_ci_95(tp, rec_n)
-    accuracy_n = n
-    accuracy_correct = tp + tn
-    f1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
-
-    matrix_html = _binary_matrix_html(tp, fp, fn, tn)
-    stats_html = _binary_stats_html(
-        prec_correct=tp,
-        prec_n=prec_n,
-        prec_ci=(prec_lo, prec_hi),
-        rec_correct=tp,
-        rec_n=rec_n,
-        rec_ci=(rec_lo, rec_hi),
-        f1=f1,
-        acc_correct=accuracy_correct,
-        acc_n=accuracy_n,
-    )
-    caption = (
-        "<div class='pg-binary__caption'>"
-        "Ground truth: <code>env._check_success()</code>. All rollouts participate "
-        "— pretrained included."
-        "</div>"
-    )
-    return (
-        "<div class='pg-binary'>"
-        "<div class='pg-binary__eyebrow'>Pass-1 — binary detector</div>"
-        "<div class='pg-binary__row'>" + matrix_html + stats_html + "</div>" + caption + "</div>"
-    )
-
-
-def _binary_matrix_html(tp: int, fp: int, fn: int, tn: int) -> str:
-    """2x2 confusion matrix, rendered as an HTML grid."""
-
-    def cell(count: int, *, correct: bool) -> str:
-        if count == 0:
-            modifier = "pg-binary__cell--empty"
-        elif correct:
-            modifier = "pg-binary__cell--ok"
-        else:
-            modifier = "pg-binary__cell--err"
-        return f"<div class='pg-binary__cell {modifier}'>{count}</div>"
-
-    axis = "pg-binary__axis-label"
-    return (
-        "<div class='pg-binary__matrix'>"
-        "<div></div>"
-        f"<div class='{axis}'>Judged: pass</div>"
-        f"<div class='{axis}'>Judged: fail</div>"
-        f"<div class='{axis}' style='writing-mode:sideways-lr;'>Actual: pass</div>"
-        + cell(tn, correct=True)
-        + cell(fp, correct=False)
-        + f"<div class='{axis}' style='writing-mode:sideways-lr;'>Actual: fail</div>"
-        + cell(fn, correct=False)
-        + cell(tp, correct=True)
-        + "</div>"
-    )
-
-
-def _binary_stats_html(
-    *,
-    prec_correct: int,
-    prec_n: int,
-    prec_ci: tuple[float, float],
-    rec_correct: int,
-    rec_n: int,
-    rec_ci: tuple[float, float],
-    f1: float,
-    acc_correct: int,
-    acc_n: int,
-) -> str:
-    """Stats column — every percentage shown as X/Y · Z.Z% with CI for prec & recall."""
-    prec = prec_correct / prec_n if prec_n else 0.0
-    rec = rec_correct / rec_n if rec_n else 0.0
-    acc = acc_correct / acc_n if acc_n else 0.0
-
-    def stat_row(label: str, fraction: str, pct: str, ci: str = "") -> str:
-        ci_html = f"<span class='pg-binary__stat-ci'>{ci}</span>" if ci else ""
-        return (
-            "<div class='pg-binary__stat'>"
-            f"<div class='pg-binary__stat-label'>{label}</div>"
-            f"<div class='pg-binary__stat-frac'>{fraction}</div>"
-            f"<div class='pg-binary__stat-pct'>{pct}</div>"
-            f"{ci_html}"
-            "</div>"
-        )
-
-    rows = [
-        stat_row(
-            "Precision",
-            f"{prec_correct}/{prec_n}",
-            f"{prec * 100:.1f}%",
-            ci=f"95% CI [{prec_ci[0] * 100:.1f} – {prec_ci[1] * 100:.1f}]",
-        ),
-        stat_row(
-            "Recall",
-            f"{rec_correct}/{rec_n}",
-            f"{rec * 100:.1f}%",
-            ci=f"95% CI [{rec_ci[0] * 100:.1f} – {rec_ci[1] * 100:.1f}]",
-        ),
-        stat_row("F1", "—", f"{f1:.2f}"),
-        stat_row("Accuracy", f"{acc_correct}/{acc_n}", f"{acc * 100:.1f}%"),
-    ]
-    return "<div class='pg-binary__stats'>" + "".join(rows) + "</div>"
 
 
 # ---- Multiclass heatmap ----------------------------------------------------------
@@ -716,7 +613,7 @@ def render_per_label_table(rollouts: list[ScoredRollout]) -> str:
     return (
         "<div class='pg-table'>"
         f"<div class='pg-table__eyebrow' style='color:{theme.JUDGE};'>"
-        "Pass-2 — per-label breakdown</div>" + "".join(rows) + "</div>"
+        "Per-label breakdown</div>" + "".join(rows) + "</div>"
     )
 
 
@@ -791,11 +688,14 @@ def filter_rollouts(rollouts: list[ScoredRollout], f: DrillFilter) -> list[Score
         if not r.ground_truth_label:
             continue
         gt = r.ground_truth_label
-        # Compute judged for filtering purposes.
-        if r.pass1_verdict == "pass":
+        # Derive the judge's effective label for this rollout:
+        #  - sim said success → implicit "none" (judge didn't run)
+        #  - sim said fail and judge has labeled → that label
+        #  - sim said fail and judge pending → skip (incomplete verdict)
+        if r.success:
             jud = "none"
-        elif r.pass2_label:
-            jud = r.pass2_label
+        elif r.judge_label:
+            jud = r.judge_label
         else:
             continue
         if f.expected and f.judged:
@@ -834,7 +734,7 @@ def render_drill_down(
     rows: list[str] = [
         f"<div class='pg-table__row pg-table__row--head' style='{_DRILL_COLS}'>"
         "<div>Keyframe</div><div>Rollout</div><div>Expected → Judged</div>"
-        "<div>Policy</div><div>Match</div><div>Pass-2 description</div>"
+        "<div>Policy</div><div>Match</div><div>Judge description</div>"
         "</div>"
     ]
     for r in matches:
@@ -844,10 +744,10 @@ def render_drill_down(
 
 def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
     expected = r.ground_truth_label or "—"
-    if r.pass1_verdict == "pass":
+    if r.success:
         judged = "none"
-    elif r.pass2_label:
-        judged = r.pass2_label
+    elif r.judge_label:
+        judged = r.judge_label
     else:
         judged = "(pending)"
 
@@ -871,7 +771,7 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
         else f"<span class='pg-drill-link'>{r.rollout_id}</span>"
     )
 
-    desc = (r.pass2_description or "—")[:160]
+    desc = (r.judge_description or "—")[:160]
 
     return (
         f"<div class='pg-table__row' style='{_DRILL_COLS}align-items:start;padding:12px 10px;'>"
@@ -890,14 +790,16 @@ def _drill_row(r: ScoredRollout, keyframes: dict[str, Path]) -> str:
 
 def render_static_blocks(
     rollouts: list[ScoredRollout],
-    binary_metrics: JudgeMetrics,
-) -> tuple[str, str, str, str]:
-    """Render the four HTML blocks: cohort, caption, binary panel, per-label table."""
+) -> tuple[str, str, str]:
+    """Render the three HTML blocks: cohort, caption, per-label table.
+
+    Binary panel is gone with the two-pass retirement — sim owns the binary
+    verdict, so only the multiclass label breakdown is worth rendering here.
+    """
     counts = cohort_counts(rollouts)
     return (
         render_cohort_strip(counts),
         render_caption(),
-        render_binary_panel(binary_metrics),
         render_per_label_table(rollouts),
     )
 

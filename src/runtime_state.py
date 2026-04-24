@@ -23,8 +23,9 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,11 @@ class RuntimeState:
     # run_id; goal + started_at are surfaced in the picker's display label.
     run_id: str = ""
     goal: str = ""
+    # Plan B fans out ~10 concurrent Managed Agents sessions; their event-stream
+    # threads all call mark_event / append_chat / write_snapshot. A single
+    # re-entrant lock is enough because set_phase() calls write_snapshot()
+    # while already holding the lock.
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def write_meta(self) -> None:
         """One-shot, immutable per-run metadata. Written once at session start.
@@ -75,29 +81,32 @@ class RuntimeState:
         path.write_text(json.dumps(snapshot, indent=2))
 
     def set_phase(self, phase: str) -> None:
-        self.phase = phase
-        self.last_event_at = time.time()
-        self.write_snapshot()
+        with self._lock:
+            self.phase = phase
+            self.last_event_at = time.time()
+            self.write_snapshot()
 
     def mark_event(self) -> None:
         """Bump last_event_at and re-snapshot. Cheap; safe to call on every event."""
-        self.last_event_at = time.time()
-        # Recount rollouts on each tick (cheap glob; bounded by N rollouts).
-        rollouts_dir = self.mirror_root / "rollouts"
-        if rollouts_dir.exists():
-            self.n_rollouts = len(list(rollouts_dir.glob("*.mp4")))
-        self.write_snapshot()
+        with self._lock:
+            self.last_event_at = time.time()
+            # Recount rollouts on each tick (cheap glob; bounded by N rollouts).
+            rollouts_dir = self.mirror_root / "rollouts"
+            if rollouts_dir.exists():
+                self.n_rollouts = len(list(rollouts_dir.glob("*.mp4")))
+            self.write_snapshot()
 
-    def _dispatch_counts(self) -> tuple[int, int, int, int]:
-        """(rollouts, coarse, fine, fine_planned) from dispatch_log.jsonl.
+    def _dispatch_counts(self) -> tuple[int, int, int]:
+        """(rollouts_dispatched, judge_dispatched, judge_planned) from dispatch_log.jsonl.
 
-        fine_planned = number of coarse calls that returned verdict='fail',
-        which is the eventual denominator for Pass-2 progress.
+        `judge_planned` is the number of rollout calls that returned
+        success=False — the eventual denominator for judge-phase progress,
+        because the judge only runs on sim-confirmed failures.
         """
         path = self.mirror_root / "dispatch_log.jsonl"
         if not path.exists():
-            return (0, 0, 0, 0)
-        n_rollout = n_coarse = n_fine = n_fail = 0
+            return (0, 0, 0)
+        n_rollout = n_judge = n_failed = 0
         for line in path.read_text().splitlines():
             line = line.strip()
             if not line:
@@ -109,17 +118,15 @@ class RuntimeState:
             tool = rec.get("tool")
             if tool == "rollout":
                 n_rollout += 1
-            elif tool == "coarse":
-                n_coarse += 1
-                if (rec.get("result") or {}).get("verdict") == "fail":
-                    n_fail += 1
-            elif tool == "fine":
-                n_fine += 1
-        return (n_rollout, n_coarse, n_fine, n_fail)
+                if (rec.get("result") or {}).get("success") is False:
+                    n_failed += 1
+            elif tool == "judge":
+                n_judge += 1
+        return (n_rollout, n_judge, n_failed)
 
     def write_snapshot(self) -> None:
         """Atomic write of the runtime.json snapshot."""
-        n_roll, n_coarse, n_fine, n_fine_planned = self._dispatch_counts()
+        n_roll, n_judge, n_judge_planned = self._dispatch_counts()
         snapshot = {
             "run_id": self.run_id,
             "goal": self.goal,
@@ -134,9 +141,8 @@ class RuntimeState:
             "n_rollouts": self.n_rollouts,
             "planned_total": self.planned_total,
             "n_rollouts_dispatched": n_roll,
-            "n_coarse_dispatched": n_coarse,
-            "n_fine_dispatched": n_fine,
-            "n_fine_planned": n_fine_planned,
+            "n_judge_dispatched": n_judge,
+            "n_judge_planned": n_judge_planned,
             "last_event_at": self.last_event_at,
             "session_id": self.session_id,
         }
@@ -151,7 +157,7 @@ class RuntimeState:
         record: dict[str, Any] = {"ts": time.time(), "kind": kind, **fields}
         path = self.mirror_root / CHAT_JSONL
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
+        with self._lock, path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
 

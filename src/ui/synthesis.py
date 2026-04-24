@@ -1,10 +1,10 @@
 """Failure-synthesis layer for the Gradio UI (and Remotion later).
 
 Reads `mirror_root/dispatch_log.jsonl` (which the orchestrator-side dispatch
-appends to on every rollout/coarse/fine call) and turns it into clusters of
+appends to on every rollout/judge call) and turns it into clusters of
 related failures with keyframe evidence. Two grouping modes:
 
-  1. by_label   — one cluster per Pass-2 taxonomy_label that appears.
+  1. by_label   — one cluster per judge taxonomy_label that appears.
                   "8 failures judged approach_miss" + 8 keyframes.
   2. by_condition — one cluster per scripted-knob condition that's perturbed
                     plus one per (env, policy) combination for pretrained
@@ -12,9 +12,10 @@ related failures with keyframe evidence. Two grouping modes:
 
 Each cluster card shows: name + count + % of total failures + breakdown by
 the OTHER axis (e.g., a by_condition cluster shows label distribution
-within it) + grid of keyframes. Keyframes are the failure-range midpoint
-frame from the original mp4, with a red dot drawn at the Pass-2 `point`
-coordinate (mapped back from the 2576-px frame the judge saw).
+within it) + grid of keyframes. Keyframes are the frame the judge named
+(`frame_index`) from the original mp4, with a red dot drawn at the judge's
+`point` coordinate — OR no dot at all when the judge returned `point=None`
+(abstention on no-contact failures like approach_miss).
 
 Pure module — no Gradio imports — so it's testable in isolation and reusable
 by Remotion or any other consumer.
@@ -31,8 +32,8 @@ from PIL import Image, ImageDraw
 
 from src.agents.tools import DISPATCH_LOG
 from src.ui import theme
-from src.vision.fine_pass import FINE_LONG_EDGE_PX
-from src.vision.frames import read_frames, resize_long_edge, sample_indices
+from src.vision.frames import read_frames, resize_long_edge
+from src.vision.judge import JUDGE_LONG_EDGE_PX
 
 KEYFRAMES_DIR_NAME = "keyframes"
 THUMBNAIL_LONG_EDGE_PX = 384
@@ -155,22 +156,28 @@ _GRIP_SCALE_PERTURBED_THRESHOLD = 0.7
 
 @dataclass(frozen=True)
 class ScoredRollout:
-    """One rollout's full record: config + outcome + judge verdict."""
+    """One rollout's full record: config + sim outcome + judge annotation.
+
+    Binary success comes from the simulator (`RolloutResult.success`), not
+    from vision — that's what `success` and `is_failure` track. The judge
+    only runs on sim-confirmed failures, so `judge_label` is non-None
+    exactly when sim said fail AND the judge has finished; on successful
+    rollouts (and failed rollouts where the judge hasn't run yet) the
+    judge-* fields are all None.
+    """
 
     rollout_id: str
     env_name: str
     policy_kind: str
     seed: int
-    success: bool
+    success: bool  # authoritative from sim._check_success()
     steps_taken: int
     ground_truth_label: str | None
     injection_knobs: dict[str, Any]
-    pass1_verdict: str | None  # "pass" / "fail" / None if no coarse run
-    pass1_failure_frame_range: tuple[int, int] | None
-    pass1_coarse_total_frames: int | None
-    pass2_label: str | None
-    pass2_point: tuple[int, int] | None
-    pass2_description: str | None
+    judge_label: str | None  # None if sim_success or judge pending
+    judge_frame_index: int | None  # original-mp4 frame index the judge named
+    judge_point: tuple[int, int] | None  # 2576-px grid; None on abstention
+    judge_description: str | None
     video_path_host: Path | None  # local mp4 path on host
 
     @property
@@ -180,8 +187,13 @@ class ScoredRollout:
 
     @property
     def judged_failure(self) -> bool:
-        """True if the judge said this rollout failed (Pass-1 = fail)."""
-        return self.pass1_verdict == "fail"
+        """True on rollouts sim flagged as failure AND the judge has labeled.
+
+        Equivalent to `is_failure and judge_label is not None` — the judge
+        only runs on sim failures, so this is "has the judge weighed in yet?"
+        for the set of failures.
+        """
+        return (not self.success) and self.judge_label is not None
 
     @property
     def population(self) -> str:
@@ -221,71 +233,65 @@ def cohort_split(rollouts: list[ScoredRollout]) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class JudgeMetrics:
-    """Pass-1 binary + Pass-2 label numbers, computed from dispatch_log_jsonl."""
+    """Multiclass judge calibration numbers, computed from dispatch_log.jsonl.
+
+    Binary success is authoritative from sim so there is no vision-vs-sim
+    binary panel — the only thing worth measuring is how often the judge's
+    taxonomy label matches the injected ground-truth label on the
+    calibration cohort. Successful rollouts with ground_truth_label="none"
+    count as a correct "none" label (the judge doesn't run on them; we
+    treat the no-judge-annotation-on-success case as an implicit "none").
+    """
 
     n_total: int
-    n_with_ground_truth: int  # rollouts where env knows the truth (scripted)
-    pass1_tp: int  # judge=fail, env=fail
-    pass1_fp: int  # judge=fail, env=success
-    pass1_fn: int  # judge=pass, env=fail
-    pass1_tn: int  # judge=pass, env=success
-    pass2_correct: int  # pass2_label == ground_truth_label, only on labeled rows
-    pass2_labeled: int  # rollouts that got a Pass-2 label AND have ground truth
+    n_with_ground_truth: int  # calibration rollouts (injected label known)
+    n_labeled: int  # of those, ones where the judge's verdict is determined
+    label_correct: int  # of n_labeled, where judge_label == ground_truth
 
     @property
-    def pass1_precision(self) -> float:
-        denom = self.pass1_tp + self.pass1_fp
-        return self.pass1_tp / denom if denom else 0.0
-
-    @property
-    def pass1_recall(self) -> float:
-        denom = self.pass1_tp + self.pass1_fn
-        return self.pass1_tp / denom if denom else 0.0
-
-    @property
-    def pass2_label_accuracy(self) -> float | None:
-        if self.pass2_labeled == 0:
+    def label_accuracy(self) -> float | None:
+        if self.n_labeled == 0:
             return None
-        return self.pass2_correct / self.pass2_labeled
+        return self.label_correct / self.n_labeled
 
 
 def compute_metrics(rollouts: list[ScoredRollout]) -> JudgeMetrics:
-    """Compute Pass-1 binary precision/recall + Pass-2 label accuracy."""
-    tp = fp = fn = tn = 0
-    pass2_correct = 0
-    pass2_labeled = 0
+    """Compute multiclass label accuracy on the calibration subset.
+
+    For each calibration rollout:
+      - sim_success=True: treat judge label as "none" (judge doesn't run on
+        successes). Correct iff ground_truth_label == "none".
+      - sim_success=False and judge_label set: correct iff labels match.
+      - sim_success=False and judge_label None: judge pending; excluded
+        from n_labeled.
+    """
     n_with_gt = 0
+    n_labeled = 0
+    label_correct = 0
 
     for r in rollouts:
-        if r.pass1_verdict is None:
-            continue  # judge never ran; skip
-        env_failed = not r.success
-        judge_failed = r.judged_failure
-        if env_failed and judge_failed:
-            tp += 1
-        elif not env_failed and judge_failed:
-            fp += 1
-        elif env_failed and not judge_failed:
-            fn += 1
-        else:
-            tn += 1
+        if not r.ground_truth_label:
+            continue  # deployment cohort; no ground truth to score against
+        n_with_gt += 1
 
-        if r.ground_truth_label is not None and r.ground_truth_label != "":
-            n_with_gt += 1
-            if r.pass2_label is not None:
-                pass2_labeled += 1
-                if r.pass2_label == r.ground_truth_label:
-                    pass2_correct += 1
+        if r.success:
+            judge_verdict: str | None = "none"
+        elif r.judge_label is not None:
+            judge_verdict = r.judge_label
+        else:
+            judge_verdict = None  # judge pending
+
+        if judge_verdict is None:
+            continue
+        n_labeled += 1
+        if judge_verdict == r.ground_truth_label:
+            label_correct += 1
 
     return JudgeMetrics(
         n_total=len(rollouts),
         n_with_ground_truth=n_with_gt,
-        pass1_tp=tp,
-        pass1_fp=fp,
-        pass1_fn=fn,
-        pass1_tn=tn,
-        pass2_correct=pass2_correct,
-        pass2_labeled=pass2_labeled,
+        n_labeled=n_labeled,
+        label_correct=label_correct,
     )
 
 
@@ -305,8 +311,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
         return []
 
     rollout_records: dict[str, dict[str, Any]] = {}
-    coarse_records: dict[str, dict[str, Any]] = {}
-    fine_records: dict[str, dict[str, Any]] = {}
+    judge_records: dict[str, dict[str, Any]] = {}
 
     for line in log_path.read_text().splitlines():
         line = line.strip()
@@ -324,21 +329,17 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
             continue
         if tool == "rollout":
             rollout_records[rid] = {"args": args, "result": result}
-        elif tool == "coarse":
-            coarse_records[rid] = result
-        elif tool == "fine":
-            fine_records[rid] = result
+        elif tool == "judge":
+            judge_records[rid] = result
 
     rollouts_dir = mirror_root / "rollouts"
     out: list[ScoredRollout] = []
     for rid, rr in rollout_records.items():
         args = rr["args"]
         result = rr["result"]
-        coarse = coarse_records.get(rid, {})
-        fine = fine_records.get(rid, {})
+        judge = judge_records.get(rid, {})
 
-        pass1_range = coarse.get("failure_frame_range")
-        pass2_point = fine.get("point")
+        judge_point = judge.get("point")
         knobs = {
             "injected_action_noise": float(args.get("injected_action_noise", 0.0)),
             "injected_premature_close": bool(args.get("injected_premature_close", False)),
@@ -346,6 +347,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
             "injected_grip_scale": float(args.get("injected_grip_scale", 1.0)),
         }
         host_video = rollouts_dir / f"{rid}.mp4"
+        judge_frame_raw = judge.get("frame_index")
         out.append(
             ScoredRollout(
                 rollout_id=rid,
@@ -356,16 +358,12 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
                 steps_taken=int(result.get("steps_taken", 0)),
                 ground_truth_label=result.get("ground_truth_label"),
                 injection_knobs=knobs,
-                pass1_verdict=coarse.get("verdict"),
-                pass1_failure_frame_range=(
-                    (int(pass1_range[0]), int(pass1_range[1])) if pass1_range is not None else None
+                judge_label=judge.get("taxonomy_label"),
+                judge_frame_index=int(judge_frame_raw) if judge_frame_raw is not None else None,
+                judge_point=(
+                    (int(judge_point[0]), int(judge_point[1])) if judge_point is not None else None
                 ),
-                pass1_coarse_total_frames=coarse.get("coarse_total_frames"),
-                pass2_label=fine.get("taxonomy_label"),
-                pass2_point=(
-                    (int(pass2_point[0]), int(pass2_point[1])) if pass2_point is not None else None
-                ),
-                pass2_description=fine.get("description"),
+                judge_description=judge.get("description"),
                 video_path_host=host_video if host_video.exists() else None,
             )
         )
@@ -397,17 +395,17 @@ def _condition_buckets(r: ScoredRollout) -> list[str]:
 
 
 def cluster_by_label(rollouts: list[ScoredRollout]) -> list[Cluster]:
-    """One cluster per Pass-2 label that appears among judged-failed rollouts.
+    """One cluster per judge taxonomy label that appears among failures.
 
     Within each cluster, the breakdown counts which condition bucket each
     rollout falls into — gives the diagnostic 'this label fires under these
     conditions' read.
     """
-    failed = [r for r in rollouts if r.judged_failure and r.pass2_label]
+    failed = [r for r in rollouts if r.judged_failure and r.judge_label]
     by_label: dict[str, list[ScoredRollout]] = {}
     for r in failed:
-        assert r.pass2_label is not None
-        by_label.setdefault(r.pass2_label, []).append(r)
+        assert r.judge_label is not None
+        by_label.setdefault(r.judge_label, []).append(r)
 
     clusters: list[Cluster] = []
     for label, members in sorted(by_label.items(), key=lambda kv: -len(kv[1])):
@@ -422,7 +420,7 @@ def cluster_by_label(rollouts: list[ScoredRollout]) -> list[Cluster]:
 def cluster_by_condition(rollouts: list[ScoredRollout]) -> list[Cluster]:
     """One cluster per condition bucket that has any judged-failed members.
 
-    Within each cluster, the breakdown counts Pass-2 labels — gives the
+    Within each cluster, the breakdown counts judge labels — gives the
     'these conditions produce these failure modes' read.
     """
     failed = [r for r in rollouts if r.judged_failure]
@@ -435,38 +433,34 @@ def cluster_by_condition(rollouts: list[ScoredRollout]) -> list[Cluster]:
     for condition, members in sorted(by_condition.items(), key=lambda kv: -len(kv[1])):
         breakdown: dict[str, int] = {}
         for r in members:
-            label = r.pass2_label or "(no Pass-2)"
+            label = r.judge_label or "(judge pending)"
             breakdown[label] = breakdown.get(label, 0) + 1
         clusters.append(Cluster(name=condition, rollouts=members, breakdown=breakdown))
     return clusters
 
 
-def _midpoint_original_frame_idx(
-    coarse_range: tuple[int, int], coarse_total: int, original_total: int
-) -> int:
-    """Map the midpoint of a coarse-pass failure range back to original-mp4 indices."""
-    coarse_indices = sample_indices(original_total, coarse_total)
-    if not coarse_indices:
-        return original_total // 2
-    mid = (coarse_range[0] + coarse_range[1]) // 2
-    mid = max(0, min(mid, len(coarse_indices) - 1))
-    return coarse_indices[mid]
-
-
 def _scale_point_to_original(
-    point_in_fine: tuple[int, int], original_w: int, original_h: int
+    point_in_judge: tuple[int, int], original_w: int, original_h: int
 ) -> tuple[int, int]:
-    """Scale a (x, y) coordinate from the FINE_LONG_EDGE_PX-resized frame back to original."""
+    """Scale (x, y) from the 2576-px judge grid back to the original mp4 frame."""
     long_orig = max(original_w, original_h)
-    scale = long_orig / FINE_LONG_EDGE_PX
-    return int(point_in_fine[0] * scale), int(point_in_fine[1] * scale)
+    scale = long_orig / JUDGE_LONG_EDGE_PX
+    return int(point_in_judge[0] * scale), int(point_in_judge[1] * scale)
 
 
 def render_keyframe(rollout: ScoredRollout, out_path: Path) -> Path | None:
-    """Extract the failure-midpoint frame and overlay a red dot at Pass-2 point.
+    """Render the keyframe the judge named, with a red dot at the judge's point.
+
+    The keyframe is ALWAYS the frame at `judge_frame_index`. The red dot
+    appears iff `judge_point` is non-None — on no-contact failures the
+    judge abstains on pointing, and we honor that by leaving the frame
+    un-annotated.
+
+    For successful rollouts and for failures where the judge hasn't run
+    yet, fall back to the middle of the video (for gallery display). No
+    dot in those cases either — there's nothing to point at.
 
     Returns the written path, or None if the rollout has no usable video.
-    Caches by writing to `out_path`; caller decides whether to overwrite.
     """
     if rollout.video_path_host is None:
         return None
@@ -475,19 +469,16 @@ def render_keyframe(rollout: ScoredRollout, out_path: Path) -> Path | None:
         return None
     n = len(frames)
 
-    if rollout.pass1_failure_frame_range is not None and rollout.pass1_coarse_total_frames:
-        idx = _midpoint_original_frame_idx(
-            rollout.pass1_failure_frame_range, rollout.pass1_coarse_total_frames, n
-        )
+    if rollout.judge_frame_index is not None:
+        idx = max(0, min(rollout.judge_frame_index, n - 1))
     else:
         idx = n // 2
-    idx = max(0, min(idx, n - 1))
 
     frame = frames[idx]
     img = Image.fromarray(frame)
 
-    if rollout.pass2_point is not None:
-        x, y = _scale_point_to_original(rollout.pass2_point, img.width, img.height)
+    if rollout.judge_point is not None and rollout.judge_frame_index is not None:
+        x, y = _scale_point_to_original(rollout.judge_point, img.width, img.height)
         draw = ImageDraw.Draw(img)
         r = POINT_DOT_RADIUS_PX
         draw.ellipse(

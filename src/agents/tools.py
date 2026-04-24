@@ -1,12 +1,17 @@
 """Custom tools the orchestrator exposes to the Managed Agents session.
 
-Three tools, all server-side: the Managed Agents runtime emits
-`agent.custom_tool_use` events for these names, the orchestrator dispatches
-them locally, and posts back `user.custom_tool_result` events.
+Two core tools plus Plan-B submit_* hand-offs, all server-side: the Managed
+Agents runtime emits `agent.custom_tool_use` events for these names, the
+orchestrator dispatches them locally, and posts back `user.custom_tool_result`
+events.
 
   - rollout : runs one scenario via src.sim.adapter.run_rollout
-  - coarse  : runs Pass-1 vision judge on a recorded mp4
-  - fine    : runs Pass-2 vision judge on a windowed slice
+  - judge   : runs the single-call CoT vision judge on a recorded mp4
+
+Plan-B hand-off tools (submit_plan / submit_results / submit_findings /
+submit_report) let specialized sub-agents write their final artifacts back to
+the host's mirror_root — each sub-agent's /memories/ is isolated, so the
+host is the only shared surface.
 
 The input_schema field on each tool description matches the kwargs the
 dispatcher reads — keep them in sync. Schemas are JSONSchema-compatible
@@ -16,6 +21,7 @@ because that's what the Anthropic SDK expects in BetaManagedAgentsCustomToolPara
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +32,32 @@ from src.memory_layout import AGENT_MEMORY_ROOT, ROLLOUTS_DIR
 from src.schemas import RolloutConfig
 from src.sim.adapter import run_rollout
 from src.sim.scripted import InjectedFailures
-from src.vision.coarse_pass import COARSE_NUM_FRAMES, coarse_pass
-from src.vision.fine_pass import fine_pass
+from src.vision.judge import judge
 
 ROLLOUT_TOOL_NAME = "rollout"
-COARSE_TOOL_NAME = "coarse"
-FINE_TOOL_NAME = "fine"
+JUDGE_TOOL_NAME = "judge"
+
+# Plan B submit_* tools. Each session's /memories/ is isolated, so sub-agents
+# hand their final artifacts back to the host via these tools which write into
+# mirror_root. See CLAUDE.md §3 "Inter-session artifact hand-off".
+SUBMIT_PLAN_TOOL_NAME = "submit_plan"
+SUBMIT_RESULTS_TOOL_NAME = "submit_results"
+SUBMIT_FINDINGS_TOOL_NAME = "submit_findings"
+SUBMIT_REPORT_TOOL_NAME = "submit_report"
+
+# MuJoCo rollout dispatch is serialized process-wide because GLFW's OpenGL
+# context is global state — two concurrent run_rollout() calls in the same
+# process corrupt each other's env. Plan B's rollout workers may dispatch
+# `rollout` calls concurrently from their independent event-stream threads;
+# the lock below serializes the actual sim step loop so only one rollout
+# is active at a time. Judge calls are pure Messages-API calls and
+# parallelize freely — no lock needed there.
+_ROLLOUT_LOCK = threading.Lock()
+
+# dispatch_log.jsonl is appended to from every tool dispatch. Under Plan B
+# these dispatches are concurrent across worker threads, so interleaved writes
+# would corrupt the JSONL format. Single process-wide lock around the append.
+_DISPATCH_LOG_LOCK = threading.Lock()
 
 # Default pretrained checkpoints, keyed by env_name. Lets the agent request a
 # pretrained rollout by env_name alone — the host substitutes the path so the
@@ -126,7 +152,7 @@ _ROLLOUT_INPUT_SCHEMA: dict[str, Any] = {
     "required": ["rollout_id", "policy_kind", "env_name", "seed", "max_steps"],
 }
 
-_COARSE_INPUT_SCHEMA: dict[str, Any] = {
+_JUDGE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "rollout_id": {"type": "string"},
@@ -140,63 +166,180 @@ _COARSE_INPUT_SCHEMA: dict[str, Any] = {
     "required": ["rollout_id", "video_path"],
 }
 
-_FINE_INPUT_SCHEMA: dict[str, Any] = {
+
+_ROLLOUT_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": ROLLOUT_TOOL_NAME,
+    "description": (
+        "Run one robot manipulation rollout in simulation and return its outcome. "
+        "Writes an mp4 of the rollout to /memories/rollouts/<rollout_id>.mp4."
+    ),
+    "input_schema": _ROLLOUT_INPUT_SCHEMA,
+}
+
+_JUDGE_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": JUDGE_TOOL_NAME,
+    "description": (
+        "Single-call CoT vision judge on a recorded rollout mp4. Only call "
+        "on rollouts where the `rollout` tool returned success=false — "
+        "successful rollouts have no failure to classify, so skip them. "
+        "Returns a closed-set taxonomy_label, the ORIGINAL-mp4 frame_index "
+        "the judge named as decisive, a 2576px pointing coordinate (or null "
+        "when no gripper-cube contact is visible), a one-sentence "
+        "description, and the full per-frame chain of thought."
+    ),
+    "input_schema": _JUDGE_INPUT_SCHEMA,
+}
+
+# Plan B submit_* tools. Each takes the final artifact content verbatim so the
+# host can persist it under mirror_root (the agent's /memories/ is isolated
+# per-session and unreachable from sibling sessions — the host IS the common
+# surface, these tools are how artifacts get there).
+
+_SUBMIT_PLAN_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "rollout_id": {"type": "string"},
-        "video_path": {"type": "string"},
-        "failure_frame_range": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "[start, end] inclusive, in COARSE-PASS frame indices "
-            "(0..coarse_total_frames-1). Pass null if Pass 1 returned no range.",
+        "plan_md": {
+            "type": "string",
+            "description": (
+                "Full markdown text of plan.md. Will be written verbatim to mirror_root."
+            ),
         },
-        "coarse_total_frames": {
-            "type": "integer",
-            "description": "Number of frames Pass 1 sampled; needed to map the "
-            "coarse range back to original mp4 indices.",
+        "test_matrix_csv": {
+            "type": "string",
+            "description": (
+                "Full CSV text for test_matrix.csv, header row included. "
+                "Columns per PLANNER phase spec. Will be written verbatim."
+            ),
+        },
+        "taxonomy_md": {
+            "type": "string",
+            "description": "Full markdown text of the taxonomy (copy from /memories/taxonomy.md).",
         },
     },
-    "required": ["rollout_id", "video_path", "coarse_total_frames"],
+    "required": ["plan_md", "test_matrix_csv", "taxonomy_md"],
+}
+
+_SUBMIT_RESULTS_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "results_jsonl": {
+            "type": "string",
+            "description": (
+                "One JSON object per line, each a RolloutResult record "
+                "(rollout_id, success, steps_taken, video_path, ground_truth_label). "
+                "Host APPENDS these to mirror_root/rollouts/results.jsonl — safe for "
+                "parallel rollout workers to submit their own slices."
+            ),
+        },
+    },
+    "required": ["results_jsonl"],
+}
+
+_SUBMIT_FINDINGS_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "findings_jsonl": {
+            "type": "string",
+            "description": (
+                "One JSON object per line, each a Finding record "
+                "({rollout_id, sim_success: bool, annotation: {...}|null}). "
+                "`annotation` is null when sim_success=true; otherwise it "
+                "carries the judge output {taxonomy_label, frame_index, "
+                "point: [x,y]|null, description, per_frame_observations}. "
+                "Host APPENDS these to mirror_root/findings.jsonl — safe for "
+                "parallel judge workers to submit their own slices."
+            ),
+        },
+    },
+    "required": ["findings_jsonl"],
+}
+
+_SUBMIT_REPORT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "report_md": {
+            "type": "string",
+            "description": (
+                "Full markdown text of report.md. Will be written verbatim to "
+                "mirror_root/report.md (overwrites any prior version)."
+            ),
+        },
+    },
+    "required": ["report_md"],
+}
+
+_SUBMIT_PLAN_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": SUBMIT_PLAN_TOOL_NAME,
+    "description": (
+        "Plan B PLANNER hand-off: submit the plan, test matrix, and taxonomy to "
+        "the host in one call. Call this EXACTLY ONCE at the end of the planner "
+        "phase, then stop. The host writes the files to mirror_root and the "
+        "downstream workers read them from there."
+    ),
+    "input_schema": _SUBMIT_PLAN_INPUT_SCHEMA,
+}
+
+_SUBMIT_RESULTS_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": SUBMIT_RESULTS_TOOL_NAME,
+    "description": (
+        "Plan B ROLLOUT WORKER hand-off: submit the JSONL of RolloutResult records "
+        "for this worker's slice. Call this ONCE after all assigned rollouts are "
+        "complete, then stop."
+    ),
+    "input_schema": _SUBMIT_RESULTS_INPUT_SCHEMA,
+}
+
+_SUBMIT_FINDINGS_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": SUBMIT_FINDINGS_TOOL_NAME,
+    "description": (
+        "Plan B JUDGE WORKER hand-off: submit the JSONL of Finding records for "
+        "this worker's slice. Call this ONCE after judging is done, then stop."
+    ),
+    "input_schema": _SUBMIT_FINDINGS_INPUT_SCHEMA,
+}
+
+_SUBMIT_REPORT_PARAM: dict[str, Any] = {
+    "type": "custom",
+    "name": SUBMIT_REPORT_TOOL_NAME,
+    "description": (
+        "Plan B REPORTER hand-off: submit the final report markdown. Call this ONCE and stop."
+    ),
+    "input_schema": _SUBMIT_REPORT_INPUT_SCHEMA,
 }
 
 
 def tool_params() -> list[dict[str, Any]]:
-    """Return the three custom-tool dicts to pass to client.beta.agents.create(tools=...)."""
-    return [
-        {
-            "type": "custom",
-            "name": ROLLOUT_TOOL_NAME,
-            "description": (
-                "Run one robot manipulation rollout in simulation and return its outcome. "
-                "Writes an mp4 of the rollout to /memories/rollouts/<rollout_id>.mp4."
-            ),
-            "input_schema": _ROLLOUT_INPUT_SCHEMA,
-        },
-        {
-            "type": "custom",
-            "name": COARSE_TOOL_NAME,
-            "description": (
-                "Pass-1 coarse vision judge on a recorded rollout mp4. Returns a "
-                "binary verdict and (on fail) a frame-range estimate in coarse-pass "
-                "indices."
-            ),
-            "input_schema": _COARSE_INPUT_SCHEMA,
-        },
-        {
-            "type": "custom",
-            "name": FINE_TOOL_NAME,
-            "description": (
-                "Pass-2 fine vision judge on a windowed slice of a rollout mp4. "
-                "Returns a closed-set taxonomy label, a 2576px pointing coordinate, "
-                "and a one-line description. Only call this on rollouts where coarse "
-                "returned verdict='fail'."
-            ),
-            "input_schema": _FINE_INPUT_SCHEMA,
-        },
-    ]
+    """Plan A tool set: rollout + judge (all phases share one session)."""
+    return [_ROLLOUT_PARAM, _JUDGE_PARAM]
+
+
+def tool_params_for_role(role: str) -> list[dict[str, Any]]:
+    """Plan B tool set: narrow per-role tool surface.
+
+    Each specialized agent gets ONLY the tools it needs plus its submit tool.
+    A tighter tool surface makes the model's choices more obvious and reduces
+    the odds of a rollout worker accidentally calling a vision tool (or vice
+    versa). Built-in agent_toolset tools (read/write/edit/bash/glob/grep) are
+    added separately in the orchestrator — they're useful for scratch work
+    in /memories/ regardless of role.
+    """
+    if role == "planner":
+        return [_SUBMIT_PLAN_PARAM]
+    if role == "rollout_worker":
+        return [_ROLLOUT_PARAM, _SUBMIT_RESULTS_PARAM]
+    if role == "judge_worker":
+        return [_JUDGE_PARAM, _SUBMIT_FINDINGS_PARAM]
+    if role == "reporter":
+        return [_SUBMIT_REPORT_PARAM]
+    raise ValueError(
+        f"unknown role {role!r}; expected one of "
+        "'planner' | 'rollout_worker' | 'judge_worker' | 'reporter'"
+    )
 
 
 def _resolve_video_path(raw: str, mirror_root: Path) -> Path:
@@ -254,7 +397,13 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
         )
 
     video_out = mirror_root / ROLLOUTS_DIR / f"{rollout_id}.mp4"
-    result = run_rollout(config, video_out=video_out)
+    # GLFW's OpenGL context is process-global. Under Plan B several rollout
+    # workers may dispatch `rollout` concurrently from their event-stream
+    # threads — without this lock their sim steps interleave and corrupt
+    # each other's render state. Sim time is ~2 s per Lift rollout; the lock
+    # just makes the sim the critical section, not the tool call.
+    with _ROLLOUT_LOCK:
+        result = run_rollout(config, video_out=video_out)
 
     # Report the agent-visible path so it can refer back to it from later tools.
     agent_visible = AGENT_MEMORY_ROOT / ROLLOUTS_DIR / f"{rollout_id}.mp4"
@@ -269,51 +418,27 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
     }
 
 
-def _dispatch_coarse(
+def _dispatch_judge(
     args: dict[str, Any],
     mirror_root: Path,
     client: Anthropic,
     cost_tracker: CostTracker | None,
 ) -> dict[str, Any]:
     video_path = _resolve_video_path(args["video_path"], mirror_root)
-    verdict = coarse_pass(video_path, client=client, cost_tracker=cost_tracker)
-    return {
-        "rollout_id": args["rollout_id"],
-        "verdict": verdict.verdict,
-        "failure_frame_range": list(verdict.failure_frame_range)
-        if verdict.failure_frame_range is not None
-        else None,
-        "coarse_total_frames": COARSE_NUM_FRAMES,
-    }
-
-
-def _dispatch_fine(
-    args: dict[str, Any],
-    mirror_root: Path,
-    client: Anthropic,
-    cost_tracker: CostTracker | None,
-) -> dict[str, Any]:
-    video_path = _resolve_video_path(args["video_path"], mirror_root)
-    raw_range = args.get("failure_frame_range")
-    coarse_range: tuple[int, int] | None = (
-        None if raw_range is None else (int(raw_range[0]), int(raw_range[1]))
-    )
-    annotation = fine_pass(
-        video_path,
-        coarse_range,
-        coarse_total=int(args["coarse_total_frames"]),
-        client=client,
-        cost_tracker=cost_tracker,
-    )
+    annotation = judge(video_path, client=client, cost_tracker=cost_tracker)
     return {
         "rollout_id": args["rollout_id"],
         "taxonomy_label": annotation.taxonomy_label.value,
-        "point": list(annotation.point),
+        "frame_index": annotation.frame_index,
+        "point": list(annotation.point) if annotation.point is not None else None,
         "description": annotation.description,
+        "per_frame_observations": [obs.model_dump() for obs in annotation.per_frame_observations],
     }
 
 
 DISPATCH_LOG = "dispatch_log.jsonl"
+RESULTS_JSONL = "rollouts/results.jsonl"
+FINDINGS_JSONL = "findings.jsonl"
 
 
 def _append_dispatch_log(
@@ -324,14 +449,71 @@ def _append_dispatch_log(
     The Gradio UI / synthesis layer reads this to reconstruct rollout configs
     and judge findings without needing access to /memories/ inside the agent's
     environment. We see every tool call here anyway — logging it costs ~1 ms.
+
+    Lock-protected so Plan B's concurrent worker threads don't interleave
+    partial JSON writes into the same file.
     """
     import time as _time
 
     record = {"ts": _time.time(), "tool": tool_name, "args": args, "result": result}
     path = mirror_root / DISPATCH_LOG
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
+    with _DISPATCH_LOG_LOCK, path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+
+def _append_jsonl(path: Path, jsonl_text: str) -> int:
+    """Append already-formatted JSONL text to `path`. Returns line count accepted.
+
+    Tolerates trailing whitespace, blank lines, and missing trailing newline.
+    Each non-empty line is re-validated as JSON before it lands on disk —
+    we'd rather reject a bad line than corrupt the file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    accepted = 0
+    with _DISPATCH_LOG_LOCK, path.open("a", encoding="utf-8") as f:
+        for line in jsonl_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid JSONL line (not JSON): {line[:120]}... ({exc})") from exc
+            f.write(line + "\n")
+            accepted += 1
+    return accepted
+
+
+def _dispatch_submit_plan(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]:
+    mirror_root.mkdir(parents=True, exist_ok=True)
+    (mirror_root / "plan.md").write_text(args["plan_md"], encoding="utf-8")
+    (mirror_root / "test_matrix.csv").write_text(args["test_matrix_csv"], encoding="utf-8")
+    (mirror_root / "taxonomy.md").write_text(args["taxonomy_md"], encoding="utf-8")
+    return {
+        "ok": True,
+        "wrote": ["plan.md", "test_matrix.csv", "taxonomy.md"],
+        "plan_bytes": len(args["plan_md"]),
+        "matrix_bytes": len(args["test_matrix_csv"]),
+    }
+
+
+def _dispatch_submit_results(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]:
+    path = mirror_root / RESULTS_JSONL
+    n = _append_jsonl(path, args["results_jsonl"])
+    return {"ok": True, "appended": n, "path": str(path.relative_to(mirror_root))}
+
+
+def _dispatch_submit_findings(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]:
+    path = mirror_root / FINDINGS_JSONL
+    n = _append_jsonl(path, args["findings_jsonl"])
+    return {"ok": True, "appended": n, "path": str(path.relative_to(mirror_root))}
+
+
+def _dispatch_submit_report(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]:
+    mirror_root.mkdir(parents=True, exist_ok=True)
+    (mirror_root / "report.md").write_text(args["report_md"], encoding="utf-8")
+    return {"ok": True, "wrote": ["report.md"], "bytes": len(args["report_md"])}
 
 
 def dispatch(
@@ -346,16 +528,22 @@ def dispatch(
 
     Returning a string lets the caller stuff it directly into a
     `user.custom_tool_result` event content block. `cost_tracker`, if provided,
-    is forwarded to the vision passes so their token usage is summed into the
+    is forwarded to the judge so its token usage is summed into the
     session-wide ledger. Every call is also appended to dispatch_log.jsonl so
     the synthesis UI can reconstruct rollout configs and judge findings.
     """
     if tool_name == ROLLOUT_TOOL_NAME:
         result = _dispatch_rollout(tool_input, mirror_root)
-    elif tool_name == COARSE_TOOL_NAME:
-        result = _dispatch_coarse(tool_input, mirror_root, client, cost_tracker)
-    elif tool_name == FINE_TOOL_NAME:
-        result = _dispatch_fine(tool_input, mirror_root, client, cost_tracker)
+    elif tool_name == JUDGE_TOOL_NAME:
+        result = _dispatch_judge(tool_input, mirror_root, client, cost_tracker)
+    elif tool_name == SUBMIT_PLAN_TOOL_NAME:
+        result = _dispatch_submit_plan(tool_input, mirror_root)
+    elif tool_name == SUBMIT_RESULTS_TOOL_NAME:
+        result = _dispatch_submit_results(tool_input, mirror_root)
+    elif tool_name == SUBMIT_FINDINGS_TOOL_NAME:
+        result = _dispatch_submit_findings(tool_input, mirror_root)
+    elif tool_name == SUBMIT_REPORT_TOOL_NAME:
+        result = _dispatch_submit_report(tool_input, mirror_root)
     else:
         raise ValueError(f"unknown custom tool: {tool_name}")
     _append_dispatch_log(mirror_root, tool_name, dict(tool_input), result)
