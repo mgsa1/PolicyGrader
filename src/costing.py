@@ -14,7 +14,8 @@ a human reviewer at N× lower cost."
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 
 # Opus 4.7 pricing per million tokens. Published on
 # https://www.anthropic.com/pricing — update when the price sheet moves.
@@ -40,24 +41,33 @@ class CostTracker:
     response (Managed Agents event stream + each Messages API vision call).
     Call `add_usage(response.usage)` on any object that exposes the usual
     `*_tokens` attributes; missing attrs are tolerated.
+
+    Thread-safe: Plan B's multi-orchestrator runs ~10 Managed Agents sessions
+    concurrently, each dispatching token-accumulating events from its own
+    thread. The internal lock serializes add_usage() so increments don't race.
+    total_cost_usd is a pure read of scalar fields — Python's GIL guarantees
+    torn reads can only miss the last increment, which is acceptable for a
+    live banner.
     """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def add_usage(self, usage: object) -> None:
         """Accumulate tokens from an Anthropic SDK Usage-shaped object."""
-        for src_attr, tgt_attr in (
-            ("input_tokens", "input_tokens"),
-            ("output_tokens", "output_tokens"),
-            ("cache_read_input_tokens", "cache_read_tokens"),
-            ("cache_creation_input_tokens", "cache_creation_tokens"),
-        ):
-            val = getattr(usage, src_attr, None)
-            if val is not None:
-                setattr(self, tgt_attr, getattr(self, tgt_attr) + int(val))
+        with self._lock:
+            for src_attr, tgt_attr in (
+                ("input_tokens", "input_tokens"),
+                ("output_tokens", "output_tokens"),
+                ("cache_read_input_tokens", "cache_read_tokens"),
+                ("cache_creation_input_tokens", "cache_creation_tokens"),
+            ):
+                val = getattr(usage, src_attr, None)
+                if val is not None:
+                    setattr(self, tgt_attr, getattr(self, tgt_attr) + int(val))
 
     @property
     def total_cost_usd(self) -> float:
