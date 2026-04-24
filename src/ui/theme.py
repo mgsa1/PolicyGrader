@@ -258,10 +258,6 @@ html.dark, body.dark, .gradio-container.dark,
   border-radius: 10px;
   padding: 24px;
 }}
-.pg-card--accent-cal {{ border-left: 3px solid {CAL}; }}
-.pg-card--accent-dep {{ border-left: 3px solid {DEP}; }}
-.pg-card--accent-judge {{ border-left: 3px solid {JUDGE}; }}
-
 /* --- hero ---------------------------------------------------------------- */
 .pg-hero {{
   background: {SURFACE};
@@ -322,14 +318,6 @@ html.dark, body.dark, .gradio-container.dark,
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }}
-.pg-metric__delta {{
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  margin-top: 4px;
-}}
-.pg-metric__delta--ok {{ color: {OK}; }}
-
 /* --- savings banner ------------------------------------------------------ */
 .pg-savings {{
   margin-top: 16px;
@@ -358,23 +346,6 @@ html.dark, body.dark, .gradio-container.dark,
   text-align: center;
 }}
 
-/* --- section headers ----------------------------------------------------- */
-.pg-section-hd {{
-  display: flex; align-items: baseline; justify-content: space-between;
-  padding: 32px 0 10px 0;
-  border-bottom: 1px solid {LINE};
-  margin-bottom: 16px;
-}}
-.pg-section-hd__title {{
-  font-family: {FONT_DISPLAY};
-  font-size: 22px; font-weight: 500;
-  color: {INK_1};
-  margin: 0;
-}}
-.pg-section-hd__sub {{
-  font-size: 12px; color: {INK_3};
-}}
-
 /* --- chips (pills) ------------------------------------------------------- */
 .pg-chip {{
   display: inline-flex; align-items: center; gap: 4px;
@@ -390,8 +361,6 @@ html.dark, body.dark, .gradio-container.dark,
 .pg-chip--cal  {{ background: {CAL_SOFT}; color: {CAL}; border-color: {CAL_LINE}; }}
 .pg-chip--dep  {{ background: {DEP_SOFT}; color: {DEP}; border-color: {DEP_LINE}; }}
 .pg-chip--ok   {{ background: {OK_SOFT};  color: {OK};  border-color: {OK}55; }}
-.pg-chip--warn {{ background: {WARN_SOFT}; color: {WARN}; border-color: {WARN}55; }}
-.pg-chip--err  {{ background: {ERR_SOFT}; color: {ERR}; border-color: {ERR}55; }}
 .pg-chip__dot {{ font-size: 8px; line-height: 1; }}
 .pg-chip__sub {{
   color: {INK_4}; font-size: 10px; margin-left: 6px; font-weight: 400;
@@ -430,8 +399,6 @@ html.dark, body.dark, .gradio-container.dark,
 .pg-icon-btn--anchored {{ position: absolute; }}
 .pg-icon-btn--top-right    {{ top: 8px; right: 8px; }}
 .pg-icon-btn--top-left     {{ top: 8px; left: 8px; }}
-.pg-icon-btn--bottom-right {{ bottom: 8px; right: 8px; }}
-.pg-icon-btn--bottom-left  {{ bottom: 8px; left: 8px; }}
 .pg-icon-btn--inline {{
   display: inline-flex;
   vertical-align: middle;

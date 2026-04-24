@@ -143,18 +143,6 @@ def copy_button(
     )
 
 
-# Backwards-compat alias (older code paths still call paperclip_button).
-def paperclip_button(
-    path: object,
-    *,
-    tooltip: str = "Copy path",
-    anchor: str | None = None,
-    inline: bool = False,
-) -> str:
-    """Deprecated alias — prefer copy_button(kind=...)."""
-    return copy_button(path, kind="generic", tooltip=tooltip, anchor=anchor, inline=inline)
-
-
 # Threshold below which we consider an injection knob "default" (not perturbed).
 # Mirrors the knob-to-label mapping in src.agents.system_prompts:
 #   action_noise >= 0.10 => knock_object_off_table
