@@ -49,17 +49,32 @@ export const radius = {
   pill: 999,
 };
 
-// Headline numbers — scaled so total saved ≥ $10 000.
-// Per-rollout factors are real (from artifacts/runs/evalb_d5f0ad):
-//   pipeline = $1.164/rollout, manual = $3.75/rollout, save = $2.586/rollout
-// Scaled to N = 4 000 scenarios.
+// Headline numbers — scaled to display $10,350 savings.
+// Per-rollout rates inferred from the live dashboard "This run vs manual review"
+// panel (32 scenarios, $2.87 pipeline / $120 manual, 11:32 vs 48:00):
+//   pipeline = $0.090/rollout · manual = $3.75/rollout · save = $3.66/rollout
+//   pipeline-time = 21.6 s/rollout · manual-time = 90 s/rollout
+// Scaled to N = 2 830 scenarios so savings land at ≈ $10 350.
+//
+// Calibration metrics (precision / recall / clusters) are taken from the
+// dashboard sample directly — they don't scale with N, they're judge accuracy.
 export const numbers = {
-  scenarios: 4000,
-  pipelineCostUsd: 4_650,
-  manualCostUsd: 15_000,
+  scenarios: 2830,
+  scenariosCal: 1600,
+  scenariosDep: 1230,
+  pipelineCostUsd: 254,
+  manualCostUsd: 10_604,
   savedUsd: 10_350,
-  pipelineHours: 48,
-  manualHours: 200,
-  costRatio: 0.31,
-  timeRatio: 0.24,
+  pipelineHours: 17,
+  manualHours: 71,
+  costDeltaPct: -98,
+  timeDeltaPct: -76,
+  // Calibration metrics — measured, don't scale.
+  precisionPct: 91,
+  precisionCiLow: 62,
+  precisionCiHigh: 98,
+  recallPct: 87,
+  recallCiLow: 55,
+  recallCiHigh: 95,
+  clusters: 4,
 };
