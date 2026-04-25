@@ -80,50 +80,30 @@ def panel_visible(mirror_root: Path) -> bool:
 
 
 def queue_status_html(mirror_root: Path) -> str:
-    """Banner at the top of the labeling panel: 'Labeling: 3 / 8'."""
+    """Single-line status pill at the top of the labeling panel."""
     state = load_state(mirror_root)
     if state.skipped:
-        return (
-            '<div class="pg-cal-status" '
-            'style="padding:10px 14px;background:var(--pg-surface-2);'
-            "border-radius:8px;margin-bottom:8px;font-size:13px;"
-            'color:var(--pg-ink-3);">'
-            "Labeling was skipped for this run (`--skip-labeling`). The "
-            "calibration metrics below will be empty — the judge's labels "
-            "have no human ground truth to compare against."
-            "</div>"
-        )
+        return _status_pill("Labeling skipped (--skip-labeling).", muted=True)
     if state.n_total == 0:
-        return (
-            '<div class="pg-cal-status" '
-            'style="padding:10px 14px;background:var(--pg-surface-2);'
-            "border-radius:8px;margin-bottom:8px;font-size:13px;"
-            'color:var(--pg-ink-3);">'
-            "No labeling queue has been written yet. The orchestrator will "
-            "sample rollouts for review once PHASE 2.5 begins."
-            "</div>"
-        )
+        return _status_pill("Queue pending…", muted=True)
     if state.is_complete:
-        return (
-            '<div class="pg-cal-status" '
-            'style="padding:10px 14px;background:var(--pg-cal-bg);'
-            "border-left:3px solid var(--pg-cal);border-radius:8px;"
-            'margin-bottom:8px;font-size:13px;color:var(--pg-ink-1);">'
-            f"Labeling complete — <b>{num(str(state.n_total))}</b> rollouts "
-            "reviewed. The confusion matrix below is the calibration signal "
-            "applied to the deployment findings."
-            "</div>"
-        )
-    return (
-        '<div class="pg-cal-status" '
-        'style="padding:10px 14px;background:var(--pg-cal-bg);'
-        "border-left:3px solid var(--pg-cal);border-radius:8px;"
-        'margin-bottom:8px;font-size:13px;color:var(--pg-ink-1);">'
-        f"Labeling: <b>{num(f'{state.n_done} / {state.n_total}')}</b>"
-        " — review the video, pick the failure mode, submit. "
-        "Your labels are the calibration ground truth."
-        "</div>"
+        return _status_pill(f"Done · <b>{num(str(state.n_total))}</b> reviewed.", muted=False)
+    return _status_pill(
+        f"Labeling: <b>{num(f'{state.n_done} / {state.n_total}')}</b>",
+        muted=False,
     )
+
+
+def _status_pill(html: str, *, muted: bool) -> str:
+    base = "padding:8px 12px;border-radius:8px;margin-bottom:8px;font-size:13px;"
+    if muted:
+        style = base + "background:var(--pg-surface-2);color:var(--pg-ink-3);"
+    else:
+        style = (
+            base + "background:var(--pg-cal-bg);border-left:3px solid var(--pg-cal);"
+            "color:var(--pg-ink-1);"
+        )
+    return f'<div class="pg-cal-status" style="{style}">{html}</div>'
 
 
 def current_video_path(mirror_root: Path) -> str | None:

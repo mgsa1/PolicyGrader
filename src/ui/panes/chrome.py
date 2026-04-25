@@ -139,17 +139,9 @@ def hero_html(mirror_root: Path) -> str:
         r_pct, r_ci = "—", "no data"
     n_clusters = len(cluster_by_label(rollouts)) if rollouts else 0
 
-    if metrics and metrics.n_labeled > 0:
-        agree = (
-            f"agreed with injected ground truth on <b>{metrics.label_correct} of "
-            f"{metrics.n_labeled}</b> calibration rollouts."
-        )
-    else:
-        agree = "judge calibration runs once Phase 3 finishes."
-
     return (
         '<div class="pg-hero-banner">'
-        + _hero_left(run_id, n, n_cal, n_dep, agree, acc_pct, r_pct)
+        + _hero_left(run_id, n, n_cal, n_dep, acc_pct, r_pct)
         + _hero_right(
             cost,
             baseline_cost,
@@ -175,7 +167,6 @@ def _hero_left(
     n: int,
     n_cal: int,
     n_dep: int,
-    agree: str,
     acc_pct: str,
     r_pct: str,
 ) -> str:
@@ -189,9 +180,10 @@ def _hero_left(
         '<h1 class="pg-hero-headline">Robot eval review,<br/>'
         "<em>hours to minutes.</em></h1>"
         '<div class="pg-hero-sub">'
-        f"Four Opus 4.7 Managed Agents designed the test suite, ran "
-        f"<b>{n}</b> rollouts, watched every failure in a single dense-frame "
-        f"pass, and {agree}"
+        "Opus 4.7 managed agents for automated robotics control policy."
+        "<br/>"
+        f"Run <b>{n}</b> rollouts, evaluate judge confidence on task, and "
+        "automatically analyse the deployment set."
         "</div>"
         '<div class="pg-hero-chiprow">'
         f"{cal_chip}{dep_chip}{pr_chip}"

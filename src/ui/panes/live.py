@@ -18,36 +18,13 @@ from src.ui.panes.chrome import phase_code, phase_short
 from src.ui.styles import empty, html_escape, render_markdown
 from src.ui.synthesis import ScoredRollout, copy_button, load_scored_rollouts, population_chip
 
-# Plain-language explainer per phase: (short title, subtitle, list of artifacts).
-# Copied from the previous app.py — still load-bearing for onboarding viewers
-# who watch the demo and don't know the Managed Agents vocabulary yet.
-_PHASE_EXPLAINERS: dict[str, tuple[str, str, list[str]]] = {
-    "BEGIN PHASE 1: PLANNER": (
-        "Planner",
-        "Decides which scenarios to run, which failures to inject, and what "
-        "the success criteria are. No simulation yet — pure design.",
-        ["plan.md", "test_matrix.csv"],
-    ),
-    "BEGIN PHASE 2: ROLLOUT": (
-        "Rollout worker",
-        "Runs every row of the test matrix in MuJoCo + robosuite. Each scenario "
-        "produces a short mp4 of the robot attempting the task.",
-        ["rollouts/*.mp4"],
-    ),
-    "BEGIN PHASE 3: JUDGE": (
-        "Vision judge",
-        "Single dense-frame chain-of-thought call per sim-failed rollout. "
-        "Walks through ~30 high-res frames, names the decisive frame, picks a "
-        "failure label, points at the evidence (or abstains on no-contact "
-        "failures). Sim handles the binary pass/fail decision.",
-        ["findings.jsonl"],
-    ),
-    "BEGIN PHASE 4: REPORT": (
-        "Report writer",
-        "Synthesizes everything: success rate, judge precision/recall vs "
-        "ground truth, failure clusters, cost vs the manual-review baseline.",
-        ["report.md"],
-    ),
+# Per-phase title + the artifacts that phase produces. The Writes: list does
+# the explanatory work — the file names already say what the phase is doing.
+_PHASE_EXPLAINERS: dict[str, tuple[str, list[str]]] = {
+    "BEGIN PHASE 1: PLANNER": ("Planner", ["plan.md", "test_matrix.csv"]),
+    "BEGIN PHASE 2: ROLLOUT": ("Rollout worker", ["rollouts/*.mp4"]),
+    "BEGIN PHASE 3: JUDGE": ("Vision judge", ["findings.jsonl"]),
+    "BEGIN PHASE 4: REPORT": ("Report writer", ["report.md"]),
 }
 
 
@@ -76,7 +53,7 @@ def agent_trace_html(mirror_root: Path) -> str:
 def _phase_divider(marker: str) -> str:
     code = phase_code(marker) or "planner"
     explainer = _PHASE_EXPLAINERS.get(marker)
-    title, sub, outputs = explainer if explainer else (marker, "", [])
+    title, outputs = explainer if explainer else (marker, [])
     short = phase_short(marker)
 
     outputs_html = ""
@@ -90,7 +67,6 @@ def _phase_divider(marker: str) -> str:
         f'<div class="pg-trace-phase-rule {code}"></div>'
         "</div>"
         f'<div class="pg-trace-phase-title">{html_escape(title)}</div>'
-        f'<div class="pg-trace-phase-sub">{html_escape(sub)}</div>'
         f"{outputs_html}"
         "</div>"
     )
@@ -404,30 +380,6 @@ def _owner_for(rel_path: str) -> str:
         if rel_path.startswith(prefix):
             return owner
     return "report"
-
-
-# ---- "How to read this dashboard" block (accordion body) ------------------------
-
-
-def read_intro_html() -> str:
-    return (
-        '<div class="pg-card" style="font-size:14px;line-height:1.6;">'
-        '<p style="margin:0 0 10px 0;">'
-        '<b style="color:var(--pg-cal);">Calibration.</b> '
-        "A portion of rollouts use a scripted picker with deliberately-injected "
-        "failures. Because we caused the failure, we know the correct label. "
-        "We measure the judge against those — that's what the "
-        "<b>Judge calibration</b> tab is for.</p>"
-        '<p style="margin:0 0 10px 0;">'
-        '<b style="color:var(--pg-dep);">Deployment.</b> '
-        "The rest of the rollouts use a real policy (today: a pretrained BC-RNN). "
-        "The judge labels those without a safety net.</p>"
-        '<p style="margin:0;">'
-        "The <b>Deployment findings</b> tab applies the calibrated judge to the "
-        "deployment rollouts and cites its calibration precision alongside each "
-        "finding.</p>"
-        "</div>"
-    )
 
 
 def empty_live() -> str:

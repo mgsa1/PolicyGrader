@@ -210,9 +210,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
             with gr.Tab("Overview"):
                 overview_html = gr.HTML(value=overview.overview_html(initial_path))
 
-            with gr.Tab("Live"):
-                with gr.Accordion("What is this tool doing?", open=False):
-                    gr.HTML(value=live.read_intro_html())
+            with gr.Tab("Live"):  # noqa: SIM117
                 with gr.Row():
                     with gr.Column(scale=2):
                         gr.Markdown("### Agent activity")
@@ -278,22 +276,22 @@ def build_app(runs_root: Path) -> gr.Blocks:
                             value=(
                                 "<div class='pg-cm-eyebrow'>"
                                 "Multiclass confusion matrix (click a cell to filter)"
+                                f"{calibration.heatmap_legend_html()}"
                                 "</div>"
                             )
                         )
                         cm_html = gr.HTML(value=calibration.matrix_html(initial_path))
                     with gr.Column(scale=2, elem_classes=["pg-cm-side"]):
                         gr.HTML(value=("<div class='pg-cm-eyebrow'>Drill into a cell</div>"))
-                        gr.HTML(value=calibration.drill_description_html())
                         initial_labels = calibration.heatmap_labels(initial_path)
                         filter_expected = gr.Dropdown(
-                            label="Expected label",
+                            label="Expected (optional)",
                             choices=initial_labels,
                             value=None,
                             interactive=True,
                         )
                         filter_judged = gr.Dropdown(
-                            label="Judged label",
+                            label="Judged (optional)",
                             choices=initial_labels,
                             value=None,
                             interactive=True,
@@ -315,12 +313,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
             with gr.Tab("Deployment findings"):
                 dep_scope_html = gr.HTML(value=chrome.scope_strip_html(initial_path, "deployment"))
                 trust_html = gr.HTML(value=chrome.judge_trust_banner_html(initial_path))
-                gr.Markdown(
-                    "**Each card** = one judge taxonomy label seen across "
-                    "all failed rollouts. Each rollout in the card carries "
-                    "its population chip (calibration vs deployment). "
-                    "Click a keyframe to open the source mp4."
-                )
                 findings_label_html = gr.HTML(value=findings.cluster_cards_html(initial_path))
                 gr.Markdown("### All deployment rollouts")
                 findings_table_html = gr.HTML(value=findings.rollout_table_html(initial_path))
