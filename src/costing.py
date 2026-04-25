@@ -1,16 +1,25 @@
 """Cost and wall-time accounting for one eval session.
 
-Cost model: a flat $0.20 per rollout dispatched, summed across the run.
-Empirical: a 30-rollout end-to-end agent run (planner + rollout-worker +
-judges + reporter) lands around $6 of Anthropic API spend, i.e. ~$0.20
-amortised per rollout. The tracker only ticks inside `_dispatch_rollout` —
-phases that don't talk to Claude (idle, sim execution on the host, the
-human-labeling phase) leave it at zero.
+Two distinct cost lines, NEVER conflate them:
 
-The industry baseline for the demo's "savings" framing is unchanged:
-"a human reviewer at $75/hr × 3 min/rollout doing the same judgement
-work." Without it, a 91% label accuracy is a vibes-number; with it,
-it's "we matched a human reviewer at N× lower cost."
+1. **PolicyGrader cost** — the Anthropic API spend incurred by THIS pipeline.
+   Starts accumulating the moment the first rollout is dispatched to Claude
+   Opus 4.7 (i.e. when API communication begins) and stops when the last
+   tool call completes. Empirically a flat ~$0.19 per rollout amortised
+   across planner + rollout-worker + judges + reporter sessions. Phases
+   that never call into Claude (idle, sim-only host work, the human-labeling
+   phase) contribute $0.
+
+2. **Human-reviewer baseline** — what the same eval would cost if a
+   robotics engineer ran it manually. The clock starts the moment the run
+   is launched, because "running an eval" includes the wall-time the engineer
+   spends staging the policy, watching rollouts, and classifying outcomes —
+   not just the review minutes. We model this as $75/hr × 3 min/rollout × N,
+   the standard mid-band loaded labor cost for eval review.
+
+The demo headline is `PolicyGrader cost / human baseline cost` — without
+the baseline, a 91% label accuracy is a vibes-number; with it, the line
+reads "we matched a human reviewer at N× lower cost."
 """
 
 from __future__ import annotations
@@ -18,10 +27,11 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-# Per-rollout API cost. Empirical from the post-single-pass-judge runs:
-# planner + rollout-worker + judges (only on failures) + reporter, all
-# Managed Agents sessions, summed and divided by total rollouts.
-COST_PER_ROLLOUT_USD = 0.20
+# Per-rollout PolicyGrader API cost. Empirical anchor (2026-04-24): the
+# 30-rollout end-to-end agent run on the post-single-pass-judge stack
+# spent ~$5.70 of Anthropic API budget, i.e. ~$0.19 amortised per rollout.
+# Re-baseline on the next clean full-length smoke and update if we drift.
+COST_PER_ROLLOUT_USD = 0.19
 
 # Industry-baseline parameters. 3 min/rollout is a sympathetic estimate —
 # quick to confirm obvious successes, slower to diagnose ambiguous failures.
@@ -34,12 +44,19 @@ BASELINE_SECONDS_PER_ROLLOUT = 180
 
 @dataclass
 class CostTracker:
-    """Counts rollouts dispatched and prices them at COST_PER_ROLLOUT_USD.
+    """PolicyGrader-side cost only — counts rollouts dispatched and
+    prices them at COST_PER_ROLLOUT_USD.
 
     Pass the same instance to every dispatch path; call `record_rollout()`
     once per `_dispatch_rollout` invocation. The counter is the sole driver
     of `total_cost_usd` — phases that never call `record_rollout()` (planner
-    setup, sim-only host work, human labeling) leave the cost at $0.
+    setup before the first rollout, sim-only host work, the human-labeling
+    phase) leave the cost at $0. This matches the framing that PolicyGrader
+    cost only counts when we're actually communicating with Claude.
+
+    The human-reviewer baseline is computed separately by `baseline_cost_for`
+    and is NOT touched by this tracker — the baseline accumulates on
+    wall-time / rollout-count regardless of whether any API call has fired.
 
     Thread-safe: the orchestrator runs ~10 Managed Agents sessions
     concurrently. The internal lock serialises increments.

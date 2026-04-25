@@ -30,8 +30,8 @@ class TestCostTracker:
         for _ in range(30):
             t.record_rollout()
         assert t.n_rollouts == 30
-        # 30 × $0.20 = $6.00 — the empirical full-run cost we use as the model.
-        assert abs(t.total_cost_usd - 6.0) < 1e-9
+        # 30 × $0.19 = $5.70 — the empirical full-run cost we use as the model.
+        assert abs(t.total_cost_usd - 30 * COST_PER_ROLLOUT_USD) < 1e-9
 
 
 class TestBaseline:
