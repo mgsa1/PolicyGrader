@@ -136,35 +136,6 @@ ruff check . && ruff format . && mypy src/ && pytest -q
 
 ---
 
-## Constraints &amp; pitfalls
-
-| | |
-|---|---|
-| 🍎 **macOS rendering** | `MUJOCO_GL=glfw` works on Apple Silicon. Fallbacks: `osmesa`, `egl`. See [docs/install-mujoco-macos.md](docs/install-mujoco-macos.md). |
-| 🧵 **GLFW + threads** | The rollout phase **must** run on the process main thread on macOS — worker threads wedge in `NSApplication reportException`. Do not put rollouts back behind a `ThreadPoolExecutor`. |
-| 📌 **`robosuite==1.4.1` pin** | 1.5’s composite-controller rewrite re-scales the 1.4-trained BC-RNN’s actions and produces 0/16 success. Don’t bump without re-running the sanity gate. |
-| 🎬 **No native video input** | Opus 4.7 has only image MIMEs. Frame sampling is the only path; smarter sampling (motion-weighted, zoom-and-refine) is the lever. |
-| 🚦 **Rate limits** | 60 session-create / min, 600 reads / min per org. The orchestrator creates `3 + K` sessions per run. |
-
----
-
-## Layout
-
-| Path | Purpose |
-|---|---|
-| [src/orchestrator.py](src/orchestrator.py) | Multi-agent driver — four sessions + label phase |
-| [src/sim/](src/sim/) | `run_rollout(config) → RolloutResult` adapter, BC-RNN loader, scripted IK + injected failures |
-| [src/vision/judge.py](src/vision/judge.py) | Single-call CoT judge: 1920 px × 12–36 frames + telemetry |
-| [src/ui/](src/ui/) | Gradio dashboard (Overview · Live · Calibration · Findings) |
-| [scripts/smoke_agent.py](scripts/smoke_agent.py) | End-to-end multi-agent run (real API) |
-| [docs/](docs/) | Methodology · taxonomy · pipeline diagrams · UI mockups |
-| [robotics_pitch/](robotics_pitch/) | Remotion source for the hero animation |
-| [artifacts/runs/&lt;id&gt;/](artifacts/runs/) | Per-run mirror — runtime, chat, dispatch logs, rollouts, findings, report |
-
-Architecture decisions, vocabulary discipline, and anti-patterns: [claude.md](claude.md).
-
----
-
 ## Acknowledgements
 
-**Anthropic** for Opus 4.7, the Managed Agents harness, and research-preview parallel sessions. **Stanford / robomimic & robosuite teams** for the BC-RNN baseline and the Lift checkpoint (Mandlekar et al. 2021). **DeepMind / MuJoCo** for the simulator. Submitted to the **Anthropic Opus 4.7 Hackathon**.
+**Anthropic** for Opus 4.7, the Managed Agents harness, and research-preview parallel sessions. **Stanford / robomimic & robosuite teams** for the BC-RNN baseline and the Lift checkpoint (Mandlekar et al. 2021). **DeepMind / MuJoCo** for the simulator. **maaurin**, my other GitHub account that I do not know how to log out from. Submitted to the **Anthropic Opus 4.7 Hackathon**.
