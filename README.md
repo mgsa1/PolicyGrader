@@ -26,7 +26,7 @@
     <img src="docs/media/pipeline-flow.gif" alt="Data flow: prompt → rollouts → K parallel judges → report" width="100%" />
   </a>
   <br/>
-  <sub>▶ <a href="docs/media/hero.mp4">Play the full explainer</a> &middot; source in <a href="robotics_pitch/"><code>robotics_pitch/</code></a></sub>
+  <sub>▶ <a href="https://youtu.be/uYHvZM8eQWY">Play the full explainer</a> &middot; source in <a href="robotics_pitch/"><code>robotics_pitch/</code></a></sub>
 </p>
 
 ---
