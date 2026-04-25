@@ -114,9 +114,7 @@ export const PainScene: React.FC = () => {
           A robotics team
           <br />
           watches{" "}
-          <span style={{ color: colors.accent }}>
-            {numbers.scenarios.toLocaleString()}
-          </span>
+          <span style={{ color: colors.accent }}>thousands of</span>
           <br />
           rollout videos by hand.
         </div>

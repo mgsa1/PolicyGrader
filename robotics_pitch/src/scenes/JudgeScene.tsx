@@ -223,7 +223,7 @@ export const JudgeScene: React.FC = () => {
             textTransform: "uppercase",
           }}
         >
-          The judge · single CoT pass over 12-36 frames at 1920 px
+          The judge · 2 576 px vision · 12–36 frames per rollout
         </div>
         <div
           style={{
@@ -235,12 +235,10 @@ export const JudgeScene: React.FC = () => {
             lineHeight: 1.05,
           }}
         >
-          Names the failure.{" "}
-          <span style={{ color: colors.err }}>Points.</span>
+          Names <span style={{ color: colors.ink3 }}>what</span> failed.{" "}
+          <span style={{ color: colors.err }}>Points where it broke.</span>
           <br />
-          <span style={{ color: colors.ink3 }}>
-            Or honestly{" "}
-          </span>
+          <span style={{ color: colors.ink3 }}>Or honestly </span>
           <span style={{ color: colors.accent, fontWeight: 700 }}>abstains</span>
           <span style={{ color: colors.ink3 }}>.</span>
         </div>
@@ -252,16 +250,16 @@ export const JudgeScene: React.FC = () => {
           src="dep_14.png"
           label="failed_grip · point=(403, 312)"
           hasPoint
-          caption="dep_14.png"
-          description="Open-gripper approach, fingers graze the cube during the close — judge points at the contact pixel."
+          caption="dep_14.png · POINTS"
+          description="The fingers grazed the cube as they closed. The judge points at the exact contact pixel."
         />
         <Card
           enterAt={26}
           src="dep_04.png"
-          label="missed_approach"
+          label="missed_approach · point = null"
           hasPoint={false}
-          caption="dep_04.png"
-          description="Gripper closes on empty air — no contact to point at, so the judge returns point=null. First-class output."
+          caption="dep_04.png · ABSTAINS"
+          description="The gripper closed on empty air — there is no contact pixel to point at. The judge returns null instead of guessing."
         />
       </div>
 
@@ -275,8 +273,10 @@ export const JudgeScene: React.FC = () => {
           letterSpacing: 0.4,
         }}
       >
-        2 576 px vision · pixel-accurate pointing ·{" "}
-        <span style={{ color: colors.ok }}>self-aware uncertainty</span>
+        Pixel-accurate when there&rsquo;s evidence.{" "}
+        <span style={{ color: colors.ok }}>
+          Honestly silent when there isn&rsquo;t.
+        </span>
       </div>
     </AbsoluteFill>
   );

@@ -26,7 +26,8 @@ const Side: React.FC<{
   truth: string;
   frames: string[];
   enterAt: number;
-}> = ({ align, cohort, title, subtitle, policy, truth, frames, enterAt }) => {
+  sampleSize: number;
+}> = ({ align, cohort, title, subtitle, policy, truth, frames, enterAt, sampleSize }) => {
   const frame = useCurrentFrame();
   const accent = cohort === "cal" ? colors.cal : colors.dep;
   const accentSoft = cohort === "cal" ? colors.calSoft : colors.depSoft;
@@ -57,18 +58,40 @@ const Side: React.FC<{
         overflow: "hidden",
       }}
     >
-      {/* Cohort tag */}
+      {/* Cohort tag + sample-size chip */}
       <div
         style={{
-          fontFamily: fonts.mono,
-          fontSize: 12,
-          letterSpacing: 2.4,
-          color: accent,
-          textTransform: "uppercase",
-          fontWeight: 600,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
         }}
       >
-        ● {cohort === "cal" ? "Calibration" : "Deployment"}
+        <div
+          style={{
+            fontFamily: fonts.mono,
+            fontSize: 12,
+            letterSpacing: 2.4,
+            color: accent,
+            textTransform: "uppercase",
+            fontWeight: 600,
+          }}
+        >
+          ● {cohort === "cal" ? "Calibration" : "Deployment"}
+        </div>
+        <div
+          style={{
+            fontFamily: fonts.mono,
+            fontSize: 11,
+            letterSpacing: 1.2,
+            padding: "3px 10px",
+            borderRadius: 999,
+            border: `1px solid ${accentLine}`,
+            color: accent,
+            background: "rgba(255,255,255,0.55)",
+          }}
+        >
+          n = {sampleSize}
+        </div>
       </div>
 
       <div
@@ -197,6 +220,7 @@ export const PopulationsScene: React.FC = () => {
           truth="HUMAN labels · stratified subset"
           frames={CAL_FRAMES}
           enterAt={10}
+          sampleSize={1600}
         />
         <Side
           align="right"
@@ -207,6 +231,7 @@ export const PopulationsScene: React.FC = () => {
           truth="Inherits calibration P/R chips"
           frames={DEP_FRAMES}
           enterAt={28}
+          sampleSize={1230}
         />
       </div>
 

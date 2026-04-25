@@ -399,12 +399,13 @@ Migration guide: https://platform.claude.com/docs/en/about-claude/models/whats-n
 
 ## 11.5 Cost accounting and baseline
 
-`src/costing.py::CostTracker` prices the run at a flat **$0.20 per rollout dispatched** (`COST_PER_ROLLOUT_USD`). The counter ticks once inside `_dispatch_rollout` — phases that don't talk to Claude (idle, planner setup before any rollout, sim-only host work, the human-labeling phase) leave it at $0. Empirical anchor: a 30-rollout end-to-end run (planner + rollout-worker + judges + reporter) lands around **$6 of API spend** on the post-single-pass-judge stack, i.e. ~$0.20 amortised per rollout. We retired token-level pricing (Opus 4.7 per-Mtok rates, `add_usage`, the `span.model_request_end` listener, the Messages-API `response.usage` path) when we moved to this model — there is exactly one number to maintain and it's the per-rollout constant.
+**Two cost lines, never conflate them:**
 
-The dashboard shows live cost vs two baselines:
+- **PolicyGrader cost** (`src/costing.py::CostTracker`) — the Anthropic API spend incurred by THIS pipeline. The clock starts when the first rollout is dispatched to Claude (i.e. when API comms begin) and stops when the last tool call completes. Modeled as a flat **$0.19 per rollout dispatched** (`COST_PER_ROLLOUT_USD`); the counter ticks once inside `_dispatch_rollout` — phases that don't talk to Claude (idle, planner setup before any rollout, sim-only host work, the human-labeling phase) leave it at $0. Empirical anchor: the 30-rollout end-to-end run lands around **$5.70 of API spend** on the post-single-pass-judge stack. We retired token-level pricing (Opus 4.7 per-Mtok rates, `add_usage`, the `span.model_request_end` listener, the Messages-API `response.usage` path) — there is exactly one number to maintain and it's the per-rollout constant.
 
-- **Cost baseline:** $75/hr × 3 min/rollout (loaded labor cost — engineer reviews video, classifies failure, takes notes). Constants in `src/costing.py`. Edit `BASELINE_HOURLY_RATE_USD` / `BASELINE_SECONDS_PER_ROLLOUT` to retune.
-- **Time baseline:** sum of actual video durations + 60 s/rollout review overhead. Closer to "wall time a sequential reviewer would take to watch" than the cost baseline. Helper: `baseline_time_seconds_for_videos`.
+- **Human-reviewer baseline** (`baseline_cost_for`) — what the same eval would cost if a robotics engineer watched and classified each rollout video manually. Modeled as **$75/hr × 2 min/rollout × N** — 2 minutes is the average wall-time to view + classify one Lift clip (the clip itself is ~10 s, but the reviewer also scrubs back, reads notes, and writes the label). This baseline scales with N, not wall-clock time — it represents the human alternative, not the pipeline. Constants `BASELINE_HOURLY_RATE_USD` / `BASELINE_SECONDS_PER_ROLLOUT`.
+
+- **Time baseline** (`baseline_time_seconds_for_videos`) — sum of actual video durations + 60 s/rollout review overhead. Closer to "wall time a sequential reviewer would take to watch" than the cost baseline.
 
 The Live banner renders both as side-by-side columns + a green "Cost saved / Time saved" footer. Headline numbers in the demo recording come from the actual session — never fabricate.
 

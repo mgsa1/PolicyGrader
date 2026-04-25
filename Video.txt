@@ -6,16 +6,15 @@ PolicyGrader — Hackathon Demo Video Script
 0:00 – 0:18 · HOOK                                     (≈42 words)
 ────────────────────────────────────────────────────────────────
 VISUAL: Beijing humanoid marathon clip — robot sprawls on the
-        pavement. Crowd reacts. Cut to a warehouse robot fumbling
-        a box. Cut to a home robot near a child.
+        pavement. Cut to when the robot touch the ground. Red circle its foot 
+        tripping to show its easy to see what's wrong. 
 
 VO: "This is funny right now. In two years, it won't be —
      these things will share sidewalks, kitchens, hospitals
      with us. And before any of that ships, somebody has to
      watch a robot try the same task ten million times and
      figure out *why* it failed.
-     Today, that somebody is a human, with a stopwatch,
-     scrubbing video."
+     Today, we mostly relied on humans for this interpretation."
 
 ON-SCREEN TEXT (last 3s): Embodied AI is coming. Eval is the bottleneck.
 

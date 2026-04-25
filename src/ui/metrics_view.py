@@ -187,15 +187,18 @@ def render_cohort_strip(counts: CohortCounts) -> str:
 
 def render_caption() -> str:
     return (
-        "<div style='font-size:12px;color:"
-        + theme.INK_3
-        + ";margin-bottom:18px;line-height:1.55;'>"
+        "<details style='margin-bottom:18px;'>"
+        f"<summary style='font-size:11px;color:{theme.INK_4};cursor:pointer;"
+        "list-style:none;display:inline-block;'>"
+        "&#9432; what these numbers mean"
+        "</summary>"
+        f"<div style='font-size:12px;color:{theme.INK_3};margin-top:8px;line-height:1.55;'>"
         "Binary success comes from <code>env._check_success()</code> (sim-authoritative). "
         "This tab measures the judge's <b>taxonomy label</b> against the <b>human label</b> "
         "given during the calibration phase, on the sampled subset of scripted rollouts the "
         "reviewer saw. Unlabeled calibration rollouts and all deployment rollouts are "
         "excluded from these numbers — see the Deployment findings tab for the latter."
-        "</div>"
+        "</div></details>"
     )
 
 
@@ -242,21 +245,11 @@ def render_scope_strip(rollouts: list[ScoredRollout], scope: str) -> str:
 
 
 def render_judge_calibration_header() -> str:
-    """Framed purpose-line strip at the top of the Judge calibration tab.
-
-    A viewer who reads only this strip + the cohort pills below should
-    already understand what the tab is and is not.
-    """
+    """One-line subtitle under the tab title."""
     return (
-        "<div class='pg-callout'>"
-        f"<div class='pg-callout__eyebrow' style='color:{theme.CAL};'>JUDGE CALIBRATION</div>"
-        "<div class='pg-callout__body'>"
-        "This tab measures the <b>judge</b>, not the policy. The numbers come "
-        "from scripted rollouts where a human reviewer labeled the failure mode "
-        "from the closed taxonomy — the confusion matrix below pits the judge's "
-        "taxonomy label against that human label. Policy findings live in the "
-        "<b>Deployment findings</b> tab."
-        "</div></div>"
+        f"<div style='font-size:13px;color:{theme.INK_3};margin:4px 0 14px 0;'>"
+        "Judge accuracy on the human-labeled calibration subset."
+        "</div>"
     )
 
 
@@ -469,31 +462,16 @@ def per_label_calibration(rollouts: list[ScoredRollout]) -> dict[str, LabelStats
 
 
 def render_calibration_chip(label: str, stats: dict[str, LabelStats]) -> str:
-    """Return a 'judge P = X' chip for a given label, or 'uncalibrated' if support<3.
-
-    Tooltip mentions the calibration source so the viewer can trace it back.
-    """
+    """Return a 'judge P = X' chip for a given label, or 'uncalibrated' if support<3."""
     s = stats.get(label)
-    if s is None:
+    support = (s.tp + s.fn) if s is not None else 0
+    if s is None or support < 3:
         text = "uncalibrated"
-        title = "No calibration rollouts have this expected label."
         variant = "neutral"
     else:
-        support = s.tp + s.fn
-        if support < 3:
-            text = "uncalibrated"
-            title = (
-                f"Only {support} calibration rollouts with injected label "
-                f"'{label}' — too few to publish a precision."
-            )
-            variant = "neutral"
-        else:
-            text = f"judge P = {s.precision:.2f}"
-            title = (
-                f"Based on {support} calibration rollouts with injected label "
-                f"'{label}'. See Judge calibration tab."
-            )
-            variant = "cal"
+        text = f"judge P = {s.precision:.2f}"
+        variant = "cal"
+    title = f"Based on {support} cal rollouts."
     class_attr = "pg-chip" if variant == "neutral" else f"pg-chip pg-chip--{variant}"
     return (
         f"<span title='{html_escape(title)}' class='{class_attr}' "

@@ -222,22 +222,18 @@ def filter_status_html(f: DrillFilter) -> str:
     )
 
 
-def drill_description_html() -> str:
+def heatmap_legend_html() -> str:
+    """Compact 3-swatch legend rendered next to the matrix eyebrow."""
     return (
-        '<div style="font-size:13px;color:var(--pg-ink-3);'
-        'margin:0 0 var(--pg-s-3) 0;line-height:1.5;">'
-        "Pick an expected / judged pair (or either alone) to see the "
-        "calibration rollouts behind the number. Leave both blank to clear."
-        "</div>"
-    )
-
-
-def heatmap_caption_html() -> str:
-    return (
-        '<div style="font-size:13px;color:var(--pg-ink-3);'
-        'margin:var(--pg-s-4) 0 var(--pg-s-2) 0;line-height:1.5;">'
-        "<b>Multiclass confusion.</b> Rows = expected, cols = judged. "
-        "Diagonal (green) = matches, off-diagonal (red) = mis-labels. "
-        "Zero cells are neutral with a middle dot."
-        "</div>"
+        '<span style="display:inline-flex;align-items:center;gap:10px;'
+        'font-size:11px;color:var(--pg-ink-4);margin-left:12px;">'
+        '<span style="display:inline-flex;align-items:center;gap:4px;">'
+        '<span style="width:10px;height:10px;background:var(--pg-ok);'
+        'border-radius:2px;"></span>match</span>'
+        '<span style="display:inline-flex;align-items:center;gap:4px;">'
+        '<span style="width:10px;height:10px;background:var(--pg-err);'
+        'border-radius:2px;"></span>miss</span>'
+        '<span style="display:inline-flex;align-items:center;gap:4px;">'
+        '<span style="opacity:0.5;">·</span>zero</span>'
+        "</span>"
     )
