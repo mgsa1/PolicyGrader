@@ -39,12 +39,12 @@ class TestBaseline:
         assert baseline_cost_for(0) == 0.0
 
     def test_baseline_cost_one_rollout(self) -> None:
-        # 3 min / 60 = 0.05 hr * $75/hr = $3.75
-        assert abs(baseline_cost_for(1) - 3.75) < 1e-9
+        # 2 min / 60 = 0.0333 hr * $75/hr = $2.50
+        assert abs(baseline_cost_for(1) - 2.50) < 1e-9
 
     def test_baseline_cost_thirty_rollouts(self) -> None:
-        # 30 * 3 min = 90 min = 1.5 hr * $75/hr = $112.50
-        assert abs(baseline_cost_for(30) - 112.50) < 1e-9
+        # 30 * 2 min = 60 min = 1.0 hr * $75/hr = $75.00
+        assert abs(baseline_cost_for(30) - 75.00) < 1e-9
 
     def test_baseline_seconds(self) -> None:
         assert baseline_seconds_for(10) == 10 * BASELINE_SECONDS_PER_ROLLOUT

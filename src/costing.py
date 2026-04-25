@@ -11,11 +11,12 @@ Two distinct cost lines, NEVER conflate them:
    phase) contribute $0.
 
 2. **Human-reviewer baseline** — what the same eval would cost if a
-   robotics engineer ran it manually. The clock starts the moment the run
-   is launched, because "running an eval" includes the wall-time the engineer
-   spends staging the policy, watching rollouts, and classifying outcomes —
-   not just the review minutes. We model this as $75/hr × 3 min/rollout × N,
-   the standard mid-band loaded labor cost for eval review.
+   robotics engineer watched and classified each rollout video manually.
+   Modeled as $75/hr × 2 min/rollout × N. The 2-minute figure is the
+   average wall-time to view + classify one rollout video (a Lift clip
+   is ~10 s, but the reviewer also scrubs back, reads notes, and writes
+   the label). $75/hr is mid-band loaded labor cost for a robotics
+   engineer doing eval review.
 
 The demo headline is `PolicyGrader cost / human baseline cost` — without
 the baseline, a 91% label accuracy is a vibes-number; with it, the line
@@ -33,13 +34,14 @@ from dataclasses import dataclass, field
 # Re-baseline on the next clean full-length smoke and update if we drift.
 COST_PER_ROLLOUT_USD = 0.19
 
-# Industry-baseline parameters. 3 min/rollout is a sympathetic estimate —
-# quick to confirm obvious successes, slower to diagnose ambiguous failures.
-# $75/hr is mid-band for a robotics engineer doing eval review (loaded cost
-# including benefits/overhead is typically higher than raw salary). Adjust
-# in the report writer if the demo narrative wants a different framing.
+# Industry-baseline parameters. 2 min/rollout is the average wall-time to
+# view + classify one rollout video — quick on obvious successes, slower on
+# ambiguous failures, plus scrub-back / note-taking overhead. $75/hr is
+# mid-band for a robotics engineer doing eval review (loaded cost including
+# benefits/overhead is typically higher than raw salary). Adjust in the
+# report writer if the demo narrative wants a different framing.
 BASELINE_HOURLY_RATE_USD = 75.0
-BASELINE_SECONDS_PER_ROLLOUT = 180
+BASELINE_SECONDS_PER_ROLLOUT = 120
 
 
 @dataclass
@@ -76,7 +78,7 @@ class CostTracker:
 
 
 def baseline_cost_for(n_rollouts: int) -> float:
-    """Manual-review baseline cost: $75/hr × 3 min/rollout × N."""
+    """Manual-review baseline cost: $75/hr × 2 min/rollout × N."""
     hours = n_rollouts * BASELINE_SECONDS_PER_ROLLOUT / 3600
     return hours * BASELINE_HOURLY_RATE_USD
 
