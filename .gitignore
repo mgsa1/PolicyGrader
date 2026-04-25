@@ -17,3 +17,6 @@ MUJOCO_LOG.TXT
 robotics_pitch/node_modules/
 robotics_pitch/out/
 robotics_pitch/.remotion/
+robotics_pitch/sequences/
+sequences/
+robotics_pitch/public/webcam/
