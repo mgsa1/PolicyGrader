@@ -364,7 +364,11 @@ def _resolve_video_path(raw: str, mirror_root: Path) -> Path:
     return mirror_root / rel
 
 
-def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]:
+def _dispatch_rollout(
+    args: dict[str, Any],
+    mirror_root: Path,
+    cost_tracker: CostTracker | None,
+) -> dict[str, Any]:
     policy_kind = args["policy_kind"]
     rollout_id = args["rollout_id"]
 
@@ -411,6 +415,9 @@ def _dispatch_rollout(args: dict[str, Any], mirror_root: Path) -> dict[str, Any]
     with _ROLLOUT_LOCK:
         result = run_rollout(config, video_out=video_out)
 
+    if cost_tracker is not None:
+        cost_tracker.record_rollout()
+
     # Report the agent-visible path so it can refer back to it from later tools.
     agent_visible = AGENT_MEMORY_ROOT / ROLLOUTS_DIR / f"{rollout_id}.mp4"
     return {
@@ -425,7 +432,6 @@ def _dispatch_judge(
     args: dict[str, Any],
     mirror_root: Path,
     client: Anthropic,
-    cost_tracker: CostTracker | None,
 ) -> dict[str, Any]:
     video_path = _resolve_video_path(args["video_path"], mirror_root)
     # Sibling sidecar written by adapter.run_rollout. Optional: judge falls
@@ -434,7 +440,6 @@ def _dispatch_judge(
     annotation = judge(
         video_path,
         client=client,
-        cost_tracker=cost_tracker,
         telemetry_path=telemetry_path if telemetry_path.exists() else None,
     )
     return {
@@ -543,9 +548,9 @@ def dispatch(
     the synthesis UI can reconstruct rollout configs and judge findings.
     """
     if tool_name == ROLLOUT_TOOL_NAME:
-        result = _dispatch_rollout(tool_input, mirror_root)
+        result = _dispatch_rollout(tool_input, mirror_root, cost_tracker)
     elif tool_name == JUDGE_TOOL_NAME:
-        result = _dispatch_judge(tool_input, mirror_root, client, cost_tracker)
+        result = _dispatch_judge(tool_input, mirror_root, client)
     elif tool_name == SUBMIT_PLAN_TOOL_NAME:
         result = _dispatch_submit_plan(tool_input, mirror_root)
     elif tool_name == SUBMIT_RESULTS_TOOL_NAME:

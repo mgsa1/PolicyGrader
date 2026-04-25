@@ -280,7 +280,6 @@ Past the original 48-hour sprint. State of the world:
 - `docs/demo_script.md` — shot list (use the new tab structure: open on Overview with the banner, cut to Live mid-run, drop the final-report card at the end).
 - 100–200 word written hackathon summary.
 - Live smoke to confirm the simplified judge lifts multiclass label accuracy on the 2-label axis (no prior validation yet under the 2-mode prompt).
-- Cost-tracker validation — one 3-row probe and compare banner number to Anthropic console; ship if within 10%.
 - Recording itself.
 
 (`docs/eval_methodology.md` already exists and reflects the current Lift-only, same-task calibration framing.)
@@ -400,13 +399,7 @@ Migration guide: https://platform.claude.com/docs/en/about-claude/models/whats-n
 
 ## 11.5 Cost accounting and baseline
 
-We track every Anthropic call's tokens via `src/costing.py::CostTracker`. Pricing:
-
-- Opus 4.7 input: **$15 / Mtok** · output: **$75 / Mtok** · cache read: **$1.50 / Mtok** · cache write: **$18.75 / Mtok**
-
-Per-rollout cost on the two-pass flow was **~$1.15** (mixed 8 cal + 8 dep Lift eval, 16 rollouts → $18.38 on 2026-04-24). The single-call CoT migration (§7) changes the vision bill: one ~30-frame call at 2576 px replaces 24 frames at 768 px + 14 frames at 2576 px. Input-image tokens land in the same order of magnitude but can shift either direction depending on the clip-length distribution — **re-baseline on the first post-migration smoke before trusting the banner**, and update `project_smoke_run_costs.md`. **Confirm before any agent-flow run greater than ~5 rollouts.**
-
-**2026-04-24 tracker fix.** The orchestrator previously scraped `getattr(event, "usage", None)` off every session event, but the Anthropic SDK (`0.96.0`) emits token usage ONLY on `span.model_request_end` events as `model_usage`. Agent/message/thinking/tool_use/status_idle events carry no usage at all — so the entire Managed Agents session spend (planner, rollout worker, judge workers, reporter) was invisible to `CostTracker`, and only the direct `src/vision/judge.py` Messages-API calls were counted. Symptom: a run that errored during the judge phase reported `cost_usd=0.0` against a real $7.39 API spend (`eval_3aace5`, 12 cal + 20 dep). Fix: the orchestrator now listens for `span.model_request_end` and pulls `event.model_usage`. The "flight-tested but not formally validated" caveat below is now closed for the Managed Agents side; the Messages-API side was already correct. Historical `runtime.json` numbers from before this fix under-count — use the API-key spend delta, not the cost field, when quoting pre-fix runs.
+`src/costing.py::CostTracker` prices the run at a flat **$0.20 per rollout dispatched** (`COST_PER_ROLLOUT_USD`). The counter ticks once inside `_dispatch_rollout` — phases that don't talk to Claude (idle, planner setup before any rollout, sim-only host work, the human-labeling phase) leave it at $0. Empirical anchor: a 30-rollout end-to-end run (planner + rollout-worker + judges + reporter) lands around **$6 of API spend** on the post-single-pass-judge stack, i.e. ~$0.20 amortised per rollout. We retired token-level pricing (Opus 4.7 per-Mtok rates, `add_usage`, the `span.model_request_end` listener, the Messages-API `response.usage` path) when we moved to this model — there is exactly one number to maintain and it's the per-rollout constant.
 
 The dashboard shows live cost vs two baselines:
 
@@ -415,7 +408,7 @@ The dashboard shows live cost vs two baselines:
 
 The Live banner renders both as side-by-side columns + a green "Cost saved / Time saved" footer. Headline numbers in the demo recording come from the actual session — never fabricate.
 
-The cost tracker is now wired to the correct Managed Agents event (`span.model_request_end → model_usage`) as well as to the Messages-API `response.usage`. Still run a 3-row probe + Anthropic-console comparison before the demo to confirm end-to-end accuracy is within ±10% — the previous "only vision counted" regime means our historical baselines are floors, not truth.
+If the per-rollout cost shifts (e.g. judge frame budget changes, or the rollout-worker's reasoning gets meaningfully heavier), re-baseline against API-key spend on a fresh full-length smoke and update `COST_PER_ROLLOUT_USD`.
 
 ---
 

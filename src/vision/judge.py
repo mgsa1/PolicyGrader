@@ -28,7 +28,6 @@ from typing import Any, cast
 from anthropic import Anthropic
 
 from src.constants import OPUS_MODEL_ID
-from src.costing import CostTracker
 from src.schemas import JudgeAnnotation, RolloutTelemetry
 from src.sim.scripted import FailureMode
 from src.vision.frames import encode_jpeg_b64, read_frames, resize_long_edge, sample_indices
@@ -236,15 +235,12 @@ def judge(
     video_path: Path,
     *,
     client: Anthropic | None = None,
-    cost_tracker: CostTracker | None = None,
     fps: int = DEFAULT_RENDER_FPS,
     telemetry_path: Path | None = None,
 ) -> JudgeAnnotation:
     """Run the single-call judge on a recorded rollout mp4.
 
-    Only call on sim-confirmed failures. `cost_tracker`, if provided,
-    accumulates this call's token usage into the session-wide ledger so the
-    report phase can compare against the manual-review baseline.
+    Only call on sim-confirmed failures.
 
     `telemetry_path`, if provided AND the file exists, loads the per-step sim
     telemetry sidecar and inlines the rows aligned to the sampled frames as a
@@ -279,9 +275,6 @@ def judge(
         ),
         messages=[{"role": "user", "content": cast(Any, user_blocks)}],
     )
-
-    if cost_tracker is not None:
-        cost_tracker.add_usage(response.usage)
 
     raw = "".join(block.text for block in response.content if block.type == "text")
     return _parse_annotation(raw, original_indices)

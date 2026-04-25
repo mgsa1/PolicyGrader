@@ -237,17 +237,6 @@ def _drive_session_to_end_turn(
         for event in _stream_events(client, session_id):
             ev_type = getattr(event, "type", None)
 
-            # Managed Agents emits per-model-call usage on
-            # span.model_request_end events under `model_usage`. None of the
-            # agent.* or session.status_idle events carry tokens. A prior
-            # version polled `event.usage` which doesn't exist, so every
-            # session's planner/rollout/judge/reporter spend was invisible
-            # to the cost tracker.
-            if ev_type == "span.model_request_end":
-                model_usage = getattr(event, "model_usage", None)
-                if model_usage is not None:
-                    cost_tracker.add_usage(model_usage)
-
             if ev_type == "agent.message":
                 text = "".join(
                     block.text for block in getattr(event, "content", []) if block.type == "text"
@@ -544,12 +533,7 @@ def _build_reporter_message(
         f"- Baseline cost (manual reviewer at ${BASELINE_HOURLY_RATE_USD:.0f}/hr × "
         f"{BASELINE_SECONDS_PER_ROLLOUT // 60} min/rollout): {format_cost(base_cost)}\n"
     )
-    buf.write(f"- Baseline wall time (sequential reviewer): {format_duration(base_time)}\n\n")
-    buf.write("=== Token breakdown (for methodology) ===\n")
-    buf.write(f"- input_tokens: {cost_tracker.input_tokens}\n")
-    buf.write(f"- output_tokens: {cost_tracker.output_tokens}\n")
-    buf.write(f"- cache_read_tokens: {cost_tracker.cache_read_tokens}\n")
-    buf.write(f"- cache_creation_tokens: {cost_tracker.cache_creation_tokens}\n")
+    buf.write(f"- Baseline wall time (sequential reviewer): {format_duration(base_time)}\n")
     return buf.getvalue()
 
 
