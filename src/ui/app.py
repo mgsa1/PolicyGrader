@@ -119,6 +119,18 @@ def _current_video_for(run: str) -> str | None:
     return live.current_video_path(_as_path(run))
 
 
+def _video_tick(new_path: str | None, last_path: str | None) -> tuple[Any, str | None]:
+    """Pass-through for a gr.Video tick that re-emits only when the path changes.
+
+    Re-emitting the same path on every tick causes Gradio to reload the
+    underlying <video> element (resetting playback to frame 0). Returning
+    gr.skip() when the path is unchanged lets the user actually watch the clip.
+    """
+    if new_path == last_path:
+        return gr.skip(), last_path
+    return new_path, new_path
+
+
 def _current_video_path_for(run: str) -> str:
     return live.current_video_path_html(_as_path(run))
 
@@ -148,11 +160,7 @@ def _trust_for(run: str) -> str:
 
 
 def _findings_label_for(run: str) -> str:
-    return findings.cluster_cards_html(_as_path(run), "label")
-
-
-def _findings_condition_for(run: str) -> str:
-    return findings.cluster_cards_html(_as_path(run), "condition")
+    return findings.cluster_cards_html(_as_path(run))
 
 
 def _findings_table_for(run: str) -> str:
@@ -190,6 +198,10 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 topbar_meta = gr.HTML(value=chrome.topbar_meta_html(initial_path))
 
         selected_run = gr.State(value=initial_run)
+        # Last paths emitted into the gr.Video components — used by _video_tick
+        # to skip re-emits that would otherwise reload and restart the video.
+        last_current_video_path = gr.State(value=live.current_video_path(initial_path))
+        last_labeling_video_path = gr.State(value=labeling.current_video_path(initial_path))
 
         hero_html = gr.HTML(value=chrome.hero_html(initial_path))
         phase_html = gr.HTML(value=chrome.phase_progress_html(initial_path))
@@ -224,8 +236,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
             with gr.Tab("Judge calibration"):
                 cal_scope_html = gr.HTML(value=chrome.scope_strip_html(initial_path, "calibration"))
 
-                # ---- Labeling flow (auto-visible when the queue has work) ------
-                with gr.Group():
+                # ---- Labeling flow (auto-hides once every rollout is labeled) --
+                with gr.Group(visible=labeling.panel_visible(initial_path)) as labeling_group:
                     gr.Markdown("### Human labeling")
                     labeling_status = gr.HTML(value=labeling.queue_status_html(initial_path))
                     labeling_video = gr.Video(
@@ -243,14 +255,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                         label="Pick the failure mode (or 'success' for a clean pick)",
                         interactive=True,
                     )
-                    labeling_note = gr.Textbox(
-                        label="Optional note",
-                        placeholder="One sentence on what you saw (optional)",
-                        interactive=True,
-                    )
-                    with gr.Row():
-                        labeling_skip_btn = gr.Button("Skip (mark ambiguous)")
-                        labeling_submit_btn = gr.Button("Submit label", variant="primary")
+                    labeling_submit_btn = gr.Button("Submit label", variant="primary")
 
                 # ---- Calibration metrics below ---------------------------------
                 gr.HTML(value=calibration.calibration_header_html())
@@ -267,15 +272,33 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 # clicking a cell narrows the table immediately below it.
                 cal_per_label_html = gr.HTML(value=initial_blocks[2])
 
-                with gr.Column(elem_classes=["pg-cm"]):
-                    gr.HTML(
-                        value=(
-                            "<div class='pg-cm-eyebrow'>"
-                            "Multiclass confusion matrix (click a cell to filter)"
-                            "</div>"
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=3, elem_classes=["pg-cm"]):
+                        gr.HTML(
+                            value=(
+                                "<div class='pg-cm-eyebrow'>"
+                                "Multiclass confusion matrix (click a cell to filter)"
+                                "</div>"
+                            )
                         )
-                    )
-                    cm_html = gr.HTML(value=calibration.matrix_html(initial_path))
+                        cm_html = gr.HTML(value=calibration.matrix_html(initial_path))
+                    with gr.Column(scale=2, elem_classes=["pg-cm-side"]):
+                        gr.HTML(value=("<div class='pg-cm-eyebrow'>Drill into a cell</div>"))
+                        gr.HTML(value=calibration.drill_description_html())
+                        initial_labels = calibration.heatmap_labels(initial_path)
+                        filter_expected = gr.Dropdown(
+                            label="Expected label",
+                            choices=initial_labels,
+                            value=None,
+                            interactive=True,
+                        )
+                        filter_judged = gr.Dropdown(
+                            label="Judged label",
+                            choices=initial_labels,
+                            value=None,
+                            interactive=True,
+                        )
+                        filter_status = gr.HTML(value="")
 
                 # Hidden bridge: an inline-script onclick on the matrix cells
                 # writes "<seq>|<expected>::<judged>" into this textbox; the
@@ -287,46 +310,18 @@ def build_app(runs_root: Path) -> gr.Blocks:
                     elem_id="pg-cm-payload",
                 )
 
-                gr.HTML(value=calibration.drill_description_html())
-                initial_labels = calibration.heatmap_labels(initial_path)
-                with gr.Row():
-                    filter_expected = gr.Dropdown(
-                        label="Expected label",
-                        choices=initial_labels,
-                        value=None,
-                        interactive=True,
-                    )
-                    filter_judged = gr.Dropdown(
-                        label="Judged label",
-                        choices=initial_labels,
-                        value=None,
-                        interactive=True,
-                    )
-                filter_status = gr.HTML(value="")
                 drill_html = gr.HTML(value=calibration.drill_html(initial_path, EMPTY_FILTER))
 
             with gr.Tab("Deployment findings"):
                 dep_scope_html = gr.HTML(value=chrome.scope_strip_html(initial_path, "deployment"))
                 trust_html = gr.HTML(value=chrome.judge_trust_banner_html(initial_path))
-                with gr.Tabs():
-                    with gr.Tab("By label"):
-                        gr.Markdown(
-                            "**Each card** = one judge taxonomy label seen across "
-                            "all failed rollouts. Each rollout in the card carries "
-                            "its population chip (calibration vs deployment). "
-                            "Click a keyframe to open the source mp4."
-                        )
-                        findings_label_html = gr.HTML(
-                            value=findings.cluster_cards_html(initial_path, "label")
-                        )
-                    with gr.Tab("By condition"):
-                        gr.Markdown(
-                            "**Each card** = one perturbation condition (or env+policy "
-                            "combination for deployment rollouts)."
-                        )
-                        findings_condition_html = gr.HTML(
-                            value=findings.cluster_cards_html(initial_path, "condition")
-                        )
+                gr.Markdown(
+                    "**Each card** = one judge taxonomy label seen across "
+                    "all failed rollouts. Each rollout in the card carries "
+                    "its population chip (calibration vs deployment). "
+                    "Click a keyframe to open the source mp4."
+                )
+                findings_label_html = gr.HTML(value=findings.cluster_cards_html(initial_path))
                 gr.Markdown("### All deployment rollouts")
                 findings_table_html = gr.HTML(value=findings.rollout_table_html(initial_path))
 
@@ -339,7 +334,11 @@ def build_app(runs_root: Path) -> gr.Blocks:
         timer.tick(fn=_phase_for, inputs=[selected_run], outputs=phase_html)
         timer.tick(fn=_topbar_meta_for, inputs=[selected_run], outputs=topbar_meta)
         timer.tick(fn=_trace_for, inputs=[selected_run], outputs=trace_html)
-        timer.tick(fn=_current_video_for, inputs=[selected_run], outputs=current_video)
+        timer.tick(
+            fn=lambda r, last: _video_tick(live.current_video_path(_as_path(r)), last),
+            inputs=[selected_run, last_current_video_path],
+            outputs=[current_video, last_current_video_path],
+        )
         timer.tick(fn=_current_video_path_for, inputs=[selected_run], outputs=current_video_path)
         timer.tick(fn=_gallery_for, inputs=[selected_run], outputs=gallery_html)
         timer.tick(fn=_memories_for, inputs=[selected_run], outputs=memories_html)
@@ -352,14 +351,21 @@ def build_app(runs_root: Path) -> gr.Blocks:
             outputs=labeling_status,
         )
         timer.tick(
-            fn=lambda r: labeling.current_video_path(_as_path(r)),
-            inputs=[selected_run],
-            outputs=labeling_video,
+            fn=lambda r, last: _video_tick(labeling.current_video_path(_as_path(r)), last),
+            inputs=[selected_run, last_labeling_video_path],
+            outputs=[labeling_video, last_labeling_video_path],
         )
         timer.tick(
             fn=lambda r: labeling.current_rollout_header_html(_as_path(r)),
             inputs=[selected_run],
             outputs=labeling_rollout,
+        )
+        # Auto-show / -hide the labeling group: appears when the orchestrator
+        # writes a non-empty queue, disappears once every rollout is labeled.
+        timer.tick(
+            fn=lambda r: gr.update(visible=labeling.panel_visible(_as_path(r))),
+            inputs=[selected_run],
+            outputs=labeling_group,
         )
 
         # ---- Slower timers (5 s) -----------------------------------------------
@@ -406,9 +412,6 @@ def build_app(runs_root: Path) -> gr.Blocks:
         heavy.tick(fn=_dep_scope_for, inputs=[selected_run], outputs=dep_scope_html)
         heavy.tick(fn=_trust_for, inputs=[selected_run], outputs=trust_html)
         heavy.tick(fn=_findings_label_for, inputs=[selected_run], outputs=findings_label_html)
-        heavy.tick(
-            fn=_findings_condition_for, inputs=[selected_run], outputs=findings_condition_html
-        )
         heavy.tick(fn=_findings_table_for, inputs=[selected_run], outputs=findings_table_html)
 
         # Refresh the picker's choices AND auto-switch to the most-recent run if
@@ -456,18 +459,20 @@ def build_app(runs_root: Path) -> gr.Blocks:
             outputs=[filter_expected, filter_judged],
         )
 
-        # ---- Labeling submit / skip handlers -----------------------------------
-        def _on_submit_label(
-            run: str, choice: str | None, note: str
-        ) -> tuple[Any, Any, Any, Any, Any]:
+        # ---- Labeling submit handler -------------------------------------------
+        def _on_submit_label(run: str, choice: str | None) -> tuple[Any, Any, Any, Any, Any, Any]:
             """Persist the current rollout's label and advance.
 
             Returns refreshed (status, video_path, rollout_header, label_radio,
-            note_textbox) outputs. No-op if `choice` is empty (the user clicked
-            Submit without selecting a label).
+            group_visibility, last_video_path) outputs. No-op if `choice` is
+            empty (the user clicked Submit without selecting a label). Hides
+            the whole labeling group once the queue is drained. The last
+            output keeps the timer's video-gate state in sync with the path
+            we just pushed.
             """
             if not choice:
                 return (
+                    gr.skip(),
                     gr.skip(),
                     gr.skip(),
                     gr.skip(),
@@ -477,50 +482,28 @@ def build_app(runs_root: Path) -> gr.Blocks:
             labeling.submit_and_advance(
                 _as_path(run),
                 label=cast_to_label(choice),
-                note=note,
-            )
-            return (
-                labeling.queue_status_html(_as_path(run)),
-                labeling.current_video_path(_as_path(run)),
-                labeling.current_rollout_header_html(_as_path(run)),
-                gr.update(value=None),
-                gr.update(value=""),
-            )
-
-        def _on_skip_label(run: str) -> tuple[Any, Any, Any, Any, Any]:
-            labeling.submit_and_advance(
-                _as_path(run),
-                label="ambiguous",
                 note=None,
             )
+            new_video_path = labeling.current_video_path(_as_path(run))
             return (
                 labeling.queue_status_html(_as_path(run)),
-                labeling.current_video_path(_as_path(run)),
+                new_video_path,
                 labeling.current_rollout_header_html(_as_path(run)),
                 gr.update(value=None),
-                gr.update(value=""),
+                gr.update(visible=labeling.panel_visible(_as_path(run))),
+                new_video_path,
             )
 
         labeling_submit_btn.click(
             fn=_on_submit_label,
-            inputs=[selected_run, labeling_label, labeling_note],
+            inputs=[selected_run, labeling_label],
             outputs=[
                 labeling_status,
                 labeling_video,
                 labeling_rollout,
                 labeling_label,
-                labeling_note,
-            ],
-        )
-        labeling_skip_btn.click(
-            fn=_on_skip_label,
-            inputs=[selected_run],
-            outputs=[
-                labeling_status,
-                labeling_video,
-                labeling_rollout,
-                labeling_label,
-                labeling_note,
+                labeling_group,
+                last_labeling_video_path,
             ],
         )
 
@@ -538,6 +521,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
         def _on_run_change(new_run: str) -> tuple[Any, ...]:
             p = Path(new_run)
             blocks = calibration.metrics_blocks(p)
+            new_current_video = live.current_video_path(p)
+            new_labeling_video = labeling.current_video_path(p)
             return (
                 new_run,
                 chrome.topbar_meta_html(p),
@@ -545,7 +530,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 chrome.phase_progress_html(p),
                 overview.overview_html(p),
                 live.agent_trace_html(p),
-                live.current_video_path(p),
+                new_current_video,
                 live.current_video_path_html(p),
                 live.live_gallery_html(p),
                 live.memories_tree_html(p),
@@ -555,12 +540,14 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 blocks[2],
                 chrome.scope_strip_html(p, "deployment"),
                 chrome.judge_trust_banner_html(p),
-                findings.cluster_cards_html(p, "label"),
-                findings.cluster_cards_html(p, "condition"),
+                findings.cluster_cards_html(p),
                 findings.rollout_table_html(p),
                 calibration.drill_html(p, EMPTY_FILTER),
                 calibration.matrix_html(p),
                 calibration.binary_matrix_html(p),
+                gr.update(visible=labeling.panel_visible(p)),
+                new_current_video,
+                new_labeling_video,
             )
 
         run_picker.change(
@@ -584,11 +571,13 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 dep_scope_html,
                 trust_html,
                 findings_label_html,
-                findings_condition_html,
                 findings_table_html,
                 drill_html,
                 cm_html,
                 cal_binary_matrix_html,
+                labeling_group,
+                last_current_video_path,
+                last_labeling_video_path,
             ],
         )
 

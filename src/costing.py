@@ -1,15 +1,16 @@
 """Cost and wall-time accounting for one eval session.
 
-Tracks tokens across every Anthropic call made during a session — the
-Managed Agents reasoning phases plus the two Messages API vision passes —
-multiplies by published Opus 4.7 pricing, and produces a single number the
-report writer can quote against an industry baseline.
+Cost model: a flat $0.20 per rollout dispatched, summed across the run.
+Empirical: a 30-rollout end-to-end agent run (planner + rollout-worker +
+judges + reporter) lands around $6 of Anthropic API spend, i.e. ~$0.20
+amortised per rollout. The tracker only ticks inside `_dispatch_rollout` —
+phases that don't talk to Claude (idle, sim execution on the host, the
+human-labeling phase) leave it at zero.
 
-The industry baseline is the comparison frame for the demo: "a human
-reviewer at $50/hr × 3 min/rollout doing the same judgement work." This is
-what makes precision/recall mean something — without a baseline denominator,
-a 91% label accuracy is a vibes-number. With the baseline, it's "we matched
-a human reviewer at N× lower cost."
+The industry baseline for the demo's "savings" framing is unchanged:
+"a human reviewer at $75/hr × 3 min/rollout doing the same judgement
+work." Without it, a 91% label accuracy is a vibes-number; with it,
+it's "we matched a human reviewer at N× lower cost."
 """
 
 from __future__ import annotations
@@ -17,12 +18,10 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-# Opus 4.7 pricing per million tokens. Published on
-# https://www.anthropic.com/pricing — update when the price sheet moves.
-OPUS_4_7_INPUT_PER_MTOK = 15.0
-OPUS_4_7_OUTPUT_PER_MTOK = 75.0
-OPUS_4_7_CACHE_READ_PER_MTOK = 1.5  # 10% of input
-OPUS_4_7_CACHE_WRITE_PER_MTOK = 18.75  # 1.25× input
+# Per-rollout API cost. Empirical from the post-single-pass-judge runs:
+# planner + rollout-worker + judges (only on failures) + reporter, all
+# Managed Agents sessions, summed and divided by total rollouts.
+COST_PER_ROLLOUT_USD = 0.20
 
 # Industry-baseline parameters. 3 min/rollout is a sympathetic estimate —
 # quick to confirm obvious successes, slower to diagnose ambiguous failures.
@@ -35,48 +34,28 @@ BASELINE_SECONDS_PER_ROLLOUT = 180
 
 @dataclass
 class CostTracker:
-    """Running sum of token usage across one session. Mutable.
+    """Counts rollouts dispatched and prices them at COST_PER_ROLLOUT_USD.
 
-    Pass the same instance to every call site that touches an Anthropic
-    response (Managed Agents event stream + each Messages API vision call).
-    Call `add_usage(response.usage)` on any object that exposes the usual
-    `*_tokens` attributes; missing attrs are tolerated.
+    Pass the same instance to every dispatch path; call `record_rollout()`
+    once per `_dispatch_rollout` invocation. The counter is the sole driver
+    of `total_cost_usd` — phases that never call `record_rollout()` (planner
+    setup, sim-only host work, human labeling) leave the cost at $0.
 
-    Thread-safe: Plan B's multi-orchestrator runs ~10 Managed Agents sessions
-    concurrently, each dispatching token-accumulating events from its own
-    thread. The internal lock serializes add_usage() so increments don't race.
-    total_cost_usd is a pure read of scalar fields — Python's GIL guarantees
-    torn reads can only miss the last increment, which is acceptable for a
-    live banner.
+    Thread-safe: the orchestrator runs ~10 Managed Agents sessions
+    concurrently. The internal lock serialises increments.
     """
 
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
+    n_rollouts: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
-    def add_usage(self, usage: object) -> None:
-        """Accumulate tokens from an Anthropic SDK Usage-shaped object."""
+    def record_rollout(self) -> None:
+        """Tick the rollout counter by one. Call once per dispatched rollout."""
         with self._lock:
-            for src_attr, tgt_attr in (
-                ("input_tokens", "input_tokens"),
-                ("output_tokens", "output_tokens"),
-                ("cache_read_input_tokens", "cache_read_tokens"),
-                ("cache_creation_input_tokens", "cache_creation_tokens"),
-            ):
-                val = getattr(usage, src_attr, None)
-                if val is not None:
-                    setattr(self, tgt_attr, getattr(self, tgt_attr) + int(val))
+            self.n_rollouts += 1
 
     @property
     def total_cost_usd(self) -> float:
-        return (
-            self.input_tokens * OPUS_4_7_INPUT_PER_MTOK
-            + self.output_tokens * OPUS_4_7_OUTPUT_PER_MTOK
-            + self.cache_read_tokens * OPUS_4_7_CACHE_READ_PER_MTOK
-            + self.cache_creation_tokens * OPUS_4_7_CACHE_WRITE_PER_MTOK
-        ) / 1_000_000
+        return self.n_rollouts * COST_PER_ROLLOUT_USD
 
 
 def baseline_cost_for(n_rollouts: int) -> float:

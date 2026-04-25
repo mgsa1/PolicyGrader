@@ -16,14 +16,15 @@ that was at best a floor, not a transferable number.
   IK-style picker (approach → descend → grasp → lift) that reliably succeeds
   on default-placement Lift when no failures are injected.
 - **Perturbation surface.** The policy's output actions. Four knobs steer
-  the scripted policy into specific failure regimes:
-  - `action_noise ≈ 0.05` tends to graze the cube (`cube_scratched_but_not_moved`)
-  - `action_noise ≥ 0.25` tends to knock the cube off (`knock_object_off_table`)
-  - `approach_angle_offset_deg > 0` produces clean `approach_miss`
-  - `gripper_close_prematurely=True` produces `gripper_never_opened`
-  - `grip_force_scale < 0.7` produces `slip_during_lift` (the gripper carries
-    the cube up, then releases — see the `SLIP_CARRY_STEPS` loop in the
-    policy)
+  the scripted policy into specific failure regimes (the taxonomy is
+  outcome-axis — several knobs share a label):
+  - `action_noise > 0` destabilizes the approach (graze / knock) — produces
+    `missed_approach`
+  - `approach_angle_offset_deg > 0` produces `missed_approach`
+  - `gripper_close_prematurely=True` produces `missed_approach` (hand arrives
+    with fingers shut; no grip forms)
+  - `grip_force_scale < 0.7` produces `failed_grip` (the gripper carries the
+    cube up, then releases — see the `SLIP_CARRY_STEPS` loop in the policy)
 - **Ground truth comes from humans, not knobs.** Knob settings are intent,
   not truth — on any given seed the actual behavior can blur between modes
   (a low-noise rollout that grazes the cube; a knock knob that produces a

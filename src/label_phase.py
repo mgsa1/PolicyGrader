@@ -1,4 +1,4 @@
-"""Host-side human labeling phase, shared between Plan A and Plan B.
+"""Host-side human labeling phase.
 
 Sits between rollout and judge. No Managed Agents session, no API calls — the
 host reads the completed rollouts from dispatch_log.jsonl, asks the sampler

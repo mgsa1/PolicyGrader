@@ -97,9 +97,8 @@ class TestScriptedLiftIntegration:
         # NOISE_GAIN=8, action_noise=0.15 lives right at the edge of "knocks
         # the cube", and tiny floating-point differences in MuJoCo's solver
         # across CPUs flip the outcome. 0.30 is unambiguously chaotic on every
-        # machine. The 0.15 -> KNOCK_OBJECT_OFF_TABLE label mapping is pinned
-        # by TestInjectedFailuresLabel above; this test only verifies that
-        # the noise mechanism CAN break the rollout when cranked up.
+        # machine. This test only verifies that the noise mechanism CAN break
+        # the rollout when cranked up.
         from src.sim.scripted import InjectedFailures, ScriptedLiftPolicy
 
         env = env_factory()

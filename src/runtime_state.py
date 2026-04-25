@@ -10,8 +10,7 @@ the IPC mechanism this dumb means:
 Two files in mirror_root:
 
   runtime.json — a small snapshot, overwritten in place after every event:
-    {phase, elapsed_seconds, cost_usd, input_tokens, output_tokens,
-     n_rollouts, last_event_at}
+    {phase, elapsed_seconds, cost_usd, n_rollouts, last_event_at}
 
   chat.jsonl — append-only log of agent-visible activity, one JSON per line:
     {ts, kind, ...}  where kind ∈ {phase_marker, agent_message,
@@ -61,10 +60,10 @@ class RuntimeState:
     # run_id; goal + started_at are surfaced in the picker's display label.
     run_id: str = ""
     goal: str = ""
-    # Plan B fans out ~10 concurrent Managed Agents sessions; their event-stream
-    # threads all call mark_event / append_chat / write_snapshot. A single
-    # re-entrant lock is enough because set_phase() calls write_snapshot()
-    # while already holding the lock.
+    # The orchestrator fans out ~10 concurrent Managed Agents sessions; their
+    # event-stream threads all call mark_event / append_chat / write_snapshot.
+    # A single re-entrant lock is enough because set_phase() calls
+    # write_snapshot() while already holding the lock.
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def write_meta(self) -> None:
@@ -140,10 +139,6 @@ class RuntimeState:
             "phase": self.phase,
             "elapsed_seconds": time.time() - self.start_time,
             "cost_usd": self.cost_tracker.total_cost_usd,
-            "input_tokens": self.cost_tracker.input_tokens,
-            "output_tokens": self.cost_tracker.output_tokens,
-            "cache_read_tokens": self.cost_tracker.cache_read_tokens,
-            "cache_creation_tokens": self.cost_tracker.cache_creation_tokens,
             "n_rollouts": self.n_rollouts,
             "planned_total": self.planned_total,
             "n_rollouts_dispatched": n_roll,

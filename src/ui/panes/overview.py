@@ -21,8 +21,9 @@ from src.costing import (
     format_cost,
     format_duration,
 )
+from src.memory_layout import REPORT_FILE
 from src.ui.panes._io import read_runtime
-from src.ui.styles import chip, html_escape, num
+from src.ui.styles import chip, html_escape, num, render_report_markdown
 from src.ui.synthesis import (
     cluster_by_label,
     cohort_split,
@@ -53,6 +54,7 @@ def overview_html(mirror_root: Path) -> str:
         _overview_headline(n_cal, n_dep)
         + _kpi_strip(cost, cost_save, elapsed, time_save, n, n_clusters)
         + _pipeline_cards(rt)
+        + _final_report_card(mirror_root)
     )
 
 
@@ -141,4 +143,33 @@ def _pipeline_cards(rt: dict[str, Any]) -> str:
             "final narrative + numbers",
         )
         + "</div>"
+    )
+
+
+def _final_report_card(mirror_root: Path) -> str:
+    """Render the reporter's final report.md as a pg-card. Empty until it lands.
+
+    DESIGN.md §3 "Cards": `--pg-surface` + 1px hairline + radius, no shadow.
+    Header row per spec: h3 title left, mono meta right. The body uses a
+    `pg-report-body` class so tokens.css styling can target headings /
+    tables / paragraphs without bleeding into the agent-trace markdown.
+    """
+    path = mirror_root / REPORT_FILE
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    body = render_report_markdown(text)
+    return (
+        '<div class="pg-card pg-report-card" style="margin-top:var(--pg-s-6);">'
+        '<div class="pg-report-card-head">'
+        '<h3 class="pg-report-card-title">Final Report</h3>'
+        f'<code class="pg-report-card-meta">{html_escape(REPORT_FILE)}</code>'
+        "</div>"
+        f'<div class="pg-report-body">{body}</div>'
+        "</div>"
     )

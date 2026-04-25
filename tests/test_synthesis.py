@@ -11,7 +11,6 @@ import pytest
 from src.agents.tools import DISPATCH_LOG
 from src.ui.synthesis import (
     ScoredRollout,
-    cluster_by_condition,
     cluster_by_label,
     compute_metrics,
     load_scored_rollouts,
@@ -22,7 +21,7 @@ def _scored(
     rid: str,
     *,
     success: bool = False,
-    judge_label: str | None = "approach_miss",
+    judge_label: str | None = "missed_approach",
     knobs: dict[str, Any] | None = None,
     policy_kind: str = "scripted",
     env_name: str = "Lift",
@@ -73,30 +72,30 @@ class TestClusterByLabel:
         # any taxonomy cluster.
         rollouts = [
             _scored("a", success=True, judge_label=None),
-            _scored("b", success=False, judge_label="slip_during_lift"),
+            _scored("b", success=False, judge_label="failed_grip"),
         ]
         clusters = cluster_by_label(rollouts)
         assert len(clusters) == 1
-        assert clusters[0].name == "slip_during_lift"
+        assert clusters[0].name == "failed_grip"
         assert [r.rollout_id for r in clusters[0].rollouts] == ["b"]
 
     def test_one_cluster_per_label_sorted_by_size(self) -> None:
         rollouts = [
-            _scored("a", judge_label="approach_miss"),
-            _scored("b", judge_label="approach_miss"),
-            _scored("c", judge_label="slip_during_lift"),
-            _scored("d", judge_label="approach_miss"),
+            _scored("a", judge_label="missed_approach"),
+            _scored("b", judge_label="missed_approach"),
+            _scored("c", judge_label="failed_grip"),
+            _scored("d", judge_label="missed_approach"),
         ]
         clusters = cluster_by_label(rollouts)
-        assert [c.name for c in clusters] == ["approach_miss", "slip_during_lift"]
+        assert [c.name for c in clusters] == ["missed_approach", "failed_grip"]
         assert len(clusters[0].rollouts) == 3
         assert len(clusters[1].rollouts) == 1
 
     def test_breakdown_counts_conditions_within_label(self) -> None:
         rollouts = [
-            _scored("a", judge_label="approach_miss", knobs={"injected_angle_deg": 20}),
-            _scored("b", judge_label="approach_miss", knobs={"injected_angle_deg": 15}),
-            _scored("c", judge_label="approach_miss"),  # clean knobs
+            _scored("a", judge_label="missed_approach", knobs={"injected_angle_deg": 20}),
+            _scored("b", judge_label="missed_approach", knobs={"injected_angle_deg": 15}),
+            _scored("c", judge_label="missed_approach"),  # clean knobs
         ]
         clusters = cluster_by_label(rollouts)
         assert len(clusters) == 1
@@ -104,52 +103,6 @@ class TestClusterByLabel:
         # Two with angle perturbation, one clean.
         assert bd.get("angle perturbation (≠0°)") == 2
         assert bd.get("clean (no perturbation)") == 1
-
-
-class TestClusterByCondition:
-    def test_empty(self) -> None:
-        assert cluster_by_condition([]) == []
-
-    def test_pretrained_groups_by_env_policy(self) -> None:
-        rollouts = [
-            _scored("a", policy_kind="pretrained", env_name="Lift"),
-            _scored("b", policy_kind="pretrained", env_name="Lift"),
-        ]
-        clusters = cluster_by_condition(rollouts)
-        assert len(clusters) == 1
-        assert clusters[0].name == "pretrained · Lift"
-        assert len(clusters[0].rollouts) == 2
-
-    def test_one_rollout_can_appear_in_multiple_condition_clusters(self) -> None:
-        # A rollout perturbing both noise AND grip_scale should appear in
-        # both buckets.
-        rollouts = [
-            _scored(
-                "multi",
-                judge_label="approach_miss",
-                knobs={"injected_action_noise": 0.15, "injected_grip_scale": 0.3},
-            )
-        ]
-        clusters = cluster_by_condition(rollouts)
-        names = sorted(c.name for c in clusters)
-        assert "high action noise (≥0.1)" in names
-        assert "low grip scale (<0.7)" in names
-
-    def test_breakdown_counts_labels_within_condition(self) -> None:
-        rollouts = [
-            _scored(
-                "a", judge_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
-            ),
-            _scored(
-                "b", judge_label="knock_object_off_table", knobs={"injected_action_noise": 0.15}
-            ),
-            _scored("c", judge_label="approach_miss", knobs={"injected_action_noise": 0.15}),
-        ]
-        clusters = cluster_by_condition(rollouts)
-        noise_cluster = next(c for c in clusters if "noise" in c.name)
-        assert len(noise_cluster.rollouts) == 3
-        assert noise_cluster.breakdown["knock_object_off_table"] == 2
-        assert noise_cluster.breakdown["approach_miss"] == 1
 
 
 class TestComputeMetrics:
@@ -162,14 +115,14 @@ class TestComputeMetrics:
             _scored(
                 "f0",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             _scored(
                 "f1",
                 success=False,
-                judge_label="slip_during_lift",
-                ground_truth_label="slip_during_lift",
+                judge_label="failed_grip",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)
@@ -185,14 +138,14 @@ class TestComputeMetrics:
             _scored(
                 "f0",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             _scored(
                 "f1",
                 success=False,
                 judge_label=None,  # judge hasn't run yet
-                ground_truth_label="slip_during_lift",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)
@@ -202,19 +155,19 @@ class TestComputeMetrics:
         assert m.label_accuracy == 1.0
 
     def test_mismatched_label_not_correct(self) -> None:
-        # Judge says approach_miss but ground truth is slip_during_lift.
+        # Judge says missed_approach but ground truth is failed_grip.
         rollouts = [
             _scored(
                 "f0",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             _scored(
                 "f1",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="slip_during_lift",
+                judge_label="missed_approach",
+                ground_truth_label="failed_grip",
             ),
         ]
         m = compute_metrics(rollouts)
@@ -226,7 +179,7 @@ class TestComputeMetrics:
         # Deployment rollouts have ground_truth_label=None and must not
         # contribute to label-accuracy denominators.
         rollouts = [
-            _scored("p0", success=False, judge_label="approach_miss", ground_truth_label=None),
+            _scored("p0", success=False, judge_label="missed_approach", ground_truth_label=None),
         ]
         m = compute_metrics(rollouts)
         assert m.n_total == 1
@@ -258,7 +211,7 @@ class TestLoadScoredRollouts:
                     "success": False,
                     "steps_taken": 200,
                     "video_path": "/memories/rollouts/r1.mp4",
-                    "ground_truth_label": "knock_object_off_table",
+                    "ground_truth_label": "missed_approach",
                 },
             },
             {
@@ -267,11 +220,10 @@ class TestLoadScoredRollouts:
                 "args": {"rollout_id": "r1", "video_path": "/memories/rollouts/r1.mp4"},
                 "result": {
                     "rollout_id": "r1",
-                    "taxonomy_label": "knock_object_off_table",
+                    "taxonomy_label": "missed_approach",
                     "frame_index": 73,
                     "point": [400, 250],
                     "description": "cube knocked aside",
-                    "per_frame_observations": [],
                 },
             },
         ]
@@ -282,7 +234,7 @@ class TestLoadScoredRollouts:
         r = out[0]
         assert r.rollout_id == "r1"
         assert r.injection_knobs["injected_action_noise"] == pytest.approx(0.15)
-        assert r.judge_label == "knock_object_off_table"
+        assert r.judge_label == "missed_approach"
         assert r.judge_frame_index == 73
         assert r.judge_point == (400, 250)
         assert r.judge_description == "cube knocked aside"

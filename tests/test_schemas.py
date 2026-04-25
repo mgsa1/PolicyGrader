@@ -161,7 +161,7 @@ class TestFinding:
                 rollout_id="r1",
                 sim_success=True,
                 annotation=JudgeAnnotation(
-                    taxonomy_label=FailureMode.APPROACH_MISS,
+                    taxonomy_label=FailureMode.MISSED_APPROACH,
                     frame_index=42,
                     point=(100, 200),
                     description="x",
@@ -173,7 +173,7 @@ class TestFinding:
             rollout_id="r1",
             sim_success=False,
             annotation=JudgeAnnotation(
-                taxonomy_label=FailureMode.SLIP_DURING_LIFT,
+                taxonomy_label=FailureMode.FAILED_GRIP,
                 frame_index=70,
                 point=(123, 456),
                 description="cube slips at frame 70",
@@ -184,13 +184,13 @@ class TestFinding:
         assert f.annotation.frame_index == 70
 
     def test_failure_without_point_is_valid(self) -> None:
-        """approach_miss / gripper_collision failures have no gripper-cube contact,
-        so the judge may legitimately return point=None. Confirm the schema allows it."""
+        """A clean missed_approach has no gripper-cube contact to point at, so
+        the judge may legitimately return point=None. Confirm the schema allows it."""
         f = Finding(
             rollout_id="r2",
             sim_success=False,
             annotation=JudgeAnnotation(
-                taxonomy_label=FailureMode.APPROACH_MISS,
+                taxonomy_label=FailureMode.MISSED_APPROACH,
                 frame_index=30,
                 point=None,
                 description="gripper closes on empty air",

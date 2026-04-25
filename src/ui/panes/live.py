@@ -97,13 +97,12 @@ def _phase_divider(marker: str) -> str:
 
 
 def _worker_chip(worker: str | None) -> str:
-    """Tiny chip identifying which Plan B session produced an event.
+    """Tiny chip identifying which specialized session produced an event.
 
-    Plan A emits events without a `worker` field (single session per run);
-    returning an empty string then keeps the trace visually identical to
-    the pre-Plan-B look. Under Plan B, the orchestrator tags every event
-    with `planner` / `rollout` / `judge-NN` / `reporter`; the chip color
-    follows the phase that worker belongs to.
+    The orchestrator tags every event with `planner` / `rollout` / `judge-NN`
+    / `reporter`. When no worker tag is present (early bring-up or legacy
+    artifacts), returning an empty string keeps the trace uncluttered.
+    The chip color follows the phase that worker belongs to.
     """
     if not worker:
         return ""
@@ -210,7 +209,7 @@ def current_video_path(mirror_root: Path) -> str | None:
 def _per_worker_current_mp4(mirror_root: Path) -> list[tuple[str, str]]:
     """(worker_label, mp4_name) for each worker, newest tool_use with an rid wins.
 
-    Under Plan B's judge phase, multiple judge-NN workers stream concurrently;
+    During the judge phase, multiple judge-NN workers stream concurrently;
     each one's most recent rollout_id is what that worker is "looking at" now.
     Order: deterministic by worker label so the strip doesn't reshuffle on
     each refresh.
@@ -233,9 +232,9 @@ def _per_worker_current_mp4(mirror_root: Path) -> list[tuple[str, str]]:
 def current_video_path_html(mirror_root: Path) -> str:
     """The mono path chip shown under the player.
 
-    Under Plan A (single session), shows the most-recent mp4. Under Plan B's
-    judge phase, appends a per-worker strip showing which mp4 each judge
-    session is currently watching — that's where concurrency is visible.
+    Shows the most-recent mp4 overall. During the judge phase, appends a
+    per-worker strip showing which mp4 each judge session is currently
+    watching — that's where concurrency is visible.
     """
     path = current_video_path(mirror_root)
     if path is None:
@@ -254,7 +253,7 @@ def current_video_path_html(mirror_root: Path) -> str:
     )
 
     # Per-worker strip — only meaningful when ≥ 2 distinct workers touched
-    # a rollout, which is effectively "we're in the judge phase of Plan B".
+    # a rollout, i.e. we're in the judge phase with multiple workers.
     per_worker = _per_worker_current_mp4(mirror_root)
     judge_workers = [(w, mp4) for w, mp4 in per_worker if w.startswith("judge")]
     if len(judge_workers) < 2:

@@ -2,20 +2,16 @@
 
 Reads `mirror_root/dispatch_log.jsonl` (which the orchestrator-side dispatch
 appends to on every rollout/judge call) and turns it into clusters of
-related failures with keyframe evidence. Two grouping modes:
+related failures with keyframe evidence — one cluster per judge
+taxonomy_label that appears ("8 failures judged missed_approach" + 8
+keyframes).
 
-  1. by_label   — one cluster per judge taxonomy_label that appears.
-                  "8 failures judged approach_miss" + 8 keyframes.
-  2. by_condition — one cluster per scripted-knob condition that's perturbed
-                    plus one per (env, policy) combination for pretrained
-                    rollouts. "3 failures with angle_offset>0" + 3 keyframes.
-
-Each cluster card shows: name + count + % of total failures + breakdown by
-the OTHER axis (e.g., a by_condition cluster shows label distribution
-within it) + grid of keyframes. Keyframes are the frame the judge named
-(`frame_index`) from the original mp4, with a red dot drawn at the judge's
-`point` coordinate — OR no dot at all when the judge returned `point=None`
-(abstention on no-contact failures like approach_miss).
+Each cluster card shows: label + count + % of total failures + a breakdown
+of which perturbation conditions produced that label + a grid of keyframes.
+Keyframes are the frame the judge named (`frame_index`) from the original
+mp4, with a red dot drawn at the judge's `point` coordinate — OR no dot at
+all when the judge returned `point=None` (abstention on no-contact failures
+like a clean missed_approach).
 
 Pure module — no Gradio imports — so it's testable in isolation and reusable
 by Remotion or any other consumer.
@@ -31,7 +27,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from src.agents.tools import DISPATCH_LOG
-from src.human_labels import labels_by_rollout
+from src.human_labels import labels_by_rollout, remap_legacy_label
 from src.ui import theme
 from src.vision.frames import read_frames, resize_long_edge
 from src.vision.judge import JUDGE_LONG_EDGE_PX
@@ -146,11 +142,11 @@ def copy_button(
 
 
 # Threshold below which we consider an injection knob "default" (not perturbed).
-# Mirrors the knob-to-label mapping in src.agents.system_prompts:
-#   action_noise >= 0.10 => knock_object_off_table
-#   angle_deg > 0        => approach_miss
-#   premature_close=True => approach_miss
-#   grip_scale < 0.7     => slip_during_lift
+# Mirrors the knob-to-intent mapping in src.agents.system_prompts:
+#   action_noise >= 0.10 => missed_approach (chaotic approach)
+#   angle_deg > 0        => missed_approach
+#   premature_close=True => missed_approach (was gripper_not_open)
+#   grip_scale < 0.7     => failed_grip (was gripper_slipped)
 _NOISE_PERTURBED_THRESHOLD = 0.10
 _GRIP_SCALE_PERTURBED_THRESHOLD = 0.7
 
@@ -376,6 +372,13 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
         host_video = rollouts_dir / f"{rid}.mp4"
         judge_frame_raw = judge.get("frame_index")
         human_label_record = human_labels.get(rid)
+        # Remap legacy judge labels from prior-run dispatch logs (e.g.
+        # "gripper_slipped") so the UI renders against the current 2-mode
+        # taxonomy without rewriting past artifacts.
+        raw_judge_label = judge.get("taxonomy_label")
+        judge_label_str = (
+            remap_legacy_label(raw_judge_label) if isinstance(raw_judge_label, str) else None
+        )
         out.append(
             ScoredRollout(
                 rollout_id=rid,
@@ -386,7 +389,7 @@ def load_scored_rollouts(mirror_root: Path) -> list[ScoredRollout]:
                 steps_taken=int(result.get("steps_taken", 0)),
                 human_label=human_label_record.label if human_label_record else None,
                 injection_knobs=knobs,
-                judge_label=judge.get("taxonomy_label"),
+                judge_label=judge_label_str,
                 judge_frame_index=int(judge_frame_raw) if judge_frame_raw is not None else None,
                 judge_point=(
                     (int(judge_point[0]), int(judge_point[1])) if judge_point is not None else None
@@ -442,28 +445,6 @@ def cluster_by_label(rollouts: list[ScoredRollout]) -> list[Cluster]:
             for bucket in _condition_buckets(r):
                 breakdown[bucket] = breakdown.get(bucket, 0) + 1
         clusters.append(Cluster(name=label, rollouts=members, breakdown=breakdown))
-    return clusters
-
-
-def cluster_by_condition(rollouts: list[ScoredRollout]) -> list[Cluster]:
-    """One cluster per condition bucket that has any judged-failed members.
-
-    Within each cluster, the breakdown counts judge labels — gives the
-    'these conditions produce these failure modes' read.
-    """
-    failed = [r for r in rollouts if r.judged_failure]
-    by_condition: dict[str, list[ScoredRollout]] = {}
-    for r in failed:
-        for bucket in _condition_buckets(r):
-            by_condition.setdefault(bucket, []).append(r)
-
-    clusters: list[Cluster] = []
-    for condition, members in sorted(by_condition.items(), key=lambda kv: -len(kv[1])):
-        breakdown: dict[str, int] = {}
-        for r in members:
-            label = r.judge_label or "(judge pending)"
-            breakdown[label] = breakdown.get(label, 0) + 1
-        clusters.append(Cluster(name=condition, rollouts=members, breakdown=breakdown))
     return clusters
 
 

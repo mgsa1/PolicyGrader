@@ -80,6 +80,17 @@ def render_markdown(text: str) -> str:
     return str(_MD.render(text))
 
 
+# Full-document renderer for the final report.md — GFM tables on (reporter's
+# cost-vs-baseline block is a pipe table); `breaks=False` so paragraph wraps
+# don't insert <br>s between cells.
+_MD_REPORT = MarkdownIt("gfm-like", {"html": False, "linkify": False, "breaks": False})
+
+
+def render_report_markdown(text: str) -> str:
+    """Render the agent's final report.md (GFM tables, safe HTML)."""
+    return str(_MD_REPORT.render(text))
+
+
 # ---- Tiny HTML primitives ------------------------------------------------------
 
 

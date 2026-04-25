@@ -1,26 +1,37 @@
-"""Plan-A orchestrator: ONE Managed Agents session, four phases via markers.
+"""Multi-agent orchestrator: FOUR specialized Managed Agents.
 
-CLAUDE.md sec 3 (Plan A):
-  - One agent, one environment, one session
-  - Four phases (planner / rollout / judge / report) inside the same session,
-    triggered by sending phase-marker user messages between them
-  - The agent thinks to /memories/; we read along by mirroring artifacts to
-    artifacts/sessions/<id>/
+CLAUDE.md §3:
+  Planner (1 session)
+    → Rollout worker (1 session, main-thread, sequential sim)
+    → Judge workers (K parallel sessions)
+    → Reporter (1 session)
 
-Loop shape per phase:
-  1) Send the phase marker as a user message.
-  2) Stream events. For each `agent.custom_tool_use`, dispatch locally and
-     send back a `user.custom_tool_result`.
-  3) Stop when the session goes idle with stop_reason=end_turn (the agent
-     decided this phase is done) — then advance.
+Each phase is its own agent + session with a narrow tool surface. Only the
+judge phase fans out across K worker sessions via a ThreadPoolExecutor —
+that's where parallelism pays off, since judging is API-bound. Rollouts are
+sim-bound and serialized by `_ROLLOUT_LOCK` in `src/agents/tools.py`, so they
+run sequentially in one session driven from the host's main thread. The
+main-thread requirement is load-bearing on macOS: GLFW's Cocoa init hangs
+when called from a worker thread, so the rollout tool call MUST dispatch on
+the main thread.
 
-This keeps the four phases legible (you can read /memories/plan.md, then
-test_matrix.csv, then results.jsonl, then findings.jsonl, then report.md
-in order to see the run) without needing four separate sessions.
+Shared state:
+  - CostTracker, RuntimeState — locked internally (see src/costing.py,
+    src/runtime_state.py).
+  - dispatch_log.jsonl appends — locked in src/agents/tools.py.
+
+Artifact hand-off: each session's /memories/ is isolated; agents submit
+final artifacts to the host via submit_* custom tools that write to
+mirror_root. The reporter receives plan/matrix/results/findings inlined in
+its first user message — it never sees other sessions' /memories/.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
+import csv
+import io
+import json
 import logging
 import time
 from collections.abc import Iterator
@@ -31,14 +42,17 @@ from typing import Any, cast
 from anthropic import Anthropic
 
 from src.agents.system_prompts import (
+    JUDGE_WORKER_SYSTEM_PROMPT,
     PHASE_MARKER_JUDGE,
     PHASE_MARKER_PLANNER,
     PHASE_MARKER_REPORT,
     PHASE_MARKER_ROLLOUT,
-    SYSTEM_PROMPT,
+    PLANNER_SYSTEM_PROMPT,
+    REPORTER_SYSTEM_PROMPT,
+    ROLLOUT_WORKER_SYSTEM_PROMPT,
 )
 from src.agents.tools import dispatch as dispatch_custom_tool
-from src.agents.tools import tool_params
+from src.agents.tools import tool_params_for_role
 from src.constants import MANAGED_AGENTS_BETA_HEADER, OPUS_MODEL_ID
 from src.costing import (
     BASELINE_HOURLY_RATE_USD,
@@ -54,43 +68,29 @@ from src.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
 
-# Goals tend to mention "N scenarios", "N rollouts", or "N <env> ..." somewhere.
-# Sum every match so a goal like "2 clean + 3 injected + 5 pretrained" reports 10.
-import re as _re  # noqa: E402
-
-_PLANNED_TOTAL_PATTERN = _re.compile(
-    r"(\d+)\s+(?:scripted|pretrained|mixed|clean|injected|calibration|deployment)?\s*"
-    r"(?:Lift|scenarios|rollouts|rows)",
-    _re.IGNORECASE,
-)
-
-
-def _parse_planned_total(goal: str) -> int | None:
-    """Best-effort: sum all 'N <something>' counts in the goal string.
-
-    Returns None if no number-like phrase matches. The progress strip in the
-    UI then renders without a denominator until ROLLOUT phase finishes (at
-    which point the actual dispatched count becomes the denominator).
-    """
-    matches = [int(m.group(1)) for m in _PLANNED_TOTAL_PATTERN.finditer(goal)]
-    return sum(matches) if matches else None
+# Phase strings for runtime.json / chat.jsonl. The UI's _MARKER_TO_CODE
+# mapping (src/ui/panes/chrome.py) keys off these exact strings.
+PHASE_PLANNER = PHASE_MARKER_PLANNER
+PHASE_ROLLOUT = PHASE_MARKER_ROLLOUT
+PHASE_JUDGE = PHASE_MARKER_JUDGE
+PHASE_REPORT = PHASE_MARKER_REPORT
 
 
 @dataclass(frozen=True)
-class SessionHandle:
-    """Wires together the three IDs we need to drive a session."""
+class AgentHandle:
+    """IDs needed to drive one session."""
 
+    role: str
     agent_id: str
     environment_id: str
     session_id: str
 
 
 def _builtin_toolset() -> dict[str, Any]:
-    """Built-in agent toolset (read/edit/write/bash etc.) with auto-approval.
+    """Built-in read/write/edit/bash/glob/grep with auto-approval.
 
-    The orchestrator runs unattended, so we use always_allow on all built-ins.
-    Each tool is enabled explicitly so the agent gets exactly the surface we
-    described in the system prompt — no surprise web_fetch/web_search calls.
+    Agents use these for scratch work in their private /memories/. The
+    submit_* custom tools are how they hand final artifacts back to the host.
     """
     enabled = ["bash", "edit", "read", "write", "glob", "grep"]
     return {
@@ -106,55 +106,69 @@ def _builtin_toolset() -> dict[str, Any]:
     }
 
 
-def _all_tools() -> list[dict[str, Any]]:
-    return [_builtin_toolset(), *tool_params()]
+_ROLE_CONFIG: dict[str, tuple[str, str]] = {
+    # role → (agent_name_prefix, system_prompt)
+    "planner": ("planner", PLANNER_SYSTEM_PROMPT),
+    "rollout_worker": ("rollout-worker", ROLLOUT_WORKER_SYSTEM_PROMPT),
+    "judge_worker": ("judge-worker", JUDGE_WORKER_SYSTEM_PROMPT),
+    "reporter": ("reporter", REPORTER_SYSTEM_PROMPT),
+}
 
 
-def setup(
+def _create_session(
     client: Anthropic,
+    role: str,
     *,
-    agent_name: str = "embodied-eval-orchestrator",
-    environment_name: str = "embodied-eval-env",
-    title: str = "Embodied eval run",
-) -> SessionHandle:
-    """Create the agent + environment + session. Returns IDs for driving the loop.
+    environment_id: str,
+    worker_index: int | None = None,
+) -> AgentHandle:
+    """Create one agent+session for a given role, reusing a shared environment.
 
-    The Anthropic SDK reads the `betas` arg as a header on each call. Only the
-    Managed Agents beta header is needed here.
+    Environments are a container definition, not a container instance — sessions
+    sharing an env_id still run in isolated containers with private /memories/.
+    One env definition is plenty for all sessions in this run.
     """
-    betas = [MANAGED_AGENTS_BETA_HEADER]
+    if role not in _ROLE_CONFIG:
+        raise ValueError(f"unknown role {role!r}")
+    name_prefix, system = _ROLE_CONFIG[role]
+    suffix = f"-{worker_index:02d}" if worker_index is not None else ""
+    agent_name = f"{name_prefix}{suffix}"
 
+    betas = [MANAGED_AGENTS_BETA_HEADER]
     agent = client.beta.agents.create(
         model=OPUS_MODEL_ID,
         name=agent_name,
-        description="Designs, runs, and reports on robot manipulation policy evals.",
-        system=SYSTEM_PROMPT,
-        tools=cast(Any, _all_tools()),
+        description=f"{role} agent for embodied eval.",
+        system=system,
+        tools=cast(Any, [_builtin_toolset(), *tool_params_for_role(role)]),
         betas=betas,
     )
-
-    env = client.beta.environments.create(
-        name=environment_name,
-        config=cast(Any, {"type": "cloud"}),
-        description="MuJoCo + robosuite + robomimic for the eval orchestrator.",
-        betas=betas,
-    )
-
     session = client.beta.sessions.create(
         agent=agent.id,
-        environment_id=env.id,
-        title=title,
+        environment_id=environment_id,
+        title=f"Embodied eval {role}{suffix}",
         betas=betas,
     )
-
-    handle = SessionHandle(agent_id=agent.id, environment_id=env.id, session_id=session.id)
-    logger.info(
-        "session ready agent=%s env=%s session=%s",
-        handle.agent_id,
-        handle.environment_id,
-        handle.session_id,
+    return AgentHandle(
+        role=role,
+        agent_id=agent.id,
+        environment_id=environment_id,
+        session_id=session.id,
     )
-    return handle
+
+
+def _create_shared_environment(client: Anthropic) -> str:
+    """One env definition shared across all agent sessions. Returns its ID."""
+    env = client.beta.environments.create(
+        name="embodied-eval-env",
+        config=cast(Any, {"type": "cloud"}),
+        description="Shared environment for multi-agent eval sessions.",
+        betas=[MANAGED_AGENTS_BETA_HEADER],
+    )
+    return env.id
+
+
+# ---- Session driver (one-turn loop) ---------------------------------------------
 
 
 def _send_user_message(client: Anthropic, session_id: str, text: str) -> None:
@@ -162,19 +176,19 @@ def _send_user_message(client: Anthropic, session_id: str, text: str) -> None:
         session_id,
         events=cast(
             Any,
-            [
-                {
-                    "type": "user.message",
-                    "content": [{"type": "text", "text": text}],
-                }
-            ],
+            [{"type": "user.message", "content": [{"type": "text", "text": text}]}],
         ),
         betas=[MANAGED_AGENTS_BETA_HEADER],
     )
 
 
 def _send_tool_result(
-    client: Anthropic, session_id: str, tool_use_id: str, payload: str, *, is_error: bool = False
+    client: Anthropic,
+    session_id: str,
+    tool_use_id: str,
+    payload: str,
+    *,
+    is_error: bool = False,
 ) -> None:
     client.beta.sessions.events.send(
         session_id,
@@ -194,31 +208,27 @@ def _send_tool_result(
 
 
 def _stream_events(client: Anthropic, session_id: str) -> Iterator[Any]:
-    """Yield events from the session stream until it closes."""
     with client.beta.sessions.events.stream(
         session_id, betas=[MANAGED_AGENTS_BETA_HEADER]
     ) as stream:
         yield from stream
 
 
-def _run_one_turn(
+def _drive_session_to_end_turn(
     client: Anthropic,
     session_id: str,
     *,
+    label: str,
     mirror_root: Path,
     messages_client: Anthropic,
     cost_tracker: CostTracker,
     runtime: RuntimeState,
 ) -> str:
-    """Drive one phase of the session to completion. Returns the terminal stop_reason.
+    """Stream events from one session until it goes idle with a terminal stop.
 
-    `requires_action` is non-terminal: the session paused for tool results,
-    which we already sent inline when the `agent.custom_tool_use` event
-    arrived. We reopen the stream and let the agent continue. Only
-    `end_turn` / `retries_exhausted` (or `session.error`) actually stops a
-    phase. Token usage on every event with a `usage` field is summed into
-    `cost_tracker`; runtime.json + chat.jsonl are updated on every event
-    so the UI can read along.
+    `label` is a short prefix ("planner", "rollout-03", ...) prepended to
+    chat.jsonl records so the live feed can distinguish sibling workers'
+    messages.
     """
     while True:
         terminal: str | None = None
@@ -226,39 +236,25 @@ def _run_one_turn(
 
         for event in _stream_events(client, session_id):
             ev_type = getattr(event, "type", None)
-            logger.debug("event %s", ev_type)
-
-            # Managed Agents emits token usage ONLY on span.model_request_end
-            # events, under the field name `model_usage` (not `usage`). Agent
-            # events (message/thinking/tool_use) and session.status_idle do
-            # NOT carry usage — older code that read getattr(event, "usage")
-            # silently captured nothing for the whole session, leaving the
-            # live banner reporting $0 for Plan B runs that died before any
-            # Messages-API vision call landed.
-            if ev_type == "span.model_request_end":
-                model_usage = getattr(event, "model_usage", None)
-                if model_usage is not None:
-                    cost_tracker.add_usage(model_usage)
 
             if ev_type == "agent.message":
                 text = "".join(
                     block.text for block in getattr(event, "content", []) if block.type == "text"
                 )
                 if text:
-                    logger.info("agent: %s", text[:500])
-                    runtime.append_chat("agent_message", text=text)
+                    logger.info("[%s] %s", label, text[:500])
+                    runtime.append_chat("agent_message", worker=label, text=text)
 
             elif ev_type == "agent.thinking":
                 text = getattr(event, "text", "") or ""
                 if text:
-                    logger.debug("thinking: %s", text[:500])
-                    runtime.append_chat("agent_thinking", text=text)
+                    runtime.append_chat("agent_thinking", worker=label, text=text)
 
             elif ev_type == "agent.custom_tool_use":
                 tool_name = event.name
                 tool_input = event.input
-                logger.info("tool_use %s args=%s", tool_name, tool_input)
-                runtime.append_chat("tool_use", tool=tool_name, args=dict(tool_input))
+                logger.info("[%s] tool_use %s", label, tool_name)
+                runtime.append_chat("tool_use", worker=label, tool=tool_name, args=dict(tool_input))
                 try:
                     payload = dispatch_custom_tool(
                         tool_name,
@@ -268,9 +264,11 @@ def _run_one_turn(
                         cost_tracker=cost_tracker,
                     )
                     _send_tool_result(client, session_id, event.id, payload)
-                    runtime.append_chat("tool_result", tool=tool_name, payload=payload)
-                except Exception as exc:  # noqa: BLE001 — must report back to the agent
-                    logger.exception("tool %s failed", tool_name)
+                    runtime.append_chat(
+                        "tool_result", worker=label, tool=tool_name, payload=payload
+                    )
+                except Exception as exc:  # noqa: BLE001 — must report back
+                    logger.exception("[%s] tool %s failed", label, tool_name)
                     _send_tool_result(
                         client,
                         session_id,
@@ -278,22 +276,19 @@ def _run_one_turn(
                         f'{{"error": "{type(exc).__name__}: {exc}"}}',
                         is_error=True,
                     )
-                    runtime.append_chat("tool_error", tool=tool_name, error=str(exc))
+                    runtime.append_chat("tool_error", worker=label, tool=tool_name, error=str(exc))
 
             elif ev_type == "session.status_idle":
                 saw_status_idle = True
                 stop_type = getattr(getattr(event, "stop_reason", None), "type", "unknown")
-                logger.info("idle stop_reason=%s", stop_type)
                 if stop_type == "requires_action":
-                    # Tool results were sent inline above; reopen the stream
-                    # so the agent can pick up where it left off.
                     runtime.mark_event()
                     break
                 terminal = str(stop_type)
                 break
 
             elif ev_type == "session.error":
-                logger.error("session error: %s", event)
+                logger.error("[%s] session error: %s", label, event)
                 terminal = "error"
                 break
 
@@ -303,83 +298,310 @@ def _run_one_turn(
             runtime.mark_event()
             return terminal
         if not saw_status_idle:
-            # Stream closed without a status_idle event — unusual, bail out
-            # rather than reopen indefinitely.
             return "stream_closed"
-        # else: requires_action — outer while reopens the stream.
 
 
-PHASE_MARKERS = (
-    PHASE_MARKER_PLANNER,
-    PHASE_MARKER_ROLLOUT,
-    PHASE_MARKER_JUDGE,
-    PHASE_MARKER_REPORT,
-)
+# ---- Matrix splitting ------------------------------------------------------------
+
+
+def _split_rows_round_robin(rows: list[dict[str, str]], k: int) -> list[list[dict[str, str]]]:
+    """Round-robin split into k chunks. Balances per-chunk runtime across cohorts.
+
+    Calibration rollouts are ~2 s each, deployment ~3-4 s. Round-robin keeps
+    each worker's cohort mix similar so no single worker is stuck with all
+    the slow ones.
+    """
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+    chunks: list[list[dict[str, str]]] = [[] for _ in range(k)]
+    for i, row in enumerate(rows):
+        chunks[i % k].append(row)
+    return [c for c in chunks if c]  # drop empty chunks if rows < k
+
+
+def _load_matrix_rows(mirror_root: Path) -> list[dict[str, str]]:
+    path = mirror_root / "test_matrix.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"planner did not produce test_matrix.csv at {path}")
+    with path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return [dict(r) for r in reader]
+
+
+def _load_results(mirror_root: Path) -> list[dict[str, Any]]:
+    """Load results.jsonl (aggregated from all rollout workers' submissions)."""
+    path = mirror_root / "rollouts" / "results.jsonl"
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
+    return out
+
+
+# ---- Per-role drivers ------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class SessionResult:
-    """End-of-run summary the caller (e.g. scripts/smoke_agent.py) consumes."""
+class RunResult:
+    """End-of-run summary: per-phase stop reasons, cost, timing, scenario count."""
 
-    stops: list[str]
+    stops: dict[str, list[str]]
     cost_tracker: CostTracker
     elapsed_seconds: float
     n_rollouts: int
+    k_workers: int
 
 
-def _build_report_marker(n_rollouts: int, elapsed_seconds: float, cost_tracker: CostTracker) -> str:
-    """Compose the REPORT phase marker with runtime numbers inlined.
-
-    The agent uses these exact numbers in the report rather than fabricating
-    its own — without this the cost/time/baseline columns would be either
-    invented or left as placeholders.
-    """
-    pipeline_cost = cost_tracker.total_cost_usd
-    baseline_cost = baseline_cost_for(n_rollouts)
-    baseline_time_s = baseline_seconds_for(n_rollouts)
-    return f"""{PHASE_MARKER_REPORT}
-
-Runtime numbers from the orchestrator (use these EXACTLY — do not invent or
-estimate cost/time figures, do not round more than necessary):
-
-- Total cost (this pipeline): {format_cost(pipeline_cost)}
-- Wall time (this pipeline): {format_duration(elapsed_seconds)}
-- Scenarios run: {n_rollouts}
-- Baseline cost (manual reviewer at ${BASELINE_HOURLY_RATE_USD:.0f}/hr × \
-{BASELINE_SECONDS_PER_ROLLOUT // 60} min/rollout): {format_cost(baseline_cost)}
-- Baseline wall time (one reviewer working sequentially): {format_duration(baseline_time_s)}
-
-Token breakdown (for the methodology section):
-- input_tokens: {cost_tracker.input_tokens}
-- output_tokens: {cost_tracker.output_tokens}
-- cache_read_tokens: {cost_tracker.cache_read_tokens}
-- cache_creation_tokens: {cost_tracker.cache_creation_tokens}
-
-The Summary section MUST include a side-by-side comparison row putting our
-pipeline against the manual-review baseline (cost ratio and time ratio),
-because that comparison is the demo's headline number.
-"""
-
-
-def run_all_phases(
+def _run_planner(
     client: Anthropic,
-    handle: SessionHandle,
+    *,
+    environment_id: str,
+    user_goal: str,
+    mirror_root: Path,
+    messages_client: Anthropic,
+    cost_tracker: CostTracker,
+    runtime: RuntimeState,
+) -> str:
+    handle = _create_session(client, "planner", environment_id=environment_id)
+    runtime.append_chat(
+        "session_created", worker="planner", role="planner", session_id=handle.session_id
+    )
+    _send_user_message(
+        client, handle.session_id, f"Evaluation goal: {user_goal}\n\nProduce the plan."
+    )
+    return _drive_session_to_end_turn(
+        client,
+        handle.session_id,
+        label="planner",
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+
+
+def _run_rollout_worker(
+    client: Anthropic,
+    *,
+    environment_id: str,
+    rows: list[dict[str, str]],
+    mirror_root: Path,
+    messages_client: Anthropic,
+    cost_tracker: CostTracker,
+    runtime: RuntimeState,
+) -> str:
+    """Run ONE rollout worker session, synchronously, on the caller's thread.
+
+    The caller's thread MUST be the process main thread on macOS: the sim
+    adapter's first env.reset() triggers GLFW's Cocoa init, which wedges in
+    an infinite [NSApplication reportException:] loop when called from a
+    worker thread. Rollouts do not benefit from fan-out anyway — MuJoCo was
+    already serialized by _ROLLOUT_LOCK — so keeping this phase single-
+    session and single-threaded is the right shape regardless of platform.
+    Only the judge phase (API-bound) parallelizes.
+    """
+    handle = _create_session(client, "rollout_worker", environment_id=environment_id)
+    runtime.append_chat(
+        "session_created",
+        worker="rollout",
+        role="rollout_worker",
+        session_id=handle.session_id,
+    )
+    payload = (
+        f"Your assigned matrix rows ({len(rows)} rollouts) are below as JSON. "
+        "Run each one sequentially via the `rollout` tool, then submit_results "
+        "exactly once.\n\n"
+        f"{json.dumps(rows, indent=2)}"
+    )
+    _send_user_message(client, handle.session_id, payload)
+    return _drive_session_to_end_turn(
+        client,
+        handle.session_id,
+        label="rollout",
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+
+
+def _run_judge_workers(
+    client: Anthropic,
+    *,
+    environment_id: str,
+    chunks: list[list[dict[str, Any]]],
+    mirror_root: Path,
+    messages_client: Anthropic,
+    cost_tracker: CostTracker,
+    runtime: RuntimeState,
+) -> list[str]:
+    """Fan out K judge workers, one per chunk of completed rollouts.
+
+    This is the phase where parallelism actually pays off — the judge
+    calls are API-bound and fully parallelize across workers.
+    """
+    results: list[str] = [""] * len(chunks)
+
+    def _worker(i: int, chunk: list[dict[str, Any]]) -> str:
+        handle = _create_session(
+            client, "judge_worker", environment_id=environment_id, worker_index=i
+        )
+        runtime.append_chat(
+            "session_created",
+            worker=f"judge-{i:02d}",
+            role="judge_worker",
+            session_id=handle.session_id,
+        )
+        payload = (
+            f"You are judge worker {i + 1} of {len(chunks)}. "
+            f"Your assigned rollouts ({len(chunk)} records) are below as JSON. "
+            "For each rollout: if success=true, emit a Finding with "
+            "sim_success=true and annotation=null (no judge call). "
+            "If success=false, call `judge` on the mp4 and emit a Finding with "
+            "sim_success=false and annotation=<judge output>. "
+            "Then submit_findings exactly once with every rollout's Finding row.\n\n"
+            f"{json.dumps(chunk, indent=2)}"
+        )
+        _send_user_message(client, handle.session_id, payload)
+        return _drive_session_to_end_turn(
+            client,
+            handle.session_id,
+            label=f"judge-{i:02d}",
+            mirror_root=mirror_root,
+            messages_client=messages_client,
+            cost_tracker=cost_tracker,
+            runtime=runtime,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+        futures = {pool.submit(_worker, i, chunk): i for i, chunk in enumerate(chunks)}
+        for fut in concurrent.futures.as_completed(futures):
+            i = futures[fut]
+            results[i] = fut.result()
+    return results
+
+
+def _build_reporter_message(
+    *,
+    mirror_root: Path,
+    n_rollouts: int,
+    elapsed_seconds: float,
+    cost_tracker: CostTracker,
+) -> str:
+    """Compose the reporter's first message with ALL upstream artifacts inlined.
+
+    The reporter session has its own /memories/ — it cannot read the planner's
+    or judges' files. We inline plan.md, test_matrix.csv, results.jsonl,
+    findings.jsonl, and the runtime numbers so the reporter has everything
+    it needs in one message.
+    """
+    plan_md = (mirror_root / "plan.md").read_text(encoding="utf-8")
+    matrix_csv = (mirror_root / "test_matrix.csv").read_text(encoding="utf-8")
+    results_jsonl_path = mirror_root / "rollouts" / "results.jsonl"
+    findings_jsonl_path = mirror_root / "findings.jsonl"
+    results_jsonl = (
+        results_jsonl_path.read_text(encoding="utf-8") if results_jsonl_path.exists() else ""
+    )
+    findings_jsonl = (
+        findings_jsonl_path.read_text(encoding="utf-8") if findings_jsonl_path.exists() else ""
+    )
+
+    pipeline_cost = cost_tracker.total_cost_usd
+    base_cost = baseline_cost_for(n_rollouts)
+    base_time = baseline_seconds_for(n_rollouts)
+
+    buf = io.StringIO()
+    buf.write("The planner, rollout worker, and judge workers have finished. ")
+    buf.write("Write the final report.md and submit it via submit_report.\n\n")
+    buf.write("=== plan.md ===\n")
+    buf.write(plan_md.rstrip() + "\n\n")
+    buf.write("=== test_matrix.csv ===\n")
+    buf.write(matrix_csv.rstrip() + "\n\n")
+    buf.write("=== results.jsonl ===\n")
+    buf.write(results_jsonl.rstrip() + "\n\n")
+    buf.write("=== findings.jsonl ===\n")
+    buf.write(findings_jsonl.rstrip() + "\n\n")
+    buf.write("=== Runtime numbers (use these EXACTLY) ===\n")
+    buf.write(f"- Total cost (this pipeline): {format_cost(pipeline_cost)}\n")
+    buf.write(f"- Wall time (this pipeline): {format_duration(elapsed_seconds)}\n")
+    buf.write(f"- Scenarios run: {n_rollouts}\n")
+    buf.write(
+        f"- Baseline cost (manual reviewer at ${BASELINE_HOURLY_RATE_USD:.0f}/hr × "
+        f"{BASELINE_SECONDS_PER_ROLLOUT // 60} min/rollout): {format_cost(base_cost)}\n"
+    )
+    buf.write(f"- Baseline wall time (sequential reviewer): {format_duration(base_time)}\n")
+    return buf.getvalue()
+
+
+def _run_reporter(
+    client: Anthropic,
+    *,
+    environment_id: str,
+    mirror_root: Path,
+    n_rollouts: int,
+    elapsed_seconds: float,
+    messages_client: Anthropic,
+    cost_tracker: CostTracker,
+    runtime: RuntimeState,
+) -> str:
+    handle = _create_session(client, "reporter", environment_id=environment_id)
+    runtime.append_chat(
+        "session_created", worker="reporter", role="reporter", session_id=handle.session_id
+    )
+    _send_user_message(
+        client,
+        handle.session_id,
+        _build_reporter_message(
+            mirror_root=mirror_root,
+            n_rollouts=n_rollouts,
+            elapsed_seconds=elapsed_seconds,
+            cost_tracker=cost_tracker,
+        ),
+    )
+    return _drive_session_to_end_turn(
+        client,
+        handle.session_id,
+        label="reporter",
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+
+
+# ---- Top-level entry point -------------------------------------------------------
+
+
+def run_eval(
+    client: Anthropic,
     *,
     user_goal: str,
     mirror_root: Path,
+    k_workers: int = 4,
     run_id: str = "",
     messages_client: Anthropic | None = None,
     cost_tracker: CostTracker | None = None,
     skip_labeling: bool = False,
     label_seed: int = 0,
-) -> SessionResult:
-    """Drive all four phases in order. Returns stops + cost + time + scenario count.
+) -> RunResult:
+    """Drive the full multi-agent flow end-to-end.
 
-    The user_goal is sent together with the PLANNER marker so the agent has
-    a one-line objective for the test matrix. The REPORT marker is enriched
-    with measured runtime numbers so the agent doesn't fabricate them.
-    Between ROLLOUT and JUDGE the orchestrator pauses to run the host-side
-    human labeling phase (unless `skip_labeling=True`).
+    Phases:
+      1. Planner (1 session). Must produce plan.md + test_matrix.csv.
+      2. Rollout worker (1 session, sequential on main thread). Must produce
+         results.jsonl for every matrix row.
+      2.5. Human labeling (host-side, no agent). Samples a subset of scripted
+           rollouts, blocks until the Gradio UI has collected labels. Skipped
+           when `skip_labeling=True`.
+      3. Judge workers (K parallel). Must produce findings.jsonl for every
+         rollout.
+      4. Reporter (1 session). Must produce report.md.
+
+    Returns per-phase stop reasons + cost + timing + scenario count.
     """
     if messages_client is None:
         messages_client = client
@@ -387,67 +609,126 @@ def run_all_phases(
         cost_tracker = CostTracker()
 
     mirror_root.mkdir(parents=True, exist_ok=True)
-    rollouts_dir = mirror_root / "rollouts"
-
     start_time = time.time()
+
     runtime = RuntimeState(
         mirror_root=mirror_root,
         cost_tracker=cost_tracker,
         start_time=start_time,
-        session_id=handle.session_id,
-        planned_total=_parse_planned_total(user_goal),
+        session_id="multi-agent",
+        planned_total=None,  # populated after planner finishes
         run_id=run_id,
         goal=user_goal,
     )
     runtime.write_meta()
     runtime.set_phase("starting")
 
-    stops: list[str] = []
-    for marker in PHASE_MARKERS:
-        runtime.set_phase(marker)
-        runtime.append_chat("phase_marker", marker=marker)
-        if marker == PHASE_MARKER_PLANNER:
-            payload = f"{marker}\n\nEvaluation goal: {user_goal}"
-        elif marker == PHASE_MARKER_REPORT:
-            n_rollouts = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0
-            payload = _build_report_marker(
-                n_rollouts=n_rollouts,
-                elapsed_seconds=time.time() - start_time,
-                cost_tracker=cost_tracker,
-            )
-        else:
-            payload = marker
-        _send_user_message(client, handle.session_id, payload)
-        stop = _run_one_turn(
-            client,
-            handle.session_id,
-            mirror_root=mirror_root,
-            messages_client=messages_client,
-            cost_tracker=cost_tracker,
-            runtime=runtime,
-        )
-        stops.append(stop)
-        if stop != "end_turn":
-            logger.warning("phase %s ended with %s — stopping orchestrator", marker, stop)
-            break
+    environment_id = _create_shared_environment(client)
+    logger.info("shared env=%s", environment_id)
 
-        # Pause between ROLLOUT and JUDGE for the host-side human labeling
-        # phase. The agent has no knowledge of this phase — the host reads
-        # dispatch_log.jsonl, samples a subset, writes the queue, and blocks
-        # until the Gradio UI has collected labels.
-        if marker == PHASE_MARKER_ROLLOUT:
-            run_label_phase(
-                runtime,
-                mirror_root,
-                skip_labeling=skip_labeling,
-                sample_seed=label_seed,
-            )
+    stops: dict[str, list[str]] = {"planner": [], "rollout": [], "judge": [], "report": []}
+
+    # 1) Planner — single session.
+    runtime.set_phase(PHASE_PLANNER)
+    runtime.append_chat("phase_marker", marker=PHASE_PLANNER)
+    stop = _run_planner(
+        client,
+        environment_id=environment_id,
+        user_goal=user_goal,
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+    stops["planner"].append(stop)
+    if stop != "end_turn":
+        logger.warning("planner ended with %s — bailing", stop)
+        return RunResult(
+            stops=stops,
+            cost_tracker=cost_tracker,
+            elapsed_seconds=time.time() - start_time,
+            n_rollouts=0,
+            k_workers=k_workers,
+        )
+
+    # 2) Rollout worker — ONE session, sequential, main-thread (see the
+    #    module docstring for the GLFW / Cocoa main-thread requirement).
+    matrix_rows = _load_matrix_rows(mirror_root)
+    runtime.planned_total = len(matrix_rows)
+    runtime.write_snapshot()
+    runtime.set_phase(PHASE_ROLLOUT)
+    runtime.append_chat("phase_marker", marker=PHASE_ROLLOUT)
+    rollout_stop = _run_rollout_worker(
+        client,
+        environment_id=environment_id,
+        rows=matrix_rows,
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+    stops["rollout"].append(rollout_stop)
+    if rollout_stop != "end_turn":
+        logger.warning("rollout worker ended non-end_turn: %s", rollout_stop)
+
+    # 2.5) Human labeling phase — host-side, no Managed Agents session. Reads
+    #      dispatch_log.jsonl, samples a subset of completed scripted rollouts,
+    #      writes the queue, and blocks until the Gradio UI has logged a
+    #      HumanLabel for every queued rollout. `skip_labeling=True` bypasses
+    #      the block (smoke / CI path).
+    run_label_phase(
+        runtime,
+        mirror_root,
+        skip_labeling=skip_labeling,
+        sample_seed=label_seed,
+    )
+
+    # 3) Judge workers — parallel.
+    results = _load_results(mirror_root)
+    if not results:
+        logger.warning("no rollout results; skipping judge + report")
+        return RunResult(
+            stops=stops,
+            cost_tracker=cost_tracker,
+            elapsed_seconds=time.time() - start_time,
+            n_rollouts=0,
+            k_workers=k_workers,
+        )
+    judge_chunks = _split_rows_round_robin(cast(Any, results), k_workers)
+    runtime.set_phase(PHASE_JUDGE)
+    runtime.append_chat("phase_marker", marker=PHASE_JUDGE)
+    stops["judge"] = _run_judge_workers(
+        client,
+        environment_id=environment_id,
+        chunks=judge_chunks,
+        mirror_root=mirror_root,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+    if not all(s == "end_turn" for s in stops["judge"]):
+        logger.warning("some judge workers ended non-end_turn: %s", stops["judge"])
+
+    # 4) Reporter — single session.
+    runtime.set_phase(PHASE_REPORT)
+    runtime.append_chat("phase_marker", marker=PHASE_REPORT)
+    stop = _run_reporter(
+        client,
+        environment_id=environment_id,
+        mirror_root=mirror_root,
+        n_rollouts=len(results),
+        elapsed_seconds=time.time() - start_time,
+        messages_client=messages_client,
+        cost_tracker=cost_tracker,
+        runtime=runtime,
+    )
+    stops["report"].append(stop)
 
     runtime.set_phase("complete")
-    n_rollouts_final = len(list(rollouts_dir.glob("*.mp4"))) if rollouts_dir.exists() else 0
-    return SessionResult(
+    return RunResult(
         stops=stops,
         cost_tracker=cost_tracker,
         elapsed_seconds=time.time() - start_time,
-        n_rollouts=n_rollouts_final,
+        n_rollouts=len(results),
+        k_workers=k_workers,
     )

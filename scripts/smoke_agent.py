@@ -1,16 +1,17 @@
-"""Smoke: end-to-end Plan-A run on a tiny scenario set.
+"""Smoke: end-to-end multi-agent run. Writes to `artifacts/runs/<run_id>/`.
 
-CLAUDE.md sec 7 (Saturday PM): "End-to-end on 5 scenarios (mix of clean +
-injected)." This script wires the orchestrator to a small goal and prints
-the per-phase stop reasons + a summary of artifacts written.
+CLAUDE.md §3. Four roles (planner → rollout worker → K judge workers →
+reporter) with K-way fan-out on the judge phase. Produces plan.md,
+test_matrix.csv, rollouts/*, findings.jsonl, and report.md under mirror_root
+— the Gradio UI reads that tree.
 
-Cost guardrail: this hits the real Anthropic API (Managed Agents + Messages
-for the vision passes). Keep the goal short and the matrix small. The script
-prints the artifact root so the user can `ls` it after.
+Cost guardrail: hits the real Anthropic API. Keep the goal modest until
+you've confirmed the 16-rollout budget.
 
 Usage:
   source .venv/bin/activate
   ANTHROPIC_API_KEY=... python scripts/smoke_agent.py
+  ANTHROPIC_API_KEY=... python scripts/smoke_agent.py --k-workers 4
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from src.costing import (  # noqa: E402
     format_cost,
     format_duration,
 )
-from src.orchestrator import run_all_phases, setup  # noqa: E402
+from src.orchestrator import run_eval  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNS_ROOT = REPO_ROOT / "artifacts" / "runs"
@@ -45,7 +46,6 @@ DEFAULT_GOAL = (
 
 
 def _mint_run_id() -> str:
-    """Generate a short, human-readable run ID. 6 hex chars = 16M space."""
     return f"eval_{secrets.token_hex(3)}"
 
 
@@ -56,12 +56,14 @@ def main() -> int:
         "--runs-root",
         type=Path,
         default=DEFAULT_RUNS_ROOT,
-        help="Parent dir for all run artifact trees. Each run lives under <runs-root>/<run_id>/.",
+        help="Parent dir for run artifact trees. Each run lives under <runs-root>/<run_id>/.",
     )
+    parser.add_argument("--run-id", default=None, help="Explicit run ID; defaults to eval_<6hex>.")
     parser.add_argument(
-        "--run-id",
-        default=None,
-        help="Explicit run ID. Defaults to a freshly-minted eval_<6hex>.",
+        "--k-workers",
+        type=int,
+        default=4,
+        help="Parallel-worker count for both rollout and judge phases (default 4).",
     )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
@@ -89,45 +91,43 @@ def main() -> int:
     )
 
     client = Anthropic()
-    handle = setup(client)
-    print(
-        f"run_id={run_id} agent={handle.agent_id} "
-        f"env={handle.environment_id} session={handle.session_id}",
-        flush=True,
-    )
+    print(f"run_id={run_id}  k_workers={args.k_workers}", flush=True)
     print(f"mirror_root={mirror_root}", flush=True)
 
-    result = run_all_phases(
+    result = run_eval(
         client,
-        handle,
         user_goal=args.goal,
         mirror_root=mirror_root,
+        k_workers=args.k_workers,
         run_id=run_id,
         skip_labeling=args.skip_labeling,
         label_seed=args.label_seed,
     )
 
-    print("\n=== Phase stop reasons ===", flush=True)
-    for marker, stop in zip(
-        ("PLANNER", "ROLLOUT", "JUDGE", "REPORT"),
-        result.stops,
-        strict=False,
-    ):
-        print(f"  {marker:8s}  {stop}")
+    print("\n=== Per-phase stop reasons ===", flush=True)
+    for phase, stops in result.stops.items():
+        if not stops:
+            print(f"  {phase:8s}  (skipped)")
+        elif len(stops) == 1:
+            print(f"  {phase:8s}  {stops[0]}")
+        else:
+            summary = ", ".join(f"w{i}:{s}" for i, s in enumerate(stops))
+            print(f"  {phase:8s}  [{summary}]")
 
     pipeline_cost = result.cost_tracker.total_cost_usd
     base_cost = baseline_cost_for(result.n_rollouts)
     base_time = baseline_seconds_for(result.n_rollouts)
     print("\n=== Cost & time vs manual-review baseline ===", flush=True)
     print(f"  scenarios:        {result.n_rollouts}")
+    print(f"  k_workers:        {result.k_workers}")
     print(f"  pipeline cost:    {format_cost(pipeline_cost)}")
-    baseline_note = "(manual reviewer @ $75/hr × 3min/rollout)"
-    print(f"  baseline cost:    {format_cost(base_cost)}  {baseline_note}")
+    print(f"  baseline cost:    {format_cost(base_cost)}  (manual reviewer @ $75/hr × 3min)")
     print(f"  pipeline time:    {format_duration(result.elapsed_seconds)}")
     print(f"  baseline time:    {format_duration(base_time)}  (sequential reviewer)")
 
     print(f"\nArtifacts mirrored under: {mirror_root}", flush=True)
-    return 0 if all(s == "end_turn" for s in result.stops) else 1
+    all_ok = all(s == "end_turn" for stops in result.stops.values() for s in stops)
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":

@@ -31,11 +31,11 @@ class TestCohortCounts:
             _scored(
                 "s1",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             # Deployment rollout (no ground_truth_label).
-            _scored("p0", success=False, judge_label="approach_miss", policy_kind="pretrained"),
+            _scored("p0", success=False, judge_label="missed_approach", policy_kind="pretrained"),
         ]
         c = cohort_counts(rollouts)
         assert c.n_calibration == 2  # s0, s1 have ground truth
@@ -45,7 +45,7 @@ class TestCohortCounts:
     def test_calibration_pending_judge(self) -> None:
         # Calibration failure but judge hasn't run → not yet scored.
         rollouts = [
-            _scored("s0", success=False, judge_label=None, ground_truth_label="approach_miss"),
+            _scored("s0", success=False, judge_label=None, ground_truth_label="missed_approach"),
         ]
         c = cohort_counts(rollouts)
         assert c.n_calibration == 1
@@ -84,7 +84,7 @@ class TestToLabeledRollouts:
     def test_skips_judge_pending(self) -> None:
         # Sim said fail but judge hasn't run — not yet scorable.
         rollouts = [
-            _scored("s0", success=False, judge_label=None, ground_truth_label="approach_miss")
+            _scored("s0", success=False, judge_label=None, ground_truth_label="missed_approach")
         ]
         assert to_labeled_rollouts(rollouts) == []
 
@@ -103,13 +103,13 @@ class TestToLabeledRollouts:
             _scored(
                 "s0",
                 success=False,
-                judge_label="slip_during_lift",
-                ground_truth_label="approach_miss",
+                judge_label="failed_grip",
+                ground_truth_label="missed_approach",
             )
         ]
         labeled = to_labeled_rollouts(rollouts)
-        assert labeled[0].expected == FailureMode.APPROACH_MISS
-        assert labeled[0].judged == FailureMode.SLIP_DURING_LIFT
+        assert labeled[0].expected == FailureMode.MISSED_APPROACH
+        assert labeled[0].judged == FailureMode.FAILED_GRIP
 
 
 class TestDrillFilter:
@@ -118,19 +118,19 @@ class TestDrillFilter:
         assert EMPTY_FILTER.label_text() == ""
 
     def test_cell_filter(self) -> None:
-        f = DrillFilter(expected="approach_miss", judged="slip_during_lift")
+        f = DrillFilter(expected="missed_approach", judged="failed_grip")
         assert f.is_active
-        assert "approach_miss" in f.label_text() and "slip_during_lift" in f.label_text()
+        assert "missed_approach" in f.label_text() and "failed_grip" in f.label_text()
 
     def test_row_filter_only_expected(self) -> None:
-        f = DrillFilter(expected="approach_miss", judged=None)
+        f = DrillFilter(expected="missed_approach", judged=None)
         assert f.is_active
         assert "expected OR judged" in f.label_text()
 
 
 class TestFilterRollouts:
     def test_no_filter_returns_empty(self) -> None:
-        rollouts = [_scored("s0", ground_truth_label="approach_miss")]
+        rollouts = [_scored("s0", ground_truth_label="missed_approach")]
         assert filter_rollouts(rollouts, EMPTY_FILTER) == []
 
     def test_cell_filter_strict(self) -> None:
@@ -138,17 +138,17 @@ class TestFilterRollouts:
             _scored(
                 "a",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             _scored(
                 "b",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="slip_during_lift",
+                judge_label="missed_approach",
+                ground_truth_label="failed_grip",
             ),  # mismatch
         ]
-        f = DrillFilter(expected="approach_miss", judged="approach_miss")
+        f = DrillFilter(expected="missed_approach", judged="missed_approach")
         out = filter_rollouts(rollouts, f)
         assert [r.rollout_id for r in out] == ["a"]
 
@@ -157,20 +157,20 @@ class TestFilterRollouts:
             _scored(
                 "a",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
             _scored(
                 "b",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="slip_during_lift",
+                judge_label="missed_approach",
+                ground_truth_label="failed_grip",
             ),
             _scored("c", success=True, judge_label=None, ground_truth_label="none"),
         ]
-        f = DrillFilter(expected="approach_miss", judged=None)
+        f = DrillFilter(expected="missed_approach", judged=None)
         out = sorted(r.rollout_id for r in filter_rollouts(rollouts, f))
-        # Both a (matches) and b (judged as approach_miss) should appear.
+        # Both a (matches) and b (judged as missed_approach) should appear.
         assert out == ["a", "b"]
 
 
@@ -188,10 +188,10 @@ class TestBinaryConfusion:
             _scored(
                 "c",
                 success=False,
-                judge_label="slip_during_lift",
-                ground_truth_label="slip_during_lift",
+                judge_label="failed_grip",
+                ground_truth_label="failed_grip",
             ),
-            _scored("d", success=False, judge_label="approach_miss", policy_kind="pretrained"),
+            _scored("d", success=False, judge_label="missed_approach", policy_kind="pretrained"),
         ]
         c = binary_confusion(rollouts)
         assert (c.tn, c.fp, c.fn, c.tp) == (2, 0, 0, 2)
@@ -201,8 +201,8 @@ class TestBinaryConfusion:
         # returned a failure label (shouldn't normally happen under the new
         # single-pass design, but must still be counted if the data says so).
         rollouts = [
-            _scored("a", success=False, judge_label="none", ground_truth_label="approach_miss"),
-            _scored("b", success=True, judge_label="approach_miss", ground_truth_label="none"),
+            _scored("a", success=False, judge_label="none", ground_truth_label="missed_approach"),
+            _scored("b", success=True, judge_label="missed_approach", ground_truth_label="none"),
         ]
         c = binary_confusion(rollouts)
         assert (c.tn, c.fp, c.fn, c.tp) == (0, 1, 1, 0)
@@ -211,7 +211,7 @@ class TestBinaryConfusion:
         # Sim-failure with judge not yet labeled is pending → excluded so a
         # half-finished run doesn't inflate FN.
         rollouts = [
-            _scored("a", success=False, judge_label=None, ground_truth_label="approach_miss"),
+            _scored("a", success=False, judge_label=None, ground_truth_label="missed_approach"),
         ]
         c = binary_confusion(rollouts)
         assert c.total == 0
@@ -229,8 +229,8 @@ class TestRenderBinaryMatrix:
             _scored(
                 "b",
                 success=False,
-                judge_label="approach_miss",
-                ground_truth_label="approach_miss",
+                judge_label="missed_approach",
+                ground_truth_label="missed_approach",
             ),
         ]
         html = render_binary_matrix(binary_confusion(rollouts))

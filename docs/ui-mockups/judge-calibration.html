@@ -230,10 +230,10 @@
     <!-- column headers -->
     <div style="position:absolute;top:46px;left:140px;display:grid;grid-template-columns:repeat(5,1fr);gap:0;width:calc(100% - 200px);">
       <div class="hm-xlabel">none</div>
-      <div class="hm-xlabel">approach_miss</div>
-      <div class="hm-xlabel">knock_off_table</div>
-      <div class="hm-xlabel">premature_release</div>
-      <div class="hm-xlabel">slip_during_lift</div>
+      <div class="hm-xlabel">missed_approach</div>
+      <div class="hm-xlabel">other</div>
+      <div class="hm-xlabel">gripper_not_open</div>
+      <div class="hm-xlabel">gripper_slipped</div>
     </div>
     <!-- grid 5x5 -->
     <div style="position:absolute;top:90px;left:0;right:60px;bottom:50px;display:grid;grid-template-columns:140px repeat(5,1fr);grid-template-rows:repeat(5,1fr);gap:2px;">
@@ -244,28 +244,28 @@
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
 
-      <div class="hm-ylabel" style="align-self:center;">approach_miss</div>
+      <div class="hm-ylabel" style="align-self:center;">missed_approach</div>
       <div class="hm-cell" style="background:#9a341288;">1</div>
       <div class="hm-cell" style="background:#15803d;">5</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#9a341255;">1</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
 
-      <div class="hm-ylabel" style="align-self:center;">knock_off_table</div>
+      <div class="hm-ylabel" style="align-self:center;">other</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#15803daa;">3</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
 
-      <div class="hm-ylabel" style="align-self:center;">premature_release</div>
+      <div class="hm-ylabel" style="align-self:center;">gripper_not_open</div>
       <div class="hm-cell" style="background:#9a341255;">1</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#15803daa;">2</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
 
-      <div class="hm-ylabel" style="align-self:center;">slip_during_lift</div>
+      <div class="hm-ylabel" style="align-self:center;">gripper_slipped</div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
       <div class="hm-cell" style="background:#1e293b;"></div>
@@ -292,28 +292,28 @@
       <div class="c">0.73</div>
     </div>
     <div class="tbl-row">
-      <div class="label-col">approach_miss</div>
+      <div class="label-col">missed_approach</div>
       <div class="c">7</div><div class="c">6</div>
       <div class="c">5/6<span class="pct">83.3%</span></div>
       <div class="c">5/7<span class="pct">71.4%</span></div>
       <div class="c">0.77</div>
     </div>
     <div class="tbl-row">
-      <div class="label-col muted">knock_object_off_table<span class="small-chip">small sample</span></div>
+      <div class="label-col muted">other<span class="small-chip">small sample</span></div>
       <div class="c muted">3</div><div class="c muted">3</div>
       <div class="c muted">3/3<span class="pct">100.0%</span></div>
       <div class="c muted">3/3<span class="pct">100.0%</span></div>
       <div class="c muted">1.00</div>
     </div>
     <div class="tbl-row">
-      <div class="label-col muted">premature_release<span class="small-chip">small sample</span></div>
+      <div class="label-col muted">gripper_not_open<span class="small-chip">small sample</span></div>
       <div class="c muted">3</div><div class="c muted">3</div>
       <div class="c muted">2/3<span class="pct">66.7%</span></div>
       <div class="c muted">2/3<span class="pct">66.7%</span></div>
       <div class="c muted">0.67</div>
     </div>
     <div class="tbl-row">
-      <div class="label-col muted">slip_during_lift<span class="small-chip">small sample</span></div>
+      <div class="label-col muted">gripper_slipped<span class="small-chip">small sample</span></div>
       <div class="c muted">3</div><div class="c muted">3</div>
       <div class="c muted">3/3<span class="pct">100.0%</span></div>
       <div class="c muted">3/3<span class="pct">100.0%</span></div>
@@ -329,7 +329,7 @@
   <div class="drill-row">
     <div class="drop">
       <label>Expected label</label>
-      <div class="select-like">approach_miss ▾</div>
+      <div class="select-like">missed_approach ▾</div>
     </div>
     <div class="drop">
       <label>Judged label</label>
@@ -338,7 +338,7 @@
   </div>
   <div class="filter-pill">
     <span class="key">Filter active:</span>
-    <code>label=approach_miss (expected OR judged)</code>
+    <code>label=missed_approach (expected OR judged)</code>
   </div>
 
   <div class="drill-table">
@@ -353,10 +353,10 @@
         </div>
       </div>
       <div class="rid-link">rollout_0001</div>
-      <div class="mono-sm">approach_miss → approach_miss</div>
+      <div class="mono-sm">missed_approach → missed_approach</div>
       <div class="mono-sm pol">scripted</div>
       <div><span class="badge match">match</span></div>
-      <div class="desc">Gripper descended ~2 cm off-center of the nut at frame 7; claw closed on empty air.</div>
+      <div class="desc">Gripper descended ~2 cm off-center of the cube at frame 7; claw closed on empty air.</div>
     </div>
     <div class="drill-table-row">
       <div>
@@ -366,10 +366,10 @@
         </div>
       </div>
       <div class="rid-link">rollout_0004</div>
-      <div class="mono-sm">approach_miss → approach_miss</div>
+      <div class="mono-sm">missed_approach → missed_approach</div>
       <div class="mono-sm pol">scripted</div>
       <div><span class="badge match">match</span></div>
-      <div class="desc">Arm approached at a 15° angle offset, gripper landed to the left of the nut.</div>
+      <div class="desc">Arm approached at a 15° angle offset, gripper landed to the left of the cube.</div>
     </div>
     <div class="drill-table-row">
       <div>
@@ -379,10 +379,10 @@
         </div>
       </div>
       <div class="rid-link">rollout_0011</div>
-      <div class="mono-sm">approach_miss → none</div>
+      <div class="mono-sm">missed_approach → none</div>
       <div class="mono-sm pol">scripted</div>
       <div><span class="badge mis">mismatch</span></div>
-      <div class="desc">Judge read the rollout as success — near-miss on grasp but robot recovered and placed nut.</div>
+      <div class="desc">Judge read the rollout as success — near-miss on grasp but robot recovered and placed cube.</div>
     </div>
     <div class="drill-table-row">
       <div>
@@ -392,10 +392,10 @@
         </div>
       </div>
       <div class="rid-link">rollout_0014</div>
-      <div class="mono-sm">none → approach_miss</div>
+      <div class="mono-sm">none → missed_approach</div>
       <div class="mono-sm pol">pretrained</div>
       <div><span class="badge mis">mismatch</span></div>
-      <div class="desc">Clean pretrained rollout; judge over-called a tiny wobble near the nut as a missed approach.</div>
+      <div class="desc">Clean pretrained rollout; judge over-called a tiny wobble near the cube as a missed approach.</div>
     </div>
   </div>
 

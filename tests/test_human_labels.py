@@ -108,7 +108,7 @@ class TestPersistence:
     def test_append_and_read_roundtrip(self, tmp_path: Path) -> None:
         label = HumanLabel(
             rollout_id="calib_00",
-            label="approach_miss",
+            label="missed_approach",
             note="gripper closed on empty air",
             labeled_at=datetime.now(UTC),
         )
@@ -116,25 +116,25 @@ class TestPersistence:
         records = read_labels(tmp_path)
         assert len(records) == 1
         assert records[0].rollout_id == "calib_00"
-        assert records[0].label == "approach_miss"
+        assert records[0].label == "missed_approach"
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         assert read_labels(tmp_path) == []
 
     def test_submit_label_helper_writes_and_returns_record(self, tmp_path: Path) -> None:
-        rec = submit_label(tmp_path, rollout_id="calib_07", label="slip_during_lift")
+        rec = submit_label(tmp_path, rollout_id="calib_07", label="failed_grip")
         assert rec.rollout_id == "calib_07"
-        assert rec.label == "slip_during_lift"
+        assert rec.label == "failed_grip"
         assert rec.note is None
         reloaded = read_labels(tmp_path)
         assert len(reloaded) == 1
         assert reloaded[0] == rec
 
     def test_last_write_wins_on_duplicate_rollout_id(self, tmp_path: Path) -> None:
-        submit_label(tmp_path, rollout_id="calib_00", label="approach_miss")
-        submit_label(tmp_path, rollout_id="calib_00", label="gripper_never_opened")
+        submit_label(tmp_path, rollout_id="calib_00", label="missed_approach")
+        submit_label(tmp_path, rollout_id="calib_00", label="failed_grip")
         mapping = labels_by_rollout(tmp_path)
-        assert mapping["calib_00"].label == "gripper_never_opened"
+        assert mapping["calib_00"].label == "failed_grip"
 
     def test_malformed_lines_skipped(self, tmp_path: Path) -> None:
         # Pre-seed the file with one good record + two bad lines.
@@ -160,10 +160,40 @@ class TestResume:
     def test_pending_rollouts_filters_already_labeled(self, tmp_path: Path) -> None:
         queue = ["calib_0", "calib_1", "calib_2", "calib_3"]
         submit_label(tmp_path, rollout_id="calib_0", label="none")
-        submit_label(tmp_path, rollout_id="calib_2", label="approach_miss")
+        submit_label(tmp_path, rollout_id="calib_2", label="missed_approach")
         pending = pending_rollouts(queue, tmp_path)
         assert pending == ["calib_1", "calib_3"]
 
     def test_pending_on_empty_file(self, tmp_path: Path) -> None:
         queue = ["calib_0", "calib_1"]
         assert pending_rollouts(queue, tmp_path) == queue
+
+
+class TestLegacyLabelRemap:
+    """Past runs' human_labels.jsonl files carry labels that no longer exist
+    in the current taxonomy (e.g. `gripper_slipped`). They must be remapped
+    on read so the UI renders against the current 2-mode set without needing
+    to rewrite old artifacts."""
+
+    def test_legacy_labels_remapped_on_read(self, tmp_path: Path) -> None:
+        # Hand-write a human_labels.jsonl with three legacy labels + one
+        # current-taxonomy label. Reading it back should remap the legacy
+        # values while leaving the current ones alone.
+        path = tmp_path / "human_labels.jsonl"
+        lines = [
+            '{"rollout_id": "r0", "label": "gripper_slipped",'
+            ' "note": null, "labeled_at": "2026-04-01T00:00:00+00:00"}',
+            '{"rollout_id": "r1", "label": "gripper_not_open",'
+            ' "note": null, "labeled_at": "2026-04-01T00:00:00+00:00"}',
+            '{"rollout_id": "r2", "label": "knock_object_off_table",'
+            ' "note": null, "labeled_at": "2026-04-01T00:00:00+00:00"}',
+            '{"rollout_id": "r3", "label": "missed_approach",'
+            ' "note": null, "labeled_at": "2026-04-01T00:00:00+00:00"}',
+        ]
+        path.write_text("\n".join(lines) + "\n")
+
+        mapping = labels_by_rollout(tmp_path)
+        assert mapping["r0"].label == "failed_grip"
+        assert mapping["r1"].label == "missed_approach"
+        assert mapping["r2"].label == "missed_approach"
+        assert mapping["r3"].label == "missed_approach"

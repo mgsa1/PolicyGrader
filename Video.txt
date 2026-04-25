@@ -1,0 +1,186 @@
+PolicyGrader — Hackathon Demo Video Script
+2:30 hard cap · ~380 words spoken · conversational pace (~150 wpm)
+==================================================================
+
+────────────────────────────────────────────────────────────────
+0:00 – 0:18 · HOOK                                     (≈42 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Beijing humanoid marathon clip — robot sprawls on the
+        pavement. Crowd reacts. Cut to a warehouse robot fumbling
+        a box. Cut to a home robot near a child.
+
+VO: "This is funny right now. In two years, it won't be —
+     these things will share sidewalks, kitchens, hospitals
+     with us. And before any of that ships, somebody has to
+     watch a robot try the same task ten million times and
+     figure out *why* it failed.
+     Today, that somebody is a human, with a stopwatch,
+     scrubbing video."
+
+ON-SCREEN TEXT (last 3s): Embodied AI is coming. Eval is the bottleneck.
+
+
+────────────────────────────────────────────────────────────────
+0:18 – 0:33 · PERSONAL HOOK                            (≈35 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Slow shot of you / your laptop / a still of a robot sim.
+        Music drops to quiet.
+
+VO: [PERSONAL — pick one and rewrite in your voice:]
+    A) "I spent a week last month watching one policy fail
+        the same way 200 times before I realized the bottleneck
+        wasn't the robot. It was me."
+    B) "Every robotics team I've talked to this year has a
+        person whose actual job is watching videos. That person
+        is the most expensive bottleneck in the field."
+    C) "When I saw the marathon clip, I laughed. Then I
+        realized — every team building these robots needs to
+        prevent a million versions of that, and nobody's
+        building the tool that helps them."
+
+
+────────────────────────────────────────────────────────────────
+0:33 – 0:48 · NAME REVEAL + VALUE                      (≈45 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Title card — "PolicyGrader" appears. Cut to dashboard
+        Overview tab. Banner shows: $X spent · Y min · N scenarios.
+
+VO: "I built **PolicyGrader** — an agentic system that runs a
+     robot evaluation end-to-end and explains every failure.
+     Describe the eval in English. Minutes later, you get a
+     report. With pixel-accurate evidence. And a measured trust
+     score on its own judgment."
+
+
+────────────────────────────────────────────────────────────────
+0:48 – 1:25 · PIPELINE (conceptual → live)             (≈95 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Pipeline diagram animates — four boxes light up in
+        sequence as you narrate. Then cut to live UI: Live tab
+        streaming, rollouts populating, keyframes filling the
+        gallery.
+
+VO: "Four specialized Opus 4.7 agents work in parallel.
+     A **planner** turns 'evaluate this policy' into a test
+     matrix. A **rollout worker** runs the simulation. A swarm
+     of **judge workers** — one per failed rollout — watches
+     the video at 2576-pixel resolution, names the earliest
+     failure frame, and points at the exact pixel where things
+     went wrong. A **reporter** clusters every finding in a
+     1-million-token context window and writes the report.
+     And when there's nothing to point at — say the gripper
+     closed on empty air — the judge returns `point: null` and
+     abstains. No fake red dot. No hallucinated evidence."
+
+VISUAL (last 5s): Side-by-side keyframes — red dot on a
+        `failed_grip` (left), clean image with no overlay on a
+        `missed_approach` (right). HOLD 2 SECONDS.
+
+
+────────────────────────────────────────────────────────────────
+1:25 – 1:55 · HERO SHOT — "Grade the Grader"           (≈75 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Cut to Judge Calibration tab. Confusion matrix. Per-label
+        precision / recall numbers populate. Cut to Deployment
+        Findings tab — Judge Trust banner reveals with calibration
+        P/R as chips on each cluster card. HOLD 3 SECONDS on the
+        banner — this is the lean-forward moment.
+
+VO: "Here's the part nobody else does. Half the rollouts come
+     from a scripted policy I steer into known failure modes —
+     a human labels a sample of those. That's ground truth.
+     The other half come from a real pretrained policy under
+     stress. The same judge runs on both.
+     The judge's precision against the human labels becomes a
+     **trust chip** on every deployment finding.
+     PolicyGrader doesn't just grade the robot.
+     **It grades the grader.**"
+
+
+────────────────────────────────────────────────────────────────
+1:55 – 2:20 · WHY OPUS 4.7                             (≈65 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Quick montage —
+        • 2576px keyframe with point overlay
+        • /memories/ tree filling up
+        • multi-agent dispatch log scrolling
+        • 1M-context findings.jsonl being clustered
+
+VO: "This only works on Opus 4.7.
+     **2576-pixel vision** lets the judge actually see a
+     two-centimeter cube. **Pointing with abstention** turns
+     vision into evidence — a coordinate, not a vibe.
+     **Managed Agents** runs four sessions in parallel.
+     **One million tokens** of context lets the reporter cluster
+     every finding in a single pass — no embeddings, just
+     reasoning. And **file-based memory** is how the agents
+     hand work off."
+
+ON-SCREEN STACK (appears as you say each):
+        ✓ 2576px vision + point/abstain
+        ✓ Managed Agents parallel sessions
+        ✓ 1M-context clustering
+        ✓ /memories/ as inter-agent storage
+
+
+────────────────────────────────────────────────────────────────
+2:20 – 2:30 · CLOSE                                    (≈25 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Side-by-side counter.
+        LEFT  — "Manual review: <baseline_hours> hrs · $<baseline_cost>"
+        RIGHT — "PolicyGrader: <actual_minutes> min · $<actual_cost>"
+        Numbers from the recording-day smoke. Then black.
+
+VO: "Weeks of human review. Compressed to minutes.
+     Audited by the same model that did the work.
+     That's how embodied AI ships safely."
+
+FINAL CARD: PolicyGrader — eval the policy. Grade the grader.
+
+
+==================================================================
+RECORDING NOTES
+==================================================================
+
+NUMBERS TO FILL IN (from recording-day smoke):
+  • <baseline_hours>     — manual review hours (from CostTracker baseline)
+  • <baseline_cost>      — $75/hr × baseline_hours
+  • <actual_minutes>     — wall-clock from RuntimeState
+  • <actual_cost>        — Opus 4.7 spend from CostTracker
+  • <calibration_P>      — per-label precision on labeled subset
+  • <abstention_rate>    — fraction of rollouts where judge returned point=null
+  • Scenarios: N total (n_cal cal + n_dep dep)
+
+SHOT-LIST CHECKLIST (every visual must exist before recording):
+  [ ] Beijing marathon clip (B-roll, licensed/fair-use)
+  [ ] Pipeline diagram animation (export from docs/pipeline.html)
+  [ ] Live tab mid-run footage (capture during smoke)
+  [ ] failed_grip keyframe with red dot
+  [ ] missed_approach keyframe with NO overlay (the abstention)
+  [ ] Confusion matrix with real numbers
+  [ ] Judge Trust banner reveal (Deployment Findings tab)
+  [ ] /memories/ tree filling (screen capture)
+  [ ] Dispatch log scrolling (screen capture)
+  [ ] Final number counter card
+
+PRE-RECORD GATE:
+  • Run BC-RNN sanity gate (CLAUDE.md §10) — must be 3/3
+  • Run smoke_agent.py end-to-end — confirm cost banner is honest
+  • Verify judge produced at least one point=null AND one
+    point=(x,y) in the smoke run — both keyframe types must exist
+
+
+==================================================================
+LOOSE NOTES (original brainstorm — keep for reference)
+==================================================================
+- start with problem: Embodied AI will soon be everywhere
+- Simple for a human, very difficult for a computer.
+- Beijing marathon robot fail. Fun? Cool. When testing a real
+  control policy, especially for a robot that shares space with
+  humans, you need to test all corner cases. Now let's watch
+  10 million times.
+- Need for a programmatic way to recognize why a robot fails.
+  Calls for advanced vision capabilities on top of other tools.
+- Explain pipeline conceptually first, then flip to accuracy,
+  then close on impact.
+- Key in API RAT  ← (incomplete note — decide what this means)

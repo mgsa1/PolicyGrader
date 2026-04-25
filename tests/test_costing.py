@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from src.costing import (
     BASELINE_HOURLY_RATE_USD,
     BASELINE_SECONDS_PER_ROLLOUT,
+    COST_PER_ROLLOUT_USD,
     CostTracker,
     baseline_cost_for,
     baseline_seconds_for,
@@ -15,65 +14,24 @@ from src.costing import (
 )
 
 
-@dataclass
-class _UsageStub:
-    """Stand-in for an Anthropic SDK Usage object — only the fields we read."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_input_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-
-
 class TestCostTracker:
     def test_zero_initial_cost(self) -> None:
         assert CostTracker().total_cost_usd == 0.0
+        assert CostTracker().n_rollouts == 0
 
-    def test_input_only(self) -> None:
-        # 1M input tokens at $15/M.
+    def test_record_rollout_bumps_counter(self) -> None:
         t = CostTracker()
-        t.add_usage(_UsageStub(input_tokens=1_000_000))
-        assert t.total_cost_usd == 15.0
-
-    def test_output_only(self) -> None:
-        # 1M output tokens at $75/M.
-        t = CostTracker()
-        t.add_usage(_UsageStub(output_tokens=1_000_000))
-        assert t.total_cost_usd == 75.0
-
-    def test_mixed_with_cache(self) -> None:
-        # 100k input + 10k output + 50k cache_read + 5k cache_create.
-        t = CostTracker()
-        t.add_usage(
-            _UsageStub(
-                input_tokens=100_000,
-                output_tokens=10_000,
-                cache_read_input_tokens=50_000,
-                cache_creation_input_tokens=5_000,
-            )
-        )
-        # 100k * 15/M = 1.50, 10k * 75/M = 0.75, 50k * 1.5/M = 0.075,
-        # 5k * 18.75/M = 0.09375 -> 2.41875
-        assert abs(t.total_cost_usd - 2.41875) < 1e-9
+        t.record_rollout()
+        assert t.n_rollouts == 1
+        assert t.total_cost_usd == COST_PER_ROLLOUT_USD
 
     def test_accumulates_across_calls(self) -> None:
         t = CostTracker()
-        t.add_usage(_UsageStub(input_tokens=500_000, output_tokens=1_000))
-        t.add_usage(_UsageStub(input_tokens=500_000, output_tokens=1_000))
-        assert t.input_tokens == 1_000_000
-        assert t.output_tokens == 2_000
-
-    def test_missing_attrs_tolerated(self) -> None:
-        # An object exposing only some of the expected attrs (e.g. an old
-        # SDK shape) should not crash.
-        @dataclass
-        class _Partial:
-            input_tokens: int = 1_000
-
-        t = CostTracker()
-        t.add_usage(_Partial())
-        assert t.input_tokens == 1_000
-        assert t.output_tokens == 0
+        for _ in range(30):
+            t.record_rollout()
+        assert t.n_rollouts == 30
+        # 30 × $0.20 = $6.00 — the empirical full-run cost we use as the model.
+        assert abs(t.total_cost_usd - 6.0) < 1e-9
 
 
 class TestBaseline:
@@ -92,7 +50,7 @@ class TestBaseline:
         assert baseline_seconds_for(10) == 10 * BASELINE_SECONDS_PER_ROLLOUT
 
     def test_constants_consistent(self) -> None:
-        # Sanity check: $50/hr × 3min × N matches the helper.
+        # Sanity check: $75/hr × 3min × N matches the helper.
         n = 7
         expected = n * BASELINE_SECONDS_PER_ROLLOUT / 3600 * BASELINE_HOURLY_RATE_USD
         assert abs(baseline_cost_for(n) - expected) < 1e-9

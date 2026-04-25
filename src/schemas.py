@@ -7,8 +7,7 @@ canonical source of those types.
 Core models:
   RolloutConfig    - one row of the test matrix; what to run
   RolloutResult    - what came back (no GT attached — GT comes from humans now)
-  FrameObservation - one line of the judge's per-frame chain of thought
-  JudgeAnnotation  - single-call judge output (label + frame + optional point + CoT)
+  JudgeAnnotation  - single-call judge output (label + frame + optional point)
   Finding          - one row of findings.jsonl: sim success + optional annotation
   HumanLabel       - one row of human_labels.jsonl: the calibration GT source
 """
@@ -26,20 +25,14 @@ from src.sim.scripted import FailureMode, InjectedFailures
 PolicyKind = Literal["pretrained", "scripted"]
 EnvName = Literal["Lift"]
 
-# The human labeler's extended label set: every taxonomy failure mode plus
-# `none` (clean success) and `ambiguous` (can't tell from the video). The
-# judge's label set stays narrower (see JudgeAnnotation._label_not_none).
+# Human labeler's set: the 2 judge failure labels plus `none` (clean success)
+# and `ambiguous` (can't tell from the video). `other` stays available as the
+# escape hatch the judge also uses. Legacy labels from prior taxonomies are
+# remapped at read time — see `_LEGACY_LABEL_MAP` in src/human_labels.py.
 HumanLabelValue = Literal[
     "none",
-    "approach_miss",
-    "gripper_never_opened",
-    "cube_scratched_but_not_moved",
-    "premature_release",
-    "slip_during_lift",
-    "knock_object_off_table",
-    "gripper_collision",
-    "wrong_object_selected",
-    "insertion_misalignment",
+    "missed_approach",
+    "failed_grip",
     "other",
     "ambiguous",
 ]
@@ -104,9 +97,9 @@ class RolloutResult(BaseModel):
 
     No ground_truth_label field: scripted rollouts used to derive GT from
     their InjectedFailures knobs, but knob-intent and visual-outcome
-    disagreed too often (noise=0.10 labeled as knock but visually an
-    approach_miss, etc.). Ground truth now comes from human labels on a
-    sampled subset; see src/human_labels.py.
+    disagreed too often (noise at 0.10 was labeled as a knock but often
+    looked like a missed_approach on the frames, etc.). Ground truth now
+    comes from human labels on a sampled subset; see src/human_labels.py.
 
     `telemetry_path` points at the per-step sim-telemetry sidecar written next
     to the mp4. Optional: replays of pre-telemetry artifacts (or runs with
@@ -157,35 +150,7 @@ class RolloutTelemetry(BaseModel):
     rows: list[TelemetryRow]
 
 
-# ---- Judge output (single-call CoT pass; see src/vision/judge.py) -------------
-
-
-GripperState = Literal["open", "closing", "closed", "opening"]
-CubeState = Literal[
-    "still_on_table",
-    "moving_on_table",
-    "in_gripper",
-    "falling",
-    "off_table",
-]
-ContactState = Literal["none", "touching_cube", "grasped"]
-
-
-class FrameObservation(BaseModel):
-    """One row of the judge's explicit per-frame chain of thought.
-
-    The judge emits one of these per frame it was shown, in chronological order.
-    Forcing this structured walkthrough before the final label is what keeps the
-    judge from defaulting to approach_miss when it sees an empty-gripper
-    consequence frame.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    frame_index: int = Field(..., ge=0)
-    gripper_state: GripperState
-    cube_state: CubeState
-    contact: ContactState
+# ---- Judge output (single-call pass; see src/vision/judge.py) -----------------
 
 
 class JudgeAnnotation(BaseModel):
@@ -195,19 +160,18 @@ class JudgeAnnotation(BaseModel):
     converts from its sampled-frame indexing before returning, so downstream
     consumers (keyframe rendering, UI) can index the raw video directly.
 
-    `point` is (x, y) in the 2576-px long-edge grid of the chosen frame, OR
-    None when no gripper-cube contact is visible (e.g. approach_miss,
-    gripper_collision). `None` is a first-class output: a wrong pixel is
-    strictly worse than an abstention.
+    `point` is (x, y) in the long-edge grid of the chosen frame, OR None when
+    there is no gripper-cube contact to point at (e.g. a missed_approach where
+    the fingers close on empty air). `None` is a first-class output: a wrong
+    pixel is strictly worse than an abstention.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     taxonomy_label: FailureMode
     frame_index: int = Field(..., ge=0)
     point: tuple[int, int] | None = None
     description: str = Field(..., min_length=1)
-    per_frame_observations: list[FrameObservation] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _label_not_none(self) -> JudgeAnnotation:

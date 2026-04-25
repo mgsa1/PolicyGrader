@@ -36,9 +36,43 @@ INTRO_DURATION = 3.5
 # + 2× extra) so the fling feels like a smash instead of a nudge.
 PUSHBACK_BOOST = 2.0
 
+# Victory overlay height above the cheese. 1.6 m sits at human-head level
+# so the label reads cleanly from the intro camera's low-angle third-person
+# shot without clipping into the Franka.
+OVERLAY_HEIGHT = 1.6
+
 
 def claim_code() -> str:
     return "RAT-" + secrets.token_hex(3).upper()
+
+
+def render_win_overlay(viewer, data, key_box_pos, state) -> None:
+    """Push a floating text label into the viewer's user scene while won.
+
+    mujoco.viewer.launch_passive has no screen-space text API, but every
+    mjvGeom carries a 100-char label that renders as 3D-anchored text. We
+    pin a size-0 invisible sphere above the cheese and let its label carry
+    the congratulations banner; ngeom=0 clears it on reset.
+    """
+    if not state["won"]:
+        viewer.user_scn.ngeom = 0
+        return
+
+    message = f"Congratulations! Your free API key is {state['code']}"[:99]
+
+    geom = viewer.user_scn.geoms[0]
+    mujoco.mjv_initGeom(
+        geom,
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=np.array([0.001, 0.001, 0.001]),
+        pos=np.array(
+            [float(key_box_pos[0]), float(key_box_pos[1]), OVERLAY_HEIGHT]
+        ),
+        mat=np.eye(3).flatten(),
+        rgba=np.array([1.0, 0.9, 0.2, 0.0]),
+    )
+    geom.label = message
+    viewer.user_scn.ngeom = 1
 
 
 def main() -> None:
@@ -242,6 +276,9 @@ def main() -> None:
                         state["won"] = True
                         state["code"] = claim_code()
                         state["win_time"] = time.perf_counter()
+                        # Swing back to the third-person intro cam so the
+                        # overlay and the triumphant rat both fit in frame.
+                        viewer.cam.fixedcamid = intro_cam_id
                         print()
                         print("=" * 52)
                         print("  YOU GOT PAST THE BROOM.")
@@ -250,6 +287,7 @@ def main() -> None:
                         print("  Press R to play again, close window to quit.")
                         print("=" * 52)
 
+                render_win_overlay(viewer, data, key_box_pos, state)
                 viewer.sync()
 
                 elapsed_frame = time.perf_counter() - now

@@ -18,7 +18,7 @@ layers are untouched.
 | `panes/overview.py`        | **Overview** tab — landing: headline, KPI strip, 4-phase pipeline cards, 3-card view index pointing at the other tabs. |
 | `panes/live.py`            | **Live** tab — agent activity stream, current rollout player + path, metadata-rich rollout gallery, `/memories/` host mirror tree. |
 | `panes/calibration.py`     | **Judge calibration** tab — thin facade over `metrics_view.py` (cohort + caption + 2×2 binary + heatmap + per-label + drill-down). |
-| `panes/findings.py`        | **Deployment findings** tab — cluster cards (by label / by condition) decorated with per-label calibration precision, plus the bottom-of-tab rollout table. |
+| `panes/findings.py`        | **Deployment findings** tab — cluster cards (one per judge taxonomy label) decorated with per-label calibration precision, plus the bottom-of-tab rollout table. |
 | `panes/_io.py`             | Shared readers for `runtime.json` and `chat.jsonl`. Used by `chrome.py` and `live.py`. |
 
 ## CSS plumbing
