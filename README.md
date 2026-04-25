@@ -4,10 +4,10 @@
 > An agentic system that designs, runs, judges, and reports on robot policy evaluations end-to-end, while measuring its own judge against human ground truth.
 
 <p>
-  <a href="#"><img alt="Claude Opus 4.7" src="https://img.shields.io/badge/Claude-Opus%204.7-0b5fff?style=flat-square&labelColor=1f1f1f"></a>
-  <a href="#"><img alt="Managed Agents" src="https://img.shields.io/badge/Managed%20Agents-2026--04--01-1967d2?style=flat-square&labelColor=1f1f1f"></a>
-  <a href="#"><img alt="robosuite 1.4.1" src="https://img.shields.io/badge/robosuite-1.4.1-b06000?style=flat-square&labelColor=1f1f1f"></a>
-  <a href="#"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square&labelColor=1f1f1f"></a>
+  <a href="https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7"><img alt="Claude Opus 4.7" src="https://img.shields.io/badge/Claude-Opus%204.7-0b5fff?style=flat-square&labelColor=1f1f1f"></a>
+  <a href="https://platform.claude.com/docs/en/managed-agents/overview"><img alt="Managed Agents" src="https://img.shields.io/badge/Managed%20Agents-2026--04--01-1967d2?style=flat-square&labelColor=1f1f1f"></a>
+  <a href="https://robosuite.ai"><img alt="robosuite 1.4.1" src="https://img.shields.io/badge/robosuite-1.4.1-b06000?style=flat-square&labelColor=1f1f1f"></a>
+  <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square&labelColor=1f1f1f"></a>
 </p>
 
 <!-- HERO ANIMATION — two panoramic loops (cards + data-flow), click-through to the full explainer.
@@ -37,7 +37,9 @@ Embodied AI is about to be everywhere — warehouses, kitchens, hospitals, homes
 
 **PolicyGrader collapses that loop into minutes.** Describe the eval goal in English; an Opus 4.7 Managed Agent designs a test suite, runs rollouts in simulation, **pauses for a human to label a sampled subset** as ground truth, then a vision judge watches every failed rollout, names the failure frame, points at it (or honestly abstains), and a reporter clusters the deployment failures into actionable patterns.
 
-We propose a framework to benchmark the judge performance against a small sample of human labelled ground truth, to provide a confidence index in the vision analysis in the deployment.
+We measure the judge against human labels on a sampled subset, and attach the resulting per-label precision to every deployment finding as a confidence chip.
+
+> **Glossary.** *Lift* = the canonical robosuite benchmark task — pick up a cube on a table with a Franka Panda arm. *BC-RNN* = a behavior-cloning policy with an RNN backbone, the standard learned baseline for Lift. *robomimic* = the Stanford library that ships the BC-RNN training code and our pretrained checkpoint.
 
 ---
 
@@ -48,14 +50,14 @@ We propose a framework to benchmark the judge performance against a small sample
 | | **Pipeline** | Manual baseline | Δ |
 |---|---|---|---|
 | **Cost** | **$13.30** | $175.00 | **13× cheaper** |
-| **Wall time** | **31 m 40 s** | 1 h 17 m | **2.4× faster** |
+| **Wall time** | **31 m 40 s** | 1 h 17 m | **2.4× faster** † |
 | **Judge findings** | 27 `missed_approach` · 3 `failed_grip` · 28 / 30 with pixel-accurate point | — | — |
 
-Wall time on this laptop run is bottlenecked by single-process MuJoCo rollout generation. The AI grading work itself runs across K parallel Claude Managed Agents, so in a real deployment the pipeline's speed is bounded by the number of agents you fan out to, not by the host machine.
+† **Wall time is bottlenecked by single-process MuJoCo rollout generation on this laptop.** The AI grading work itself runs across K parallel Claude Managed Agents, so in a real deployment the pipeline's speed is bounded by the number of agents you fan out to, not by the host machine.
 
 ---
 
-## The two populations — load-bearing
+## The two populations
 
 Both cohorts run on **the same task, env, and camera (Lift, frontview)**. That’s what lets the per-label judge precision measured on calibration *transfer* directly onto deployment findings.
 
@@ -92,7 +94,7 @@ uv pip install -r requirements.txt
 cp .env.example .env                          # set ANTHROPIC_API_KEY
 python scripts/fetch_checkpoints.py           # ~100 MB BC-RNN .pth
 
-python scripts/smoke_agent.py                 # full pipeline, ~5 min, ~$15
+python scripts/smoke_agent.py                 # full pipeline, ~5 min, ~$3
 python scripts/run_ui.py                      # dashboard at localhost:7860
 ```
 
