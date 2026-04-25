@@ -119,6 +119,18 @@ def _current_video_for(run: str) -> str | None:
     return live.current_video_path(_as_path(run))
 
 
+def _video_tick(new_path: str | None, last_path: str | None) -> tuple[Any, str | None]:
+    """Pass-through for a gr.Video tick that re-emits only when the path changes.
+
+    Re-emitting the same path on every tick causes Gradio to reload the
+    underlying <video> element (resetting playback to frame 0). Returning
+    gr.skip() when the path is unchanged lets the user actually watch the clip.
+    """
+    if new_path == last_path:
+        return gr.skip(), last_path
+    return new_path, new_path
+
+
 def _current_video_path_for(run: str) -> str:
     return live.current_video_path_html(_as_path(run))
 
@@ -186,6 +198,10 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 topbar_meta = gr.HTML(value=chrome.topbar_meta_html(initial_path))
 
         selected_run = gr.State(value=initial_run)
+        # Last paths emitted into the gr.Video components — used by _video_tick
+        # to skip re-emits that would otherwise reload and restart the video.
+        last_current_video_path = gr.State(value=live.current_video_path(initial_path))
+        last_labeling_video_path = gr.State(value=labeling.current_video_path(initial_path))
 
         hero_html = gr.HTML(value=chrome.hero_html(initial_path))
         phase_html = gr.HTML(value=chrome.phase_progress_html(initial_path))
@@ -318,7 +334,11 @@ def build_app(runs_root: Path) -> gr.Blocks:
         timer.tick(fn=_phase_for, inputs=[selected_run], outputs=phase_html)
         timer.tick(fn=_topbar_meta_for, inputs=[selected_run], outputs=topbar_meta)
         timer.tick(fn=_trace_for, inputs=[selected_run], outputs=trace_html)
-        timer.tick(fn=_current_video_for, inputs=[selected_run], outputs=current_video)
+        timer.tick(
+            fn=lambda r, last: _video_tick(live.current_video_path(_as_path(r)), last),
+            inputs=[selected_run, last_current_video_path],
+            outputs=[current_video, last_current_video_path],
+        )
         timer.tick(fn=_current_video_path_for, inputs=[selected_run], outputs=current_video_path)
         timer.tick(fn=_gallery_for, inputs=[selected_run], outputs=gallery_html)
         timer.tick(fn=_memories_for, inputs=[selected_run], outputs=memories_html)
@@ -331,9 +351,9 @@ def build_app(runs_root: Path) -> gr.Blocks:
             outputs=labeling_status,
         )
         timer.tick(
-            fn=lambda r: labeling.current_video_path(_as_path(r)),
-            inputs=[selected_run],
-            outputs=labeling_video,
+            fn=lambda r, last: _video_tick(labeling.current_video_path(_as_path(r)), last),
+            inputs=[selected_run, last_labeling_video_path],
+            outputs=[labeling_video, last_labeling_video_path],
         )
         timer.tick(
             fn=lambda r: labeling.current_rollout_header_html(_as_path(r)),
@@ -440,16 +460,19 @@ def build_app(runs_root: Path) -> gr.Blocks:
         )
 
         # ---- Labeling submit handler -------------------------------------------
-        def _on_submit_label(run: str, choice: str | None) -> tuple[Any, Any, Any, Any, Any]:
+        def _on_submit_label(run: str, choice: str | None) -> tuple[Any, Any, Any, Any, Any, Any]:
             """Persist the current rollout's label and advance.
 
             Returns refreshed (status, video_path, rollout_header, label_radio,
-            group_visibility) outputs. No-op if `choice` is empty (the user
-            clicked Submit without selecting a label). Hides the whole
-            labeling group once the queue is drained.
+            group_visibility, last_video_path) outputs. No-op if `choice` is
+            empty (the user clicked Submit without selecting a label). Hides
+            the whole labeling group once the queue is drained. The last
+            output keeps the timer's video-gate state in sync with the path
+            we just pushed.
             """
             if not choice:
                 return (
+                    gr.skip(),
                     gr.skip(),
                     gr.skip(),
                     gr.skip(),
@@ -461,12 +484,14 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 label=cast_to_label(choice),
                 note=None,
             )
+            new_video_path = labeling.current_video_path(_as_path(run))
             return (
                 labeling.queue_status_html(_as_path(run)),
-                labeling.current_video_path(_as_path(run)),
+                new_video_path,
                 labeling.current_rollout_header_html(_as_path(run)),
                 gr.update(value=None),
                 gr.update(visible=labeling.panel_visible(_as_path(run))),
+                new_video_path,
             )
 
         labeling_submit_btn.click(
@@ -478,6 +503,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 labeling_rollout,
                 labeling_label,
                 labeling_group,
+                last_labeling_video_path,
             ],
         )
 
@@ -495,6 +521,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
         def _on_run_change(new_run: str) -> tuple[Any, ...]:
             p = Path(new_run)
             blocks = calibration.metrics_blocks(p)
+            new_current_video = live.current_video_path(p)
+            new_labeling_video = labeling.current_video_path(p)
             return (
                 new_run,
                 chrome.topbar_meta_html(p),
@@ -502,7 +530,7 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 chrome.phase_progress_html(p),
                 overview.overview_html(p),
                 live.agent_trace_html(p),
-                live.current_video_path(p),
+                new_current_video,
                 live.current_video_path_html(p),
                 live.live_gallery_html(p),
                 live.memories_tree_html(p),
@@ -518,6 +546,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 calibration.matrix_html(p),
                 calibration.binary_matrix_html(p),
                 gr.update(visible=labeling.panel_visible(p)),
+                new_current_video,
+                new_labeling_video,
             )
 
         run_picker.change(
@@ -546,6 +576,8 @@ def build_app(runs_root: Path) -> gr.Blocks:
                 cm_html,
                 cal_binary_matrix_html,
                 labeling_group,
+                last_current_video_path,
+                last_labeling_video_path,
             ],
         )
 
