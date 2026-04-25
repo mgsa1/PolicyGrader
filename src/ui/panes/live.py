@@ -18,13 +18,32 @@ from src.ui.panes.chrome import phase_code, phase_short
 from src.ui.styles import empty, html_escape, render_markdown
 from src.ui.synthesis import ScoredRollout, copy_button, load_scored_rollouts, population_chip
 
-# Per-phase title + the artifacts that phase produces. The Writes: list does
-# the explanatory work — the file names already say what the phase is doing.
+# Per-phase descriptive blurb + the artifacts that phase produces. The eyebrow
+# already names the phase ("Phase 1: Planner"), so we skip a redundant bold
+# title and go straight to the description.
 _PHASE_EXPLAINERS: dict[str, tuple[str, list[str]]] = {
-    "BEGIN PHASE 1: PLANNER": ("Planner", ["plan.md", "test_matrix.csv"]),
-    "BEGIN PHASE 2: ROLLOUT": ("Rollout worker", ["rollouts/*.mp4"]),
-    "BEGIN PHASE 3: JUDGE": ("Vision judge", ["findings.jsonl"]),
-    "BEGIN PHASE 4: REPORT": ("Report writer", ["report.md"]),
+    "BEGIN PHASE 1: PLANNER": (
+        "Decides which scenarios to run, which failures to inject, and what "
+        "the success criteria are. No simulation yet — pure design.",
+        ["plan.md", "test_matrix.csv"],
+    ),
+    "BEGIN PHASE 2: ROLLOUT": (
+        "Runs every row of the test matrix in MuJoCo + robosuite. Each scenario "
+        "produces a short mp4 of the robot attempting the task.",
+        ["rollouts/*.mp4"],
+    ),
+    "BEGIN PHASE 3: JUDGE": (
+        "Single dense-frame chain-of-thought call per sim-failed rollout. "
+        "Walks through ~30 high-res frames, names the decisive frame, picks a "
+        "failure label, points at the evidence (or abstains on no-contact "
+        "failures). Sim handles the binary pass/fail decision.",
+        ["findings.jsonl"],
+    ),
+    "BEGIN PHASE 4: REPORT": (
+        "Synthesizes everything: success rate, judge precision/recall vs "
+        "ground truth, failure clusters, cost vs the manual-review baseline.",
+        ["report.md"],
+    ),
 }
 
 
@@ -53,7 +72,7 @@ def agent_trace_html(mirror_root: Path) -> str:
 def _phase_divider(marker: str) -> str:
     code = phase_code(marker) or "planner"
     explainer = _PHASE_EXPLAINERS.get(marker)
-    title, outputs = explainer if explainer else (marker, [])
+    sub, outputs = explainer if explainer else ("", [])
     short = phase_short(marker)
 
     outputs_html = ""
@@ -66,7 +85,7 @@ def _phase_divider(marker: str) -> str:
         f'<div class="pg-trace-phase-label {code}">{html_escape(short)}</div>'
         f'<div class="pg-trace-phase-rule {code}"></div>'
         "</div>"
-        f'<div class="pg-trace-phase-title">{html_escape(title)}</div>'
+        f'<div class="pg-trace-phase-sub">{html_escape(sub)}</div>'
         f"{outputs_html}"
         "</div>"
     )

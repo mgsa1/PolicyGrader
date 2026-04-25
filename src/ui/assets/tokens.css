@@ -1914,3 +1914,104 @@
   font-family: var(--pg-font-mono);
   color: var(--pg-ink);
 }
+
+/* ============================================================= */
+/* HUMAN LABELING PANE                                            */
+/* Sits at the top of the Judge calibration tab. The Gradio      */
+/* primitives (gr.Radio, gr.Button, gr.Video) ship with their    */
+/* own dark-pill aesthetic — these rules realign them with the   */
+/* rest of the dashboard's Google-leaning palette.               */
+/* ============================================================= */
+
+.pg-labeling-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--pg-s-3); flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: var(--pg-s-2);
+  border-radius: var(--pg-radius-sm);
+  background: var(--pg-cal-soft); border-left: 3px solid var(--pg-cal);
+  color: var(--pg-ink); font-size: var(--pg-fs-sm);
+}
+.pg-labeling-header.muted {
+  background: var(--pg-surface-2); border-left-color: transparent;
+  color: var(--pg-ink-3);
+}
+.pg-labeling-rid {
+  font-size: var(--pg-fs-xs); color: var(--pg-ink-3);
+  letter-spacing: 0.02em;
+}
+.pg-labeling-rid code {
+  font-family: var(--pg-font-mono); font-size: var(--pg-fs-xs);
+  color: var(--pg-ink-2); padding: 1px 8px; margin-left: 4px;
+  background: var(--pg-surface);
+  border: 1px solid var(--pg-line-2);
+  border-radius: var(--pg-radius-pill);
+}
+
+/* Center the radio row + the section's text label. */
+.pg-labeling__choices > .label-content,
+.pg-labeling__choices > label,
+.pg-labeling__choices > span,
+.pg-labeling__choices [data-testid="block-info"] {
+  text-align: center !important;
+  display: block;
+  color: var(--pg-ink-3);
+  font-size: var(--pg-fs-xs) !important;
+  font-weight: 500 !important;
+}
+.pg-labeling__choices .wrap,
+.pg-labeling__choices [class*="wrap"] {
+  justify-content: center !important;
+  gap: var(--pg-s-3) !important;
+}
+
+/* Google-style pill for each choice. */
+.pg-labeling__choices label {
+  display: inline-flex !important; align-items: center;
+  padding: 8px 18px !important;
+  border-radius: var(--pg-radius-pill) !important;
+  background: var(--pg-surface) !important;
+  border: 1px solid var(--pg-line-2) !important;
+  color: var(--pg-ink-2) !important;
+  font-family: var(--pg-font-sans) !important;
+  font-size: var(--pg-fs-sm) !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+  transition: all var(--pg-dur) var(--pg-ease) !important;
+}
+.pg-labeling__choices label:hover {
+  background: var(--pg-surface-2) !important;
+  border-color: var(--pg-line-strong) !important;
+  transform: none !important;
+}
+.pg-labeling__choices label.selected {
+  background: var(--pg-accent-soft) !important;
+  border-color: var(--pg-accent) !important;
+  color: var(--pg-accent-deep) !important;
+}
+/* Hide the radio bullet — the pill itself shows selection. */
+.pg-labeling__choices input[type="radio"] {
+  display: none !important;
+}
+
+/* Centered, contained submit. */
+.pg-labeling__submit {
+  display: flex !important; justify-content: center;
+  margin: var(--pg-s-3) auto 0 !important;
+  max-width: 320px;
+}
+.pg-labeling__submit button {
+  width: 100%;
+  border-radius: var(--pg-radius-pill) !important;
+  background: var(--pg-accent) !important;
+  border: 1px solid var(--pg-accent) !important;
+  color: #fff !important;
+  font-family: var(--pg-font-sans) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em;
+  box-shadow: none !important;
+  transition: background var(--pg-dur) var(--pg-ease) !important;
+}
+.pg-labeling__submit button:hover {
+  background: var(--pg-accent-deep) !important;
+  border-color: var(--pg-accent-deep) !important;
+}

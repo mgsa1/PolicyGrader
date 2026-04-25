@@ -19,7 +19,7 @@ from pathlib import Path
 from src.human_labels import labels_by_rollout, submit_label
 from src.label_phase import read_queue
 from src.schemas import HumanLabelValue
-from src.ui.styles import empty, html_escape, num
+from src.ui.styles import html_escape, num
 
 # Radio choices are (display label, stored value). `none` appears first because
 # it's the expected outcome on the successes in the sampled set; the
@@ -79,31 +79,39 @@ def panel_visible(mirror_root: Path) -> bool:
     return load_state(mirror_root).has_work
 
 
-def queue_status_html(mirror_root: Path) -> str:
-    """Single-line status pill at the top of the labeling panel."""
+def header_html(mirror_root: Path) -> str:
+    """One-line header: progress pill on the left, current rollout id on the right.
+
+    Replaces the previous two stacked elements (status + "Now labeling: …") so
+    the labeling pane sits flush to the video and the buttons stay above the
+    fold on smaller screens.
+    """
     state = load_state(mirror_root)
     if state.skipped:
-        return _status_pill("Labeling skipped (--skip-labeling).", muted=True)
+        return _status_pill("Labeling skipped (--skip-labeling).", rollout_id=None, muted=True)
     if state.n_total == 0:
-        return _status_pill("Queue pending…", muted=True)
+        return _status_pill("Queue pending…", rollout_id=None, muted=True)
     if state.is_complete:
-        return _status_pill(f"Done · <b>{num(str(state.n_total))}</b> reviewed.", muted=False)
+        return _status_pill(
+            f"Done · <b>{num(str(state.n_total))}</b> reviewed.",
+            rollout_id=None,
+            muted=False,
+        )
     return _status_pill(
         f"Labeling: <b>{num(f'{state.n_done} / {state.n_total}')}</b>",
+        rollout_id=state.current_rollout_id,
         muted=False,
     )
 
 
-def _status_pill(html: str, *, muted: bool) -> str:
-    base = "padding:8px 12px;border-radius:8px;margin-bottom:8px;font-size:13px;"
-    if muted:
-        style = base + "background:var(--pg-surface-2);color:var(--pg-ink-3);"
-    else:
-        style = (
-            base + "background:var(--pg-cal-bg);border-left:3px solid var(--pg-cal);"
-            "color:var(--pg-ink-1);"
-        )
-    return f'<div class="pg-cal-status" style="{style}">{html}</div>'
+def _status_pill(html: str, *, rollout_id: str | None, muted: bool) -> str:
+    rollout_html = (
+        f'<span class="pg-labeling-rid">now labeling <code>{html_escape(rollout_id)}</code></span>'
+        if rollout_id
+        else ""
+    )
+    klass = "pg-labeling-header" + (" muted" if muted else "")
+    return f'<div class="{klass}"><span>{html}</span>{rollout_html}</div>'
 
 
 def current_video_path(mirror_root: Path) -> str | None:
@@ -116,19 +124,30 @@ def current_video_path(mirror_root: Path) -> str | None:
     return str(video) if video.exists() else None
 
 
-def current_rollout_header_html(mirror_root: Path) -> str:
-    """Small block identifying the rollout currently up for labeling."""
-    state = load_state(mirror_root)
-    rid = state.current_rollout_id
-    if rid is None:
-        if state.is_complete:
-            return ""
-        return empty("No rollout queued for labeling.", small=True)
+def current_video_html(mirror_root: Path) -> str:
+    """Raw HTML5 <video muted autoplay loop playsinline> for the pending rollout.
+
+    We bypass gr.Video here because (a) it has no `muted` toggle and browsers
+    block autoplay on un-muted clips, and (b) injecting a <script> into a
+    gr.HTML to mute the player from JS doesn't work — Gradio renders HTML via
+    Svelte's {@html ...} which uses innerHTML, and innerHTML never executes
+    <script> tags. The gallery cards in src/ui/panes/live.py already use the
+    same raw-tag pattern.
+    """
+    path = current_video_path(mirror_root)
+    if path is None:
+        return (
+            '<div class="pg-labeling__video-empty" '
+            'style="height:360px;display:flex;align-items:center;'
+            "justify-content:center;background:var(--pg-surface-2);"
+            "border-radius:var(--pg-radius-sm);color:var(--pg-ink-4);"
+            'font-style:italic;">No rollout pending review.</div>'
+        )
+    src = f"/gradio_api/file={path}"
     return (
-        '<div class="pg-cal-current" '
-        'style="padding:8px 12px;font-size:13px;color:var(--pg-ink-2);">'
-        f"Now labeling: <code>{html_escape(rid)}</code>"
-        "</div>"
+        f'<video src="{src}" autoplay loop muted playsinline preload="auto" '
+        'style="width:100%;height:360px;background:#000;'
+        'border-radius:var(--pg-radius-sm);object-fit:contain;"></video>'
     )
 
 
