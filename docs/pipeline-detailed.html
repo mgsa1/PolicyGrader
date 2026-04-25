@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PolicyGrader — Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #fafafa;
+    --surface:      #ffffff;
+    --surface-2:    #f4f5f7;
+    --ink:          #1f1f1f;
+    --ink-2:        #3c4043;
+    --ink-3:        #5f6368;
+    --ink-4:        #80868b;
+    --line:         #e8eaed;
+    --line-2:       #dadce0;
+    --accent:       #0b5fff;
+
+    --cal:          #b06000;   /* amber — calibration (known GT) */
+    --cal-soft:     #fef1d8;
+    --cal-line:     #f2c974;
+
+    --dep:          #1967d2;   /* blue — deployment (unknown) */
+    --dep-soft:     #e3ecfd;
+    --dep-line:     #8ab4f8;
+
+    --planner:      #1967d2;
+    --rollout:      #7b1fa2;
+    --label:        #5f6368;   /* host/human step */
+    --judge:        #b06000;
+    --report:       #137333;
+
+    --ok:           #137333;
+    --font-sans:    "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono:    "Roboto Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "tnum" 1, "ss01" 1;
+  }
+  .wrap {
+    display: grid;
+    place-items: center;
+    padding: 28px 20px 56px;
+  }
+  svg {
+    width: min(100%, 1680px);
+    height: auto;
+    display: block;
+  }
+  /* SVG text defaults inherit through font-family attribute below */
+</style>
+</head>
+<body>
+<div class="wrap">
+<!--
+  viewBox 1680 x 960 (fits 16:9 slide with slim top/bottom letterbox).
+  Tokens follow DESIGN.md / tokens.css exactly.
+
+  Panels, left-to-right:
+    A  Agent pipeline — 5 phases inside Managed Agents (+ one host step).
+    B  Two cohorts, one task, one judge — the dual-population substrate.
+    C  Eval the eval — how the calibration subset produces trust chips on deployment.
+
+  Load-bearing visual:
+    amber (#b06000 / #fef1d8)  = calibration, known ground truth
+    blue  (#1967d2 / #e3ecfd)  = deployment,  unknown ground truth
+-->
+<svg viewBox="0 0 1680 960" xmlns="http://www.w3.org/2000/svg"
+     role="img"
+     aria-label="PolicyGrader pipeline — five-phase agentic robot-eval orchestrator with human-anchored calibration."
+     font-family='"Google Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif'>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3c4043" />
+    </marker>
+    <marker id="arrow-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#80868b" />
+    </marker>
+    <marker id="arrow-cal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b06000" />
+    </marker>
+    <marker id="arrow-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1967d2" />
+    </marker>
+  </defs>
+
+  <!-- Page background -->
+  <rect x="0" y="0" width="1680" height="960" fill="#fafafa" />
+
+  <!-- =========================================================
+       TITLE
+       ========================================================= -->
+  <g>
+    <!-- eyebrow -->
+    <text x="40" y="46" font-size="11" font-weight="600" fill="#80868b"
+          letter-spacing="2.4" text-transform="uppercase">
+      FIGURE 1 · END-TO-END PIPELINE
+    </text>
+    <!-- title -->
+    <text x="40" y="84" font-size="28" font-weight="600" fill="#1f1f1f">
+      PolicyGrader
+      <tspan fill="#5f6368" font-weight="400">  —  robot manipulation evals,</tspan>
+      <tspan fill="#0b5fff" font-weight="600">  hours → minutes.</tspan>
+    </text>
+    <!-- subline -->
+    <text x="40" y="110" font-size="13" fill="#3c4043">
+      A plain-English goal routes through one Managed Agents pipeline (Opus 4.7). Judge precision is grounded in human labels on a sampled
+      <tspan fill="#b06000" font-weight="600"> calibration </tspan>
+      cohort, then applied as trust chips to a pretrained-policy
+      <tspan fill="#1967d2" font-weight="600"> deployment </tspan>
+      cohort — both on the same task, same camera, same judge.
+    </text>
+  </g>
+
+  <!-- =========================================================
+       LEGEND (right of title)
+       ========================================================= -->
+  <g transform="translate(1090,36)">
+    <rect x="0" y="0" width="550" height="80" rx="10" fill="#ffffff" stroke="#e8eaed" />
+    <text x="16" y="22" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">
+      OPUS 4.7 SURFACES EXERCISED
+    </text>
+    <g font-size="12" fill="#3c4043">
+      <!-- row 1 -->
+      <circle cx="22" cy="44" r="3" fill="#0b5fff" />
+      <text x="32" y="48">Managed Agents · parallel sessions</text>
+      <circle cx="220" cy="44" r="3" fill="#0b5fff" />
+      <text x="230" y="48">1 M context · whole-corpus clustering</text>
+      <circle cx="438" cy="44" r="3" fill="#0b5fff" />
+      <text x="448" y="48">File-based memory</text>
+      <!-- row 2 -->
+      <circle cx="22" cy="66" r="3" fill="#0b5fff" />
+      <text x="32" y="70">2576 px vision + pixel pointing</text>
+      <circle cx="220" cy="66" r="3" fill="#0b5fff" />
+      <text x="230" y="70">Per-frame chain-of-thought judging</text>
+      <circle cx="438" cy="66" r="3" fill="#0b5fff" />
+      <text x="448" y="70">Auto effort control</text>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       PANEL A · Agent pipeline (5 phases)
+       ========================================================= -->
+  <g>
+    <!-- panel label -->
+    <text x="40" y="160" font-size="10" font-weight="700" fill="#1f1f1f" letter-spacing="2.4">A</text>
+    <text x="60" y="160" font-size="11" font-weight="600" fill="#80868b" letter-spacing="1.8">
+      AGENT PIPELINE
+    </text>
+    <text x="200" y="160" font-size="11" fill="#80868b">
+      Five phases on one English goal. Four agent sessions + one host-side label step.
+    </text>
+  </g>
+
+  <!--
+    Row-1 layout:
+      INPUT chip at x=40,  width=170
+      5 phase cards, each 238 wide, 16 px gap, starting at x=248
+      OUTPUT chip at the far right
+  -->
+
+  <!-- INPUT chip -->
+  <g transform="translate(40,180)">
+    <rect width="170" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <text x="16" y="24" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">INPUT</text>
+    <text x="16" y="56" font-size="15" font-weight="600" fill="#1f1f1f">Evaluation goal</text>
+    <text x="16" y="76" font-size="11" fill="#5f6368">one line of English</text>
+
+    <!-- stylized quote block -->
+    <g transform="translate(16,92)">
+      <line x1="0" y1="0" x2="0" y2="58" stroke="#0b5fff" stroke-width="2" />
+      <text x="10" y="14" font-size="12" fill="#1f1f1f" font-style="italic">
+        <tspan x="10" dy="0">“grade pick reliability</tspan>
+        <tspan x="10" dy="14">across failure modes</tspan>
+        <tspan x="10" dy="14">on the Lift task.”</tspan>
+      </text>
+    </g>
+  </g>
+
+  <!-- Arrow INPUT → PLANNER -->
+  <path d="M 212 265 L 244 265" stroke="#3c4043" stroke-width="1.5" fill="none" marker-end="url(#arrow)" />
+
+  <!--
+    5 phase cards: positions at x = 248, 502, 756, 1010, 1264   (each 238 wide, gap 16)
+  -->
+
+  <!-- 1. PLANNER -->
+  <g transform="translate(248,180)">
+    <rect width="238" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="238" height="3" rx="1.5" fill="#1967d2" />
+    <g transform="translate(18,22)">
+      <circle cx="10" cy="10" r="10" fill="#e3ecfd" stroke="#1967d2" />
+      <text x="10" y="14" font-size="11" font-weight="700" fill="#1967d2" text-anchor="middle">1</text>
+    </g>
+    <text x="48" y="40" font-size="14" font-weight="600" fill="#1f1f1f">PLANNER</text>
+    <text x="222" y="40" font-size="10" font-family='"Roboto Mono", monospace' fill="#80868b" text-anchor="end">agent</text>
+
+    <text x="18" y="72" font-size="12" fill="#3c4043">
+      <tspan x="18" dy="0">Designs the test suite for the</tspan>
+      <tspan x="18" dy="15">goal: scenarios, seeds, cohort</tspan>
+      <tspan x="18" dy="15">split, budget, taxonomy pin.</tspan>
+    </text>
+
+    <line x1="18" y1="132" x2="220" y2="132" stroke="#e8eaed" />
+    <text x="18" y="148" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">WRITES</text>
+    <text x="18" y="162" font-size="11" font-family='"Roboto Mono", monospace' fill="#1967d2">
+      plan.md · test_matrix.csv
+    </text>
+  </g>
+
+  <!-- 2. ROLLOUT -->
+  <g transform="translate(502,180)">
+    <rect width="238" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="238" height="3" rx="1.5" fill="#7b1fa2" />
+    <g transform="translate(18,22)">
+      <circle cx="10" cy="10" r="10" fill="#f3e5f9" stroke="#7b1fa2" />
+      <text x="10" y="14" font-size="11" font-weight="700" fill="#7b1fa2" text-anchor="middle">2</text>
+    </g>
+    <text x="48" y="40" font-size="14" font-weight="600" fill="#1f1f1f">ROLLOUT</text>
+    <text x="222" y="40" font-size="10" font-family='"Roboto Mono", monospace' fill="#80868b" text-anchor="end">host · 1 session</text>
+
+    <text x="18" y="72" font-size="12" fill="#3c4043">
+      <tspan x="18" dy="0">Runs every matrix row through</tspan>
+      <tspan x="18" dy="15">the sim adapter. GLFW pins this</tspan>
+      <tspan x="18" dy="15">phase to the host main thread.</tspan>
+    </text>
+
+    <line x1="18" y1="132" x2="220" y2="132" stroke="#e8eaed" />
+    <text x="18" y="148" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">WRITES</text>
+    <text x="18" y="162" font-size="11" font-family='"Roboto Mono", monospace' fill="#7b1fa2">
+      rollouts/&lt;id&gt;.mp4
+    </text>
+  </g>
+
+  <!-- 2.5 HUMAN LABEL -->
+  <g transform="translate(756,180)">
+    <rect width="238" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="238" height="3" rx="1.5" fill="#5f6368" />
+    <g transform="translate(18,22)">
+      <circle cx="10" cy="10" r="10" fill="#f4f5f7" stroke="#5f6368" />
+      <text x="10" y="14" font-size="10" font-weight="700" fill="#5f6368" text-anchor="middle">2.5</text>
+    </g>
+    <text x="56" y="40" font-size="14" font-weight="600" fill="#1f1f1f">LABEL</text>
+    <text x="222" y="40" font-size="10" font-family='"Roboto Mono", monospace' fill="#80868b" text-anchor="end">host · human</text>
+
+    <text x="18" y="72" font-size="12" fill="#3c4043">
+      <tspan x="18" dy="0">Human labels a stratified</tspan>
+      <tspan x="18" dy="15">subset of</tspan>
+      <tspan fill="#b06000" font-weight="600"> calibration </tspan>
+      <tspan>rollouts —</tspan>
+      <tspan x="18" dy="15">6–20 clips, 2-label taxonomy.</tspan>
+    </text>
+
+    <line x1="18" y1="132" x2="220" y2="132" stroke="#e8eaed" />
+    <text x="18" y="148" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">WRITES</text>
+    <text x="18" y="162" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+      human_labels.jsonl
+    </text>
+  </g>
+
+  <!-- 3. JUDGE -->
+  <g transform="translate(1010,180)">
+    <rect width="238" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="238" height="3" rx="1.5" fill="#b06000" />
+    <g transform="translate(18,22)">
+      <circle cx="10" cy="10" r="10" fill="#fef1d8" stroke="#b06000" />
+      <text x="10" y="14" font-size="11" font-weight="700" fill="#b06000" text-anchor="middle">3</text>
+    </g>
+    <text x="48" y="40" font-size="14" font-weight="600" fill="#1f1f1f">JUDGE</text>
+    <text x="222" y="40" font-size="10" font-family='"Roboto Mono", monospace' fill="#80868b" text-anchor="end">K parallel agents</text>
+
+    <text x="18" y="72" font-size="12" fill="#3c4043">
+      <tspan x="18" dy="0">One dense-frame CoT pass at</tspan>
+      <tspan x="18" dy="15">1920 px: taxonomy label · failure</tspan>
+      <tspan x="18" dy="15">frame · pixel point or abstain.</tspan>
+    </text>
+
+    <line x1="18" y1="132" x2="220" y2="132" stroke="#e8eaed" />
+    <text x="18" y="148" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">WRITES</text>
+    <text x="18" y="162" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+      findings.jsonl
+    </text>
+  </g>
+
+  <!-- 4. REPORT -->
+  <g transform="translate(1264,180)">
+    <rect width="238" height="170" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="238" height="3" rx="1.5" fill="#137333" />
+    <g transform="translate(18,22)">
+      <circle cx="10" cy="10" r="10" fill="#e6f4ea" stroke="#137333" />
+      <text x="10" y="14" font-size="11" font-weight="700" fill="#137333" text-anchor="middle">4</text>
+    </g>
+    <text x="48" y="40" font-size="14" font-weight="600" fill="#1f1f1f">REPORT</text>
+    <text x="222" y="40" font-size="10" font-family='"Roboto Mono", monospace' fill="#80868b" text-anchor="end">agent · 1 M ctx</text>
+
+    <text x="18" y="72" font-size="12" fill="#3c4043">
+      <tspan x="18" dy="0">Joins human labels × judge</tspan>
+      <tspan x="18" dy="15">findings, clusters the corpus,</tspan>
+      <tspan x="18" dy="15">scores judge calibration.</tspan>
+    </text>
+
+    <line x1="18" y1="132" x2="220" y2="132" stroke="#e8eaed" />
+    <text x="18" y="148" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">WRITES</text>
+    <text x="18" y="162" font-size="11" font-family='"Roboto Mono", monospace' fill="#137333">
+      report.md
+    </text>
+  </g>
+
+  <!-- Arrows between phase cards -->
+  <g stroke="#3c4043" stroke-width="1.5" fill="none" marker-end="url(#arrow)">
+    <path d="M 488 265 L 500 265" />
+    <path d="M 742 265 L 754 265" />
+    <path d="M 996 265 L 1008 265" />
+    <path d="M 1250 265 L 1262 265" />
+  </g>
+
+  <!-- OUTPUT chip, far right -->
+  <path d="M 1504 265 L 1538 265" stroke="#3c4043" stroke-width="1.5" fill="none" marker-end="url(#arrow)" />
+  <g transform="translate(1540,180)">
+    <rect width="100" height="170" rx="10" fill="#137333" />
+    <text x="50" y="38" font-size="10" font-weight="600" fill="#ffffff" letter-spacing="1.8" text-anchor="middle">OUTPUT</text>
+    <text x="50" y="92" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">report</text>
+    <text x="50" y="108" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">.md</text>
+    <text x="50" y="140" font-size="10" fill="#cbe2d4" text-anchor="middle">auditable</text>
+    <text x="50" y="154" font-size="10" fill="#cbe2d4" text-anchor="middle">markdown</text>
+  </g>
+
+  <!-- =========================================================
+       PANEL B · Two cohorts, one task, one judge
+       ========================================================= -->
+  <g>
+    <text x="40" y="410" font-size="10" font-weight="700" fill="#1f1f1f" letter-spacing="2.4">B</text>
+    <text x="60" y="410" font-size="11" font-weight="600" fill="#80868b" letter-spacing="1.8">
+      TWO COHORTS · ONE TASK · ONE JUDGE
+    </text>
+    <text x="420" y="410" font-size="11" fill="#80868b">
+      Shared: task (Lift), camera (frontview), judge prompt, human labeler — the invariance that lets calibration precision transfer to deployment.
+    </text>
+  </g>
+
+  <!-- Calibration cohort block -->
+  <g transform="translate(40,432)">
+    <rect width="790" height="166" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="4" height="166" rx="2" fill="#b06000" />
+
+    <!-- pill label -->
+    <g transform="translate(20,18)">
+      <rect width="108" height="22" rx="11" fill="#fef1d8" stroke="#f2c974" />
+      <text x="54" y="15" font-size="11" font-weight="600" fill="#b06000" text-anchor="middle" letter-spacing="1.2">CALIBRATION</text>
+    </g>
+    <text x="140" y="33" font-size="12" fill="#5f6368">known ground truth · measures the judge</text>
+
+    <!-- body, three columns -->
+    <g transform="translate(20,58)" font-size="12" fill="#3c4043">
+      <!-- col 1: policy -->
+      <g>
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">POLICY</text>
+        <text y="18" font-weight="600" fill="#1f1f1f">Scripted IK picker</text>
+        <text y="34" fill="#5f6368">Lift task · frontview</text>
+        <text y="58" font-size="11" fill="#5f6368">Failure knobs steer behavior</text>
+        <text y="72" font-size="11" fill="#5f6368">toward specific visual modes.</text>
+      </g>
+      <!-- col 2: knobs chips -->
+      <g transform="translate(240,0)">
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">FAILURE KNOBS</text>
+        <g transform="translate(0,10)" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+          <rect width="126" height="20" rx="4" fill="#fef1d8" stroke="#f2c974" />
+          <text x="8" y="14">action_noise ≥ .1</text>
+        </g>
+        <g transform="translate(134,10)" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+          <rect width="122" height="20" rx="4" fill="#fef1d8" stroke="#f2c974" />
+          <text x="8" y="14">premature_close</text>
+        </g>
+        <g transform="translate(0,38)" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+          <rect width="90" height="20" rx="4" fill="#fef1d8" stroke="#f2c974" />
+          <text x="8" y="14">angle_deg</text>
+        </g>
+        <g transform="translate(98,38)" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">
+          <rect width="118" height="20" rx="4" fill="#fef1d8" stroke="#f2c974" />
+          <text x="8" y="14">grip_scale &lt; .7</text>
+        </g>
+        <text y="78" font-size="11" fill="#5f6368">Knobs drive diversity, not GT.</text>
+      </g>
+      <!-- col 3: GT + sampler -->
+      <g transform="translate(500,0)">
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">GROUND TRUTH</text>
+        <text y="18" font-weight="600" fill="#1f1f1f">Human labels</text>
+        <text y="34" fill="#5f6368" font-family='"Roboto Mono", monospace' font-size="11">
+          clamp(10% · N, 6, 20)
+        </text>
+        <text y="50" fill="#5f6368" font-size="11">stratified ⅓ success + ⅔ fail</text>
+        <text y="72" font-size="11" fill="#5f6368">Judge stays blind. GT lands on</text>
+        <text y="86" font-size="11" fill="#5f6368">a sampled subset only.</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Deployment cohort block -->
+  <g transform="translate(850,432)">
+    <rect width="790" height="166" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="4" height="166" rx="2" fill="#1967d2" />
+
+    <g transform="translate(20,18)">
+      <rect width="108" height="22" rx="11" fill="#e3ecfd" stroke="#8ab4f8" />
+      <text x="54" y="15" font-size="11" font-weight="600" fill="#1967d2" text-anchor="middle" letter-spacing="1.2">DEPLOYMENT</text>
+    </g>
+    <text x="140" y="33" font-size="12" fill="#5f6368">unknown ground truth · the thing we actually ship</text>
+
+    <g transform="translate(20,58)" font-size="12" fill="#3c4043">
+      <!-- col 1: policy -->
+      <g>
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">POLICY</text>
+        <text y="18" font-weight="600" fill="#1f1f1f">Pretrained BC-RNN</text>
+        <text y="34" fill="#5f6368">robomimic · Lift · frontview</text>
+        <text y="58" font-size="11" fill="#5f6368">Real policy, real visuomotor</text>
+        <text y="72" font-size="11" fill="#5f6368">failure patterns.</text>
+      </g>
+      <!-- col 2: perturbation -->
+      <g transform="translate(240,0)">
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">ENV PERTURBATION</text>
+        <g transform="translate(0,10)" font-size="11" font-family='"Roboto Mono", monospace' fill="#1967d2">
+          <rect width="168" height="20" rx="4" fill="#e3ecfd" stroke="#8ab4f8" />
+          <text x="8" y="14">cube_xy_jitter_m = 0.15</text>
+        </g>
+        <text y="46" font-size="11" fill="#5f6368" font-family='"Roboto Mono", monospace'>100% @ 0.00 m</text>
+        <text y="62" font-size="11" fill="#5f6368" font-family='"Roboto Mono", monospace'>62% @ 0.15 m</text>
+        <text y="78" font-size="11" fill="#5f6368" font-family='"Roboto Mono", monospace'>12% @ 0.30 m</text>
+      </g>
+      <!-- col 3: GT + findings -->
+      <g transform="translate(500,0)">
+        <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.4">GROUND TRUTH</text>
+        <text y="18" font-weight="600" fill="#1f1f1f">None · estimated</text>
+        <text y="34" fill="#5f6368" font-size="11">judge labels each failure and</text>
+        <text y="50" fill="#5f6368" font-size="11">carries the calibration P chip.</text>
+        <text y="74" font-size="11" fill="#5f6368">Findings group into 3–6</text>
+        <text y="88" font-size="11" fill="#5f6368">clusters via 1 M-context read.</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       Flow: cohorts → rollout (into agent row above)
+       ========================================================= -->
+  <!-- Calibration → Rollout (enter the ROLLOUT card from its left side) -->
+  <path d="M 435 432 L 435 400 L 510 400 L 510 352" stroke="#b06000" stroke-width="1.3" fill="none" marker-end="url(#arrow-cal)" opacity="0.9" />
+  <!-- Deployment → Rollout (enter the ROLLOUT card from its right side) -->
+  <path d="M 1245 432 L 1245 400 L 732 400 L 732 352" stroke="#1967d2" stroke-width="1.3" fill="none" marker-end="url(#arrow-dep)" opacity="0.9" />
+
+  <!-- =========================================================
+       PANEL C · Eval the eval
+       ========================================================= -->
+  <g>
+    <text x="40" y="660" font-size="10" font-weight="700" fill="#1f1f1f" letter-spacing="2.4">C</text>
+    <text x="60" y="660" font-size="11" font-weight="600" fill="#80868b" letter-spacing="1.8">
+      EVAL THE EVAL · RESULTS
+    </text>
+    <text x="300" y="660" font-size="11" fill="#80868b">
+      Join human labels with judge findings to score the judge, then decorate deployment findings with per-label precision.
+    </text>
+  </g>
+
+  <!--
+    3 output cards across the bottom:
+      C1  Judge calibration (per-label P/R)   @ x=40,  w=500
+      C2  Deployment findings (clusters)       @ x=560, w=540
+      C3  Headline vs manual review            @ x=1120, w=520
+  -->
+
+  <!-- C1 — Judge calibration -->
+  <g transform="translate(40,680)">
+    <rect width="500" height="220" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <!-- header -->
+    <text x="20" y="28" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">C1 · JUDGE CALIBRATION</text>
+    <text x="20" y="52" font-size="15" font-weight="600" fill="#1f1f1f">Per-label precision on</text>
+    <text x="230" y="52" font-size="15" font-weight="600" fill="#b06000">calibration</text>
+    <text x="20" y="70" font-size="12" fill="#5f6368">human_labels ⋈ findings on the sampled subset</text>
+
+    <!-- table -->
+    <g transform="translate(20,88)" font-family='"Roboto Mono", monospace' font-size="11">
+      <text x="0" y="0" font-size="10" fill="#80868b" letter-spacing="1.4" font-family="Google Sans, sans-serif" font-weight="600">LABEL</text>
+      <text x="210" y="0" font-size="10" fill="#80868b" letter-spacing="1.4" font-family="Google Sans, sans-serif" font-weight="600">PRECISION</text>
+      <text x="330" y="0" font-size="10" fill="#80868b" letter-spacing="1.4" font-family="Google Sans, sans-serif" font-weight="600">RECALL</text>
+      <text x="430" y="0" font-size="10" fill="#80868b" letter-spacing="1.4" font-family="Google Sans, sans-serif" font-weight="600">N</text>
+
+      <!-- row 1 -->
+      <g transform="translate(0,20)">
+        <line x1="0" y1="-10" x2="460" y2="-10" stroke="#e8eaed" />
+        <text x="0" y="4" fill="#1f1f1f">missed_approach</text>
+        <rect x="210" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="210" y="-8" width="72" height="10" rx="2" fill="#137333" opacity="0.45" />
+        <text x="298" y="4" fill="#137333">.90</text>
+        <rect x="330" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="330" y="-8" width="68" height="10" rx="2" fill="#0b5fff" opacity="0.4" />
+        <text x="418" y="4" fill="#0b5fff">.85</text>
+        <text x="430" y="4" fill="#3c4043">8</text>
+      </g>
+
+      <!-- row 2 -->
+      <g transform="translate(0,40)">
+        <line x1="0" y1="-10" x2="460" y2="-10" stroke="#e8eaed" />
+        <text x="0" y="4" fill="#1f1f1f">failed_grip</text>
+        <rect x="210" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="210" y="-8" width="60" height="10" rx="2" fill="#0b5fff" opacity="0.4" />
+        <text x="298" y="4" fill="#0b5fff">.75</text>
+        <rect x="330" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="330" y="-8" width="64" height="10" rx="2" fill="#0b5fff" opacity="0.4" />
+        <text x="418" y="4" fill="#0b5fff">.80</text>
+        <text x="430" y="4" fill="#3c4043">5</text>
+      </g>
+
+      <!-- row 3 -->
+      <g transform="translate(0,60)">
+        <line x1="0" y1="-10" x2="460" y2="-10" stroke="#e8eaed" />
+        <text x="0" y="4" fill="#1f1f1f">other</text>
+        <rect x="210" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="210" y="-8" width="52" height="10" rx="2" fill="#b06000" opacity="0.45" />
+        <text x="298" y="4" fill="#b06000">.65</text>
+        <rect x="330" y="-8" width="80" height="10" rx="2" fill="#f4f5f7" />
+        <rect x="330" y="-8" width="50" height="10" rx="2" fill="#b06000" opacity="0.45" />
+        <text x="418" y="4" fill="#b06000">.63</text>
+        <text x="430" y="4" fill="#3c4043">2</text>
+      </g>
+    </g>
+
+    <!-- point abstention footnote -->
+    <g transform="translate(20,180)">
+      <rect width="460" height="28" rx="6" fill="#fef1d8" stroke="#f2c974" />
+      <text x="12" y="18" font-size="11" fill="#b06000">
+        <tspan font-weight="600">pixel point or abstain.</tspan>
+        <tspan fill="#3c4043"> no-contact failures get </tspan>
+        <tspan font-family='"Roboto Mono", monospace'>point = null</tspan>
+        <tspan fill="#3c4043"> — no red dot.</tspan>
+      </text>
+    </g>
+  </g>
+
+  <!-- C2 — Deployment findings -->
+  <g transform="translate(560,680)">
+    <rect width="540" height="220" rx="10" fill="#ffffff" stroke="#dadce0" />
+    <text x="20" y="28" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">C2 · DEPLOYMENT FINDINGS</text>
+    <text x="20" y="52" font-size="15" font-weight="600" fill="#1f1f1f">Clusters on</text>
+    <text x="122" y="52" font-size="15" font-weight="600" fill="#1967d2">deployment</text>
+    <text x="232" y="52" font-size="15" fill="#1f1f1f">· decorated with calibration P</text>
+    <text x="20" y="70" font-size="12" fill="#5f6368">whole-corpus clustering in a single 1 M-context read</text>
+
+    <!-- cluster 1 -->
+    <g transform="translate(20,88)">
+      <rect width="500" height="54" rx="8" fill="#fafafa" stroke="#e8eaed" />
+      <text x="14" y="20" font-size="11" font-family='"Roboto Mono", monospace' fill="#80868b">#1</text>
+      <text x="40" y="20" font-size="13" font-weight="600" fill="#1f1f1f">missed_approach</text>
+      <text x="14" y="40" font-size="11" fill="#5f6368">gripper skims past the cube — repeats at high jitter.</text>
+      <!-- count -->
+      <text x="486" y="20" font-size="13" font-weight="600" fill="#1f1f1f" text-anchor="end" font-family='"Roboto Mono", monospace'>7 / 16</text>
+      <!-- calibration chip -->
+      <g transform="translate(410,28)">
+        <rect width="76" height="20" rx="10" fill="#fef1d8" stroke="#f2c974" />
+        <text x="38" y="14" font-size="10" fill="#b06000" text-anchor="middle" letter-spacing="0.6">cal-P .90</text>
+      </g>
+    </g>
+
+    <!-- cluster 2 -->
+    <g transform="translate(20,150)">
+      <rect width="500" height="54" rx="8" fill="#fafafa" stroke="#e8eaed" />
+      <text x="14" y="20" font-size="11" font-family='"Roboto Mono", monospace' fill="#80868b">#2</text>
+      <text x="40" y="20" font-size="13" font-weight="600" fill="#1f1f1f">failed_grip</text>
+      <text x="14" y="40" font-size="11" fill="#5f6368">cube lifts, then slips between fingers on the carry.</text>
+      <text x="486" y="20" font-size="13" font-weight="600" fill="#1f1f1f" text-anchor="end" font-family='"Roboto Mono", monospace'>3 / 16</text>
+      <g transform="translate(410,28)">
+        <rect width="76" height="20" rx="10" fill="#fef1d8" stroke="#f2c974" />
+        <text x="38" y="14" font-size="10" fill="#b06000" text-anchor="middle" letter-spacing="0.6">cal-P .75</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- C3 — Headline -->
+  <g transform="translate(1120,680)">
+    <rect width="520" height="220" rx="10" fill="#0f172a" />
+    <text x="24" y="30" font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">C3 · HEADLINE vs. MANUAL REVIEW</text>
+
+    <!-- big number strip -->
+    <g transform="translate(24,46)" fill="#ffffff">
+      <text y="34" font-size="38" font-weight="600" font-family='"Roboto Mono", monospace'>$7.39</text>
+      <text y="58" font-size="11" fill="#80868b" letter-spacing="1.4">COST</text>
+
+      <g transform="translate(170,0)">
+        <line x1="0" y1="6" x2="0" y2="58" stroke="#1f2937" />
+        <text x="16" y="34" font-size="38" font-weight="600" font-family='"Roboto Mono", monospace'>5m 12s</text>
+        <text x="16" y="58" font-size="11" fill="#80868b" letter-spacing="1.4">WALL TIME</text>
+      </g>
+
+      <g transform="translate(370,0)">
+        <line x1="0" y1="6" x2="0" y2="58" stroke="#1f2937" />
+        <text x="16" y="34" font-size="38" font-weight="600" font-family='"Roboto Mono", monospace'>32</text>
+        <text x="16" y="58" font-size="11" fill="#80868b" letter-spacing="1.4">ROLLOUTS</text>
+      </g>
+    </g>
+
+    <!-- vs baseline comparisons -->
+    <g transform="translate(24,136)" font-family='"Roboto Mono", monospace' font-size="12">
+      <text y="0" fill="#80868b" font-family="Google Sans, sans-serif" font-size="11" letter-spacing="1.4">vs. MANUAL REVIEW ($75/hr · 3 min/rollout)</text>
+      <!-- cost row -->
+      <g transform="translate(0,22)">
+        <text fill="#80868b">cost</text>
+        <text x="60" fill="#9aa3ad" text-decoration="line-through">$120.00</text>
+        <text x="150" fill="#4ade80">→ $7.39</text>
+        <text x="260" fill="#4ade80">−94%</text>
+      </g>
+      <!-- time row -->
+      <g transform="translate(0,44)">
+        <text fill="#80868b">time</text>
+        <text x="60" fill="#9aa3ad" text-decoration="line-through">96 min</text>
+        <text x="150" fill="#4ade80">→ 5m 12s</text>
+        <text x="260" fill="#4ade80">−94%</text>
+      </g>
+    </g>
+
+    <!-- footnote -->
+    <text x="24" y="208" font-size="10" fill="#5f6368" font-style="italic">
+      Live numbers from a 2026-04-24 smoke (16 cal + 16 dep, Lift).
+    </text>
+  </g>
+
+  <!-- =========================================================
+       Footer caption
+       ========================================================= -->
+  <text x="40" y="942" font-size="11" fill="#80868b">
+    Colored rules mark phase ownership (planner · rollout · label · judge · report). Amber = calibration, blue = deployment — these are load-bearing throughout the UI.
+    The pipeline is measured by Panel C1; Panel C2 inherits that trust; Panel C3 is the headline the demo opens on.
+  </text>
+</svg>
+</div>
+</body>
+</html>

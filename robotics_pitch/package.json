@@ -1,0 +1,24 @@
+{
+  "name": "robotics-pitch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion explainer for Embodied Eval Orchestrator (40 s, 1920x1080).",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Hero ../docs/media/hero.mp4 --concurrency=2",
+    "render:poster": "remotion still src/index.ts Hero ../docs/media/hero.png --frame=30",
+    "render:gif": "remotion render src/index.ts Hero ../docs/media/hero.gif --codec=gif --width=960"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.355",
+    "@remotion/google-fonts": "4.0.355",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.355"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.5.4"
+  }
+}

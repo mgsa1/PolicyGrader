@@ -2,390 +2,426 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Embodied Eval Orchestrator — Pipeline</title>
+<title>PolicyGrader — Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; padding: 0; background: #0b1020; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; color: #e6edf7; }
-  .wrap { display: grid; place-items: center; padding: 24px; }
-  svg { width: min(100%, 1680px); height: auto; background: #0b1020; border-radius: 8px; }
-  .note { margin: 12px 0 0; font-size: 12px; color: #8895ad; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fafafa;
+    color: #1f1f1f;
+    font-family: "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "tnum" 1;
+  }
+  .wrap {
+    display: grid;
+    place-items: center;
+    padding: 24px 20px 48px;
+  }
+  svg {
+    width: min(100%, 1680px);
+    height: auto;
+    display: block;
+  }
+  .footnote {
+    max-width: 1680px;
+    margin: 12px auto 0;
+    font-size: 12px;
+    color: #80868b;
+    text-align: center;
+  }
+  .footnote a { color: #0b5fff; text-decoration: none; }
+  .footnote a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <div class="wrap">
 <!--
-  Aspect: 1680 x 960. Fits a 16:9 video slide at 1920x1080 with letterbox.
-  Palette: dark navy canvas; phase colors match src/ui/app.py PHASE_COLORS.
-    Planner  #60a5fa  blue
-    Rollout  #c084fc  purple
-    Judge    #fb923c  orange
-    Report   #4ade80  green
+  At-a-glance figure (simplified). For the exhaustive version: pipeline-detailed.html.
+
+  Goal: tell the story in ~5 seconds.
+    1. "Powered by Opus 4.7 · Managed Agents" — foregrounded as the hero chip.
+    2. Five-phase flow, one card each. The Judge card shows the ×K parallel
+       sessions explicitly (stacked card treatment).
+    3. Three Opus 4.7 surfaces pinned to the exact phase that uses them.
+    4. Headline: the "hours → minutes" number.
 -->
-<svg viewBox="0 0 1680 960" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Embodied Eval Orchestrator pipeline">
+<svg viewBox="0 0 1680 810" xmlns="http://www.w3.org/2000/svg"
+     role="img"
+     aria-label="PolicyGrader — five-phase pipeline powered by Opus 4.7 Managed Agents."
+     font-family='"Google Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif'>
   <defs>
-    <!-- Arrow marker -->
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#cfd6e4" />
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3c4043" />
     </marker>
-    <marker id="arrowDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7a94" />
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0b5fff" />
     </marker>
-    <!-- Soft glow for the agent band -->
-    <linearGradient id="agentBand" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"  stop-color="#1e2a4a" />
-      <stop offset="100%" stop-color="#172036" />
-    </linearGradient>
-    <linearGradient id="simBand" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"  stop-color="#11182b" />
-      <stop offset="100%" stop-color="#0e1526" />
-    </linearGradient>
-    <!-- Phase card backgrounds: tinted by phase color -->
-    <linearGradient id="bgPlanner" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"  stop-color="#1a2a4a" />
-      <stop offset="100%" stop-color="#142039" />
-    </linearGradient>
-    <linearGradient id="bgRollout" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"  stop-color="#2a1d44" />
-      <stop offset="100%" stop-color="#1e1633" />
-    </linearGradient>
-    <linearGradient id="bgJudge" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"  stop-color="#3a2410" />
-      <stop offset="100%" stop-color="#281a0e" />
-    </linearGradient>
-    <linearGradient id="bgReport" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"  stop-color="#12331f" />
-      <stop offset="100%" stop-color="#0f2418" />
-    </linearGradient>
-    <filter id="soft" x="-5%" y="-10%" width="110%" height="120%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="0.5" />
-    </filter>
   </defs>
 
-  <!-- ==========================================================
-       Title strip
-       ========================================================== -->
+  <!-- page -->
+  <rect x="0" y="0" width="1680" height="810" fill="#fafafa" />
+
+  <!-- =============================================================
+       TITLE + HERO OPUS CHIP
+       ============================================================= -->
   <g>
-    <text x="40" y="50" font-size="26" font-weight="700" fill="#e6edf7">Embodied Eval Orchestrator</text>
-    <text x="40" y="76" font-size="14" fill="#8ea0bf">
-      One Opus 4.7 Managed Agents session runs an end-to-end robot manipulation eval: plan → run in sim → watch videos → report.
+    <text x="40" y="44" font-size="11" font-weight="600" fill="#80868b" letter-spacing="2.4">
+      FIGURE · ARCHITECTURE AT A GLANCE
     </text>
-    <!-- Legend: Opus 4.7 capabilities exercised -->
-    <g transform="translate(1100,36)" font-size="11" fill="#a8b4cc">
-      <rect x="0" y="0" width="540" height="56" rx="6" fill="#111a30" stroke="#22304e" />
-      <text x="12" y="18" fill="#e6edf7" font-weight="600">Opus 4.7 surfaces exercised</text>
-      <text x="12" y="36">• 2576 px vision + pixel pointing</text>
-      <text x="200" y="36">• 1 M context for clustering</text>
-      <text x="380" y="36">• File-based memory</text>
-      <text x="12" y="50">• Managed Agents sessions</text>
-      <text x="200" y="50">• Two-pass visual forensics</text>
-      <text x="380" y="50">• Auto effort control</text>
-    </g>
+    <text x="40" y="82" font-size="30" font-weight="600" fill="#1f1f1f">
+      PolicyGrader
+      <tspan fill="#5f6368" font-weight="400"> — robot manipulation evals,</tspan>
+      <tspan fill="#0b5fff" font-weight="600"> hours → minutes.</tspan>
+    </text>
   </g>
 
-  <!-- ==========================================================
-       INPUT chip (left)
-       ========================================================== -->
-  <g transform="translate(40,150)">
-    <rect x="0" y="0" width="190" height="120" rx="10" fill="#111a30" stroke="#2a3a5c" />
-    <text x="16" y="28" font-size="12" fill="#8ea0bf" font-weight="600" letter-spacing="0.08em">INPUT</text>
-    <text x="16" y="56" font-size="14" fill="#e6edf7" font-weight="600">Evaluation goal</text>
-    <text x="16" y="78" font-size="12" fill="#cfd6e4" font-style="italic">&#8220;grade pick reliability</text>
-    <text x="16" y="94" font-size="12" fill="#cfd6e4" font-style="italic">across failure modes&#8221;</text>
-    <text x="16" y="112" font-size="11" fill="#8ea0bf">one line of English</text>
+  <!--
+    Powered-by chip (Anthropic-styled — dark ink + cream, 8-spoke asterisk mark).
+    Deliberately not Google blue / not a starburst.
+  -->
+  <g transform="translate(1200,28)">
+    <rect width="440" height="70" rx="10" fill="#181818" />
+    <!-- 8-spoke asterisk mark, drawn as 4 crossing line segments -->
+    <g transform="translate(40,35)" stroke="#f0eee6" stroke-width="2.4" stroke-linecap="round">
+      <line x1="0" y1="-15" x2="0" y2="15" />
+      <line x1="-15" y1="0" x2="15" y2="0" />
+      <line x1="-10.6" y1="-10.6" x2="10.6" y2="10.6" />
+      <line x1="-10.6" y1="10.6" x2="10.6" y2="-10.6" />
+    </g>
+    <text x="78" y="34" font-size="11" font-weight="600" fill="#a8a29e" letter-spacing="2.2">
+      POWERED BY
+    </text>
+    <text x="78" y="58" font-size="19" font-weight="600" fill="#f0eee6">
+      Opus 4.7 · Managed Agents
+    </text>
   </g>
 
-  <!-- arrow to planner -->
-  <path d="M 232 210 L 290 210" stroke="#cfd6e4" stroke-width="2" fill="none" marker-end="url(#arrow)" />
-
-  <!-- ==========================================================
-       AGENT BAND — frames the four phases to show it's ONE session
-       ========================================================== -->
-  <g>
-    <rect x="290" y="115" width="1320" height="300" rx="14" fill="url(#agentBand)" stroke="#2a3a5c" />
-    <text x="310" y="138" font-size="12" fill="#8ea0bf" font-weight="600" letter-spacing="0.10em">ONE MANAGED AGENTS SESSION · Opus 4.7</text>
-    <text x="310" y="156" font-size="11" fill="#6f7e9a">
-      phase markers advance the same session; all artifacts persist to /memories/ between phases
+  <!-- =============================================================
+       PIPELINE BAND · one session, five phases
+       ============================================================= -->
+  <!-- session band background -->
+  <g transform="translate(40,130)">
+    <rect width="1600" height="300" rx="16" fill="#ffffff" stroke="#dadce0" />
+    <!-- session eyebrow -->
+    <text x="24" y="30" font-size="11" font-weight="600" fill="#0b5fff" letter-spacing="2.4">
+      ONE MANAGED AGENTS PIPELINE
     </text>
-    <!-- /memories badge -->
-    <g transform="translate(1430,128)">
-      <rect x="0" y="0" width="170" height="38" rx="8" fill="#0d1528" stroke="#3a4a70" />
-      <text x="12" y="16" font-size="10" fill="#8ea0bf" font-weight="600" letter-spacing="0.08em">FILE-BASED MEMORY</text>
-      <text x="12" y="30" font-size="12" fill="#e6edf7" font-family="ui-monospace, Menlo, monospace">/memories/</text>
-    </g>
+    <text x="260" y="30" font-size="11" fill="#80868b">
+      English goal in · auditable markdown report out.
+    </text>
   </g>
 
-  <!-- ==========================================================
-       PHASE CARDS
-       ========================================================== -->
-  <!-- positions: x 310, 630, 950, 1270  (width 300, gap 20) -->
+  <!--
+    5 phases across the band. Each card is 260 wide, gap 32.
+    Total: 5·260 + 4·32 = 1428. Band inner width: 1600 − 48 (margins) = 1552.
+    Horizontal padding: (1552 − 1428)/2 = 62. Band starts at x=40 → inner start = 40+24+62 = 126.
+    Row positions (card tops): y = 184. Height 190.
+  -->
 
-  <!-- 1. PLANNER -->
-  <g transform="translate(310,180)">
-    <rect width="300" height="220" rx="12" fill="url(#bgPlanner)" stroke="#60a5fa" stroke-width="1.5" />
-    <rect x="0" y="0" width="300" height="34" rx="12" fill="#60a5fa" opacity="0.18" />
-    <circle cx="22" cy="17" r="9" fill="#60a5fa" />
-    <text x="22" y="21" font-size="11" font-weight="700" fill="#0b1020" text-anchor="middle">1</text>
-    <text x="40" y="22" font-size="14" font-weight="700" fill="#e6edf7">PLANNER</text>
-    <text x="230" y="22" font-size="10" fill="#8ea0bf" text-anchor="end">think + write</text>
-
-    <text x="16" y="60" font-size="12" fill="#cfd6e4">
-      <tspan x="16" dy="0">Designs a test suite for</tspan>
-      <tspan x="16" dy="16">the stated goal. Picks</tspan>
-      <tspan x="16" dy="16">scenarios, seeds, injected</tspan>
-      <tspan x="16" dy="16">failures, success criteria.</tspan>
+  <!-- INPUT: small label at left edge of band -->
+  <g transform="translate(56,226)">
+    <text font-size="10" font-weight="600" fill="#80868b" letter-spacing="1.8">GOAL</text>
+    <text y="20" font-size="12" fill="#3c4043" font-style="italic" font-family='"Google Sans", sans-serif'>
+      <tspan x="0" dy="0">“grade pick</tspan>
+      <tspan x="0" dy="16">reliability on</tspan>
+      <tspan x="0" dy="16">the Lift task.”</tspan>
     </text>
-    <!-- artifacts -->
-    <g transform="translate(16,140)" font-family="ui-monospace, Menlo, monospace" font-size="11">
-      <text fill="#8ea0bf" font-family="-apple-system, sans-serif" font-size="10" letter-spacing="0.08em">WRITES</text>
-      <text x="0" y="18" fill="#9dc4ff">plan.md</text>
-      <text x="0" y="34" fill="#9dc4ff">test_matrix.csv</text>
-      <text x="0" y="50" fill="#9dc4ff">taxonomy.md</text>
-      <text x="0" y="72" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">
-        rows mix clean + injected;
-      </text>
-      <text x="0" y="85" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">
-        expected_label is the truth
-      </text>
+  </g>
+
+  <!-- arrow INPUT → PLAN -->
+  <path d="M 130 268 L 150 268" stroke="#3c4043" stroke-width="1.5" fill="none" marker-end="url(#arrow)" />
+
+  <!-- positions (x): 156, 448, 740, 1032, 1324 -->
+
+  <!-- 1. PLAN -->
+  <g transform="translate(156,188)">
+    <rect width="260" height="180" rx="12" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="260" height="4" rx="2" fill="#1967d2" />
+    <g transform="translate(20,22)">
+      <circle cx="12" cy="12" r="12" fill="#e3ecfd" stroke="#1967d2" />
+      <text x="12" y="16" font-size="12" font-weight="700" fill="#1967d2" text-anchor="middle">1</text>
     </g>
+    <text x="54" y="42" font-size="15" font-weight="600" fill="#1f1f1f">PLAN</text>
+    <text x="20" y="78" font-size="13" fill="#3c4043">
+      <tspan x="20" dy="0">Design the test suite:</tspan>
+      <tspan x="20" dy="18">scenarios, seeds, budget,</tspan>
+      <tspan x="20" dy="18">2-label taxonomy.</tspan>
+    </text>
+    <line x1="20" y1="142" x2="240" y2="142" stroke="#e8eaed" />
+    <text x="20" y="160" font-size="11" font-family='"Roboto Mono", monospace' fill="#1967d2">plan.md</text>
   </g>
 
   <!-- 2. ROLLOUT -->
-  <g transform="translate(630,180)">
-    <rect width="300" height="220" rx="12" fill="url(#bgRollout)" stroke="#c084fc" stroke-width="1.5" />
-    <rect x="0" y="0" width="300" height="34" rx="12" fill="#c084fc" opacity="0.18" />
-    <circle cx="22" cy="17" r="9" fill="#c084fc" />
-    <text x="22" y="21" font-size="11" font-weight="700" fill="#0b1020" text-anchor="middle">2</text>
-    <text x="40" y="22" font-size="14" font-weight="700" fill="#e6edf7">ROLLOUT</text>
-    <text x="230" y="22" font-size="10" fill="#8ea0bf" text-anchor="end">tool: rollout()</text>
-
-    <text x="16" y="60" font-size="12" fill="#cfd6e4">
-      <tspan x="16" dy="0">Calls the sim adapter once</tspan>
-      <tspan x="16" dy="16">per matrix row. Each run</tspan>
-      <tspan x="16" dy="16">records an mp4 + outcome.</tspan>
+  <g transform="translate(448,188)">
+    <rect width="260" height="180" rx="12" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="260" height="4" rx="2" fill="#7b1fa2" />
+    <g transform="translate(20,22)">
+      <circle cx="12" cy="12" r="12" fill="#f3e5f9" stroke="#7b1fa2" />
+      <text x="12" y="16" font-size="12" font-weight="700" fill="#7b1fa2" text-anchor="middle">2</text>
+    </g>
+    <text x="54" y="42" font-size="15" font-weight="600" fill="#1f1f1f">ROLLOUT</text>
+    <text x="20" y="78" font-size="13" fill="#3c4043">
+      <tspan x="20" dy="0">Run every scenario in</tspan>
+      <tspan x="20" dy="18">sim.</tspan>
+      <tspan fill="#b06000" font-weight="600"> Calibration</tspan>
+      <tspan fill="#3c4043"> +</tspan>
+      <tspan x="20" dy="18" fill="#1967d2" font-weight="600">deployment</tspan>
+      <tspan fill="#3c4043"> cohorts on Lift.</tspan>
     </text>
-
-    <g transform="translate(16,128)" font-family="ui-monospace, Menlo, monospace" font-size="11">
-      <text fill="#8ea0bf" font-family="-apple-system, sans-serif" font-size="10" letter-spacing="0.08em">WRITES</text>
-      <text x="0" y="18" fill="#e4bdff">rollouts/&lt;id&gt;.mp4</text>
-      <text x="0" y="34" fill="#e4bdff">rollouts/results.jsonl</text>
-      <text x="0" y="56" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">
-        each line: success, steps,
-      </text>
-      <text x="0" y="69" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">
-        video_path, ground_truth
-      </text>
-    </g>
+    <line x1="20" y1="142" x2="240" y2="142" stroke="#e8eaed" />
+    <text x="20" y="160" font-size="11" font-family='"Roboto Mono", monospace' fill="#7b1fa2">rollouts/*.mp4</text>
   </g>
 
-  <!-- 3. JUDGE -->
-  <g transform="translate(950,180)">
-    <rect width="300" height="220" rx="12" fill="url(#bgJudge)" stroke="#fb923c" stroke-width="1.5" />
-    <rect x="0" y="0" width="300" height="34" rx="12" fill="#fb923c" opacity="0.18" />
-    <circle cx="22" cy="17" r="9" fill="#fb923c" />
-    <text x="22" y="21" font-size="11" font-weight="700" fill="#0b1020" text-anchor="middle">3</text>
-    <text x="40" y="22" font-size="14" font-weight="700" fill="#e6edf7">VISION JUDGE</text>
-    <text x="275" y="22" font-size="10" fill="#8ea0bf" text-anchor="end">tools: coarse, fine</text>
-
-    <!-- two-pass inline sub-diagram -->
-    <g transform="translate(14,50)" font-size="11">
-      <rect x="0" y="0" width="130" height="74" rx="8" fill="#1e1405" stroke="#6a4218" />
-      <text x="10" y="15" font-size="10" fill="#fb923c" font-weight="700">PASS 1 · coarse</text>
-      <text x="10" y="32" fill="#ffd9b3">14 frames · 768 px</text>
-      <text x="10" y="48" fill="#ffd9b3">binary verdict</text>
-      <text x="10" y="64" fill="#ffd9b3">+ failure range</text>
-
-      <!-- arrow between -->
-      <path d="M 134 37 L 156 37" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrow)" />
-
-      <rect x="158" y="0" width="116" height="74" rx="8" fill="#1e1405" stroke="#6a4218" />
-      <text x="168" y="15" font-size="10" fill="#fb923c" font-weight="700">PASS 2 · fine</text>
-      <text x="168" y="32" fill="#ffd9b3">10 frames · 2576 px</text>
-      <text x="168" y="48" fill="#ffd9b3">taxonomy label</text>
-      <text x="168" y="64" fill="#ffd9b3">+ pixel point</text>
+  <!-- 2.5 LABEL -->
+  <g transform="translate(740,188)">
+    <rect width="260" height="180" rx="12" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="260" height="4" rx="2" fill="#5f6368" />
+    <g transform="translate(20,22)">
+      <circle cx="12" cy="12" r="12" fill="#f4f5f7" stroke="#5f6368" />
+      <text x="12" y="16" font-size="11" font-weight="700" fill="#5f6368" text-anchor="middle">2.5</text>
     </g>
-
-    <text x="16" y="145" font-size="10" fill="#8ea0bf">Pass 2 runs only on Pass-1 failures — cheap filter, expensive forensic.</text>
-
-    <g transform="translate(16,162)" font-family="ui-monospace, Menlo, monospace" font-size="11">
-      <text fill="#8ea0bf" font-family="-apple-system, sans-serif" font-size="10" letter-spacing="0.08em">WRITES</text>
-      <text x="0" y="18" fill="#ffc896">findings.jsonl</text>
-      <text x="0" y="38" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">
-        judge is blind to ground truth
-      </text>
-    </g>
+    <text x="54" y="42" font-size="15" font-weight="600" fill="#1f1f1f">LABEL</text>
+    <text x="20" y="78" font-size="13" fill="#3c4043">
+      <tspan x="20" dy="0">Human labels 6–20</tspan>
+      <tspan x="20" dy="18">calibration clips — the</tspan>
+      <tspan x="20" dy="18">only ground truth.</tspan>
+    </text>
+    <line x1="20" y1="142" x2="240" y2="142" stroke="#e8eaed" />
+    <text x="20" y="160" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">human_labels.jsonl</text>
   </g>
+
+  <!--
+    3. JUDGE — K parallel Managed Agents sessions.
+    Visual: fan-in of K blue arrows from LABEL spreads into K stacked session cards;
+    each back card's header strip peeks out on the right; prominent "K AGENTS" pill
+    on the front card.
+  -->
+
+  <!-- Fan-in: 4 arrows diverging from LABEL's right edge at (1000, 278) into 4 session cards -->
+  <g stroke="#0b5fff" stroke-width="1.4" fill="none" marker-end="url(#arrow-blue)" opacity="0.9">
+    <path d="M 1000 278 L 1026 212" />
+    <path d="M 1000 278 L 1024 236" />
+    <path d="M 1000 278 L 1024 260" />
+    <path d="M 1000 278 L 1026 284" />
+  </g>
+
+  <g transform="translate(1032,188)">
+    <!-- Session 4 (back-most): only right & bottom peek strips visible -->
+    <rect x="24" y="24" width="260" height="180" rx="12" fill="#fffaef" stroke="#f2c974" />
+    <rect x="24" y="24" width="260" height="4" rx="2" fill="#b06000" />
+
+    <!-- Session 3 -->
+    <rect x="16" y="16" width="260" height="180" rx="12" fill="#fffaef" stroke="#f2c974" />
+    <rect x="16" y="16" width="260" height="4" rx="2" fill="#b06000" />
+
+    <!-- Session 2 -->
+    <rect x="8" y="8" width="260" height="180" rx="12" fill="#fffaef" stroke="#f2c974" />
+    <rect x="8" y="8" width="260" height="4" rx="2" fill="#b06000" />
+
+    <!-- Session 1 (front card, full content) -->
+    <rect width="260" height="180" rx="12" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="260" height="4" rx="2" fill="#b06000" />
+
+    <g transform="translate(20,22)">
+      <circle cx="12" cy="12" r="12" fill="#fef1d8" stroke="#b06000" />
+      <text x="12" y="16" font-size="12" font-weight="700" fill="#b06000" text-anchor="middle">3</text>
+    </g>
+    <text x="54" y="42" font-size="15" font-weight="600" fill="#1f1f1f">JUDGE</text>
+
+    <!-- Prominent K-parallel-agents pill on the front card -->
+    <g transform="translate(110,22)">
+      <rect width="132" height="24" rx="12" fill="#0b5fff" />
+      <circle cx="14" cy="12" r="4" fill="#ffffff" />
+      <circle cx="24" cy="12" r="4" fill="#ffffff" opacity="0.8" />
+      <circle cx="34" cy="12" r="4" fill="#ffffff" opacity="0.55" />
+      <circle cx="44" cy="12" r="4" fill="#ffffff" opacity="0.35" />
+      <text x="60" y="16" font-size="11" font-weight="700" fill="#ffffff" font-family='"Roboto Mono", monospace' letter-spacing="0.6">K AGENTS</text>
+    </g>
+
+    <text x="20" y="80" font-size="13" fill="#3c4043">
+      <tspan x="20" dy="0">K Managed Agents run in</tspan>
+      <tspan x="20" dy="18">parallel — each names the</tspan>
+      <tspan x="20" dy="18">failure frame + points at it.</tspan>
+    </text>
+    <line x1="20" y1="144" x2="240" y2="144" stroke="#e8eaed" />
+    <text x="20" y="164" font-size="11" font-family='"Roboto Mono", monospace' fill="#b06000">findings.jsonl</text>
+  </g>
+
 
   <!-- 4. REPORT -->
-  <g transform="translate(1270,180)">
-    <rect width="320" height="220" rx="12" fill="url(#bgReport)" stroke="#4ade80" stroke-width="1.5" />
-    <rect x="0" y="0" width="320" height="34" rx="12" fill="#4ade80" opacity="0.18" />
-    <circle cx="22" cy="17" r="9" fill="#4ade80" />
-    <text x="22" y="21" font-size="11" font-weight="700" fill="#0b1020" text-anchor="middle">4</text>
-    <text x="40" y="22" font-size="14" font-weight="700" fill="#e6edf7">REPORT</text>
-    <text x="300" y="22" font-size="10" fill="#8ea0bf" text-anchor="end">1 M context · no k-means</text>
-
-    <text x="16" y="60" font-size="12" fill="#cfd6e4">
-      <tspan x="16" dy="0">Loads the full matrix +</tspan>
-      <tspan x="16" dy="16">findings into one context</tspan>
-      <tspan x="16" dy="16">window, clusters themes,</tspan>
-      <tspan x="16" dy="16">computes precision/recall</tspan>
-      <tspan x="16" dy="16">vs injected ground truth.</tspan>
-    </text>
-
-    <g transform="translate(16,154)" font-family="ui-monospace, Menlo, monospace" font-size="11">
-      <text fill="#8ea0bf" font-family="-apple-system, sans-serif" font-size="10" letter-spacing="0.08em">WRITES</text>
-      <text x="0" y="18" fill="#b6f0c4">report.md</text>
-      <text x="0" y="38" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">summary · clusters · confusion</text>
-      <text x="0" y="51" font-family="-apple-system, sans-serif" font-size="10" fill="#6f7e9a">matrix · pipeline vs. baseline</text>
+  <g transform="translate(1356,188)">
+    <rect width="260" height="180" rx="12" fill="#ffffff" stroke="#dadce0" />
+    <rect x="0" y="0" width="260" height="4" rx="2" fill="#137333" />
+    <g transform="translate(20,22)">
+      <circle cx="12" cy="12" r="12" fill="#e6f4ea" stroke="#137333" />
+      <text x="12" y="16" font-size="12" font-weight="700" fill="#137333" text-anchor="middle">4</text>
     </g>
+    <text x="54" y="42" font-size="15" font-weight="600" fill="#1f1f1f">REPORT</text>
+    <text x="20" y="78" font-size="13" fill="#3c4043">
+      <tspan x="20" dy="0">Cluster the whole corpus,</tspan>
+      <tspan x="20" dy="18">score the judge, decorate</tspan>
+      <tspan x="20" dy="18">findings with trust chips.</tspan>
+    </text>
+    <line x1="20" y1="142" x2="240" y2="142" stroke="#e8eaed" />
+    <text x="20" y="160" font-size="11" font-family='"Roboto Mono", monospace' fill="#137333">report.md</text>
   </g>
 
-  <!-- arrows between phases -->
-  <g stroke="#cfd6e4" stroke-width="2" fill="none" marker-end="url(#arrow)">
-    <path d="M 614 290 L 628 290" />
-    <path d="M 934 290 L 948 290" />
-    <path d="M 1254 290 L 1268 290" />
+  <!-- arrows between phase cards (y = 268 centers). LABEL → JUDGE is drawn as a fan-in above. -->
+  <g stroke="#3c4043" stroke-width="1.5" fill="none" marker-end="url(#arrow)">
+    <path d="M 418 278 L 446 278" />
+    <path d="M 710 278 L 738 278" />
+    <!-- JUDGE → REPORT: starts past the Judge stack's right edge (x=1316) so it doesn't cut through the back cards -->
+    <path d="M 1320 278 L 1354 278" />
   </g>
 
-  <!-- ==========================================================
-       SIM SUBSTRATE (bottom band)
-       ========================================================== -->
+  <!-- =============================================================
+       OPUS 4.7 CAPABILITY CALLOUTS — tethered to the phase using them
+       ============================================================= -->
+
+  <!-- Callout B: 2576 px vision + pointing → Judge (tether from below) -->
   <g>
-    <rect x="290" y="480" width="1320" height="220" rx="14" fill="url(#simBand)" stroke="#1f2b46" />
-    <text x="310" y="504" font-size="12" fill="#8ea0bf" font-weight="600" letter-spacing="0.10em">SIM SUBSTRATE · MuJoCo + robosuite</text>
-    <text x="310" y="522" font-size="11" fill="#6f7e9a">
-      The orchestrator only talks to this layer through src/sim/adapter.py — run_rollout(config) → RolloutResult.
+    <path d="M 1162 430 L 1162 410 L 1162 368"
+          stroke="#0b5fff" stroke-width="1" stroke-dasharray="3 3" fill="none" />
+    <g transform="translate(980,440)">
+      <rect width="300" height="38" rx="19" fill="#ffffff" stroke="#8ab4f8" />
+      <circle cx="20" cy="19" r="6" fill="#0b5fff" />
+      <text x="36" y="23" font-size="12" fill="#1f1f1f" font-weight="500">
+        <tspan font-weight="600" fill="#0b5fff">2576 px + pointing</tspan>
+        <tspan fill="#3c4043"> · or abstain</tspan>
+      </text>
+    </g>
+  </g>
+
+  <!-- Callout C: 1 M context → Report (tether from below) -->
+  <g>
+    <path d="M 1486 430 L 1486 410 L 1486 368"
+          stroke="#0b5fff" stroke-width="1" stroke-dasharray="3 3" fill="none" />
+    <g transform="translate(1336,440)">
+      <rect width="300" height="38" rx="19" fill="#ffffff" stroke="#8ab4f8" />
+      <circle cx="20" cy="19" r="6" fill="#0b5fff" />
+      <text x="36" y="23" font-size="12" fill="#1f1f1f" font-weight="500">
+        <tspan font-weight="600" fill="#0b5fff">1 M context</tspan>
+        <tspan fill="#3c4043"> · 1-call clustering</tspan>
+      </text>
+    </g>
+  </g>
+
+  <!--
+    Callout: REPORT writes the compact savings table on the right.
+    Solid dark connector from Report's bottom-right corner, routed right around the
+    1 M context pill, landing on the top of the savings callout box.
+  -->
+  <g>
+    <path d="M 1556 368 L 1556 432 L 1300 432 L 1300 506"
+          stroke="#3c4043" stroke-width="1.5" fill="none"
+          marker-end="url(#arrow)" />
+    <!-- "report.md" tag sitting just above the horizontal leg of the connector -->
+    <g transform="translate(1392,418)">
+      <rect width="80" height="20" rx="4" fill="#ffffff" stroke="#dadce0" />
+      <text x="40" y="14" font-size="11" font-family='"Roboto Mono", monospace'
+            fill="#3c4043" text-anchor="middle" font-weight="600">report.md</text>
+    </g>
+  </g>
+
+  <!-- =============================================================
+       SAVINGS CALLOUT · "THIS RUN VS MANUAL REVIEW"
+       Compact 3×2 card on the right, sized to feel like a callout box
+       attached to the Report phase. Same Overview-page styling, smaller scale.
+       ============================================================= -->
+  <g transform="translate(1140,510)">
+    <!-- card outer -->
+    <rect width="500" height="252" rx="10" fill="#ffffff" stroke="#dadce0" />
+
+    <!-- eyebrow -->
+    <text x="20" y="32" font-size="10" font-weight="600" fill="#5f6368" letter-spacing="2.2"
+          font-family='"Roboto Mono", monospace'>
+      THIS RUN VS MANUAL REVIEW
     </text>
 
-    <!-- Pretrained policy block -->
-    <g transform="translate(330,540)">
-      <rect width="360" height="140" rx="10" fill="#0f1729" stroke="#2a3a5c" />
-      <text x="16" y="22" font-size="12" font-weight="700" fill="#e6edf7">Pretrained BC-RNN</text>
-      <text x="16" y="40" font-size="11" fill="#9fb0cf">robomimic v0.3 · Lift + cube_xy_jitter</text>
-      <text x="16" y="62" font-size="11" fill="#9fb0cf">100% @ 0 m → ~38% fail @ 0.15 m jitter</text>
-      <text x="16" y="86" font-size="10" fill="#6f7e9a">Real policy under environmental stress.</text>
-      <text x="16" y="99" font-size="10" fill="#6f7e9a">Calibration P decorates these findings.</text>
-      <text x="16" y="125" font-size="10" fill="#8ea0bf" font-style="italic">“grade the shipped model”</text>
+    <!-- header underline + 2 vertical column dividers + mid-row hairline -->
+    <line x1="20" y1="46" x2="480" y2="46" stroke="#e8eaed" />
+    <line x1="173" y1="46" x2="173" y2="232" stroke="#e8eaed" />
+    <line x1="327" y1="46" x2="327" y2="232" stroke="#e8eaed" />
+    <line x1="20" y1="140" x2="480" y2="140" stroke="#e8eaed" />
+
+    <!-- ───────── ROW 1 · the run vs the baseline ───────── -->
+
+    <!-- COST -->
+    <g transform="translate(36,62)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>COST</text>
+      <text y="38" font-size="26" font-weight="600" fill="#1f1f1f"
+            font-family='"Google Sans", sans-serif'>$1,200</text>
+      <text y="62" font-size="11" fill="#5f6368">
+        <tspan text-decoration="line-through">$7,500</tspan><tspan>  </tspan><tspan fill="#137333" font-weight="600">−84%</tspan>
+      </text>
     </g>
 
-    <!-- Scripted policy block with injected failures = ground truth -->
-    <g transform="translate(720,540)">
-      <rect width="460" height="140" rx="10" fill="#0f1729" stroke="#2a3a5c" />
-      <text x="16" y="22" font-size="12" font-weight="700" fill="#e6edf7">Scripted IK picker · <tspan fill="#ffd27a">injected failures</tspan></text>
-      <text x="16" y="40" font-size="11" fill="#9fb0cf">Lift env · 4 failure knobs → known taxonomy labels</text>
-
-      <!-- Failure knobs as chips -->
-      <g transform="translate(16,52)" font-size="10">
-        <g>
-          <rect width="108" height="22" rx="6" fill="#2a1d44" stroke="#6a4a9c" />
-          <text x="8" y="15" fill="#e4bdff">action_noise ≥ .1</text>
-        </g>
-        <g transform="translate(116,0)">
-          <rect width="108" height="22" rx="6" fill="#2a1d44" stroke="#6a4a9c" />
-          <text x="8" y="15" fill="#e4bdff">premature_close</text>
-        </g>
-        <g transform="translate(232,0)">
-          <rect width="100" height="22" rx="6" fill="#2a1d44" stroke="#6a4a9c" />
-          <text x="8" y="15" fill="#e4bdff">angle_offset</text>
-        </g>
-        <g transform="translate(340,0)">
-          <rect width="104" height="22" rx="6" fill="#2a1d44" stroke="#6a4a9c" />
-          <text x="8" y="15" fill="#e4bdff">grip_scale &lt; .7</text>
-        </g>
-      </g>
-
-      <text x="16" y="98" font-size="10" fill="#6f7e9a">Knobs steer the policy toward missed_approach,</text>
-      <text x="16" y="111" font-size="10" fill="#6f7e9a">gripper_slipped, or gripper_not_open (3 labels).</text>
-      <text x="16" y="128" font-size="10" fill="#ffd27a" font-style="italic">Human labels on a sampled subset — that's the calibration GT.</text>
+    <!-- WALL TIME -->
+    <g transform="translate(189,62)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>WALL TIME</text>
+      <text y="38" font-size="26" font-weight="600" fill="#1f1f1f"
+            font-family='"Google Sans", sans-serif'>5h 30m</text>
+      <text y="62" font-size="11" fill="#5f6368">
+        <tspan text-decoration="line-through">100h</tspan><tspan>  </tspan><tspan fill="#137333" font-weight="600">−94%</tspan>
+      </text>
     </g>
 
-    <!-- Adapter chip -->
-    <g transform="translate(1210,540)">
-      <rect width="360" height="140" rx="10" fill="#0f1729" stroke="#2a3a5c" />
-      <text x="16" y="22" font-size="12" font-weight="700" fill="#e6edf7">src/sim/adapter.py</text>
-      <text x="16" y="40" font-size="11" fill="#9fb0cf">run_rollout(RolloutConfig) → RolloutResult</text>
-      <text x="16" y="62" font-size="10" fill="#6f7e9a">Single boundary. Orchestrator never imports</text>
-      <text x="16" y="75" font-size="10" fill="#6f7e9a">MuJoCo / robosuite — so the same pipeline</text>
-      <text x="16" y="88" font-size="10" fill="#6f7e9a">could instead read real robot logs (mp4).</text>
-      <text x="16" y="112" font-size="10" fill="#8ea0bf">→ writes rollouts/&lt;id&gt;.mp4</text>
-      <text x="16" y="126" font-size="10" fill="#8ea0bf">→ returns success + ground_truth_label</text>
-    </g>
-  </g>
-
-  <!-- arrow from Rollout card down into sim adapter -->
-  <g stroke="#6b7a94" stroke-width="1.8" fill="none" marker-end="url(#arrowDim)" stroke-dasharray="4 4">
-    <path d="M 780 400 L 780 460 L 1310 460 L 1310 538" />
-  </g>
-  <text x="1020" y="454" font-size="10" fill="#6b7a94">custom tool: rollout() → adapter</text>
-
-  <!-- arrow from adapter (mp4) up into Judge card -->
-  <g stroke="#6b7a94" stroke-width="1.8" fill="none" marker-end="url(#arrowDim)" stroke-dasharray="4 4">
-    <path d="M 1220 538 L 1220 440 L 1100 440 L 1100 402" />
-  </g>
-  <text x="1120" y="432" font-size="10" fill="#6b7a94">mp4 → coarse / fine</text>
-
-  <!-- ==========================================================
-       OUTPUT strip (right)
-       ========================================================== -->
-  <g transform="translate(40,740)">
-    <rect width="1600" height="185" rx="14" fill="#0f1729" stroke="#2a3a5c" />
-    <text x="20" y="26" font-size="12" fill="#8ea0bf" font-weight="600" letter-spacing="0.10em">OUTPUTS</text>
-
-    <!-- report.md -->
-    <g transform="translate(20,42)">
-      <rect width="360" height="120" rx="10" fill="#0b1425" stroke="#264033" />
-      <text x="16" y="22" font-size="13" font-weight="700" fill="#b6f0c4">report.md</text>
-      <text x="16" y="42" font-size="11" fill="#cfd6e4">Summary · Failure Clusters</text>
-      <text x="16" y="58" font-size="11" fill="#cfd6e4">Per-label confusion · Methodology</text>
-      <text x="16" y="82" font-size="10" fill="#8ea0bf">auditable markdown; the deliverable</text>
-      <text x="16" y="96" font-size="10" fill="#8ea0bf">a human would otherwise write by hand</text>
+    <!-- SCENARIOS -->
+    <g transform="translate(343,62)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>SCENARIOS</text>
+      <text y="38" font-size="26" font-weight="600" fill="#1f1f1f"
+            font-family='"Google Sans", sans-serif'>2,000</text>
+      <text y="62" font-size="11" fill="#5f6368">
+        <tspan fill="#b06000" font-weight="500">1,200 cal</tspan><tspan> · </tspan><tspan fill="#1967d2" font-weight="500">800 dep</tspan>
+      </text>
     </g>
 
-    <!-- Precision/recall -->
-    <g transform="translate(400,42)">
-      <rect width="360" height="120" rx="10" fill="#0b1425" stroke="#3a2a10" />
-      <text x="16" y="22" font-size="13" font-weight="700" fill="#ffc896">Measured judge quality</text>
-      <text x="16" y="44" font-size="11" fill="#cfd6e4">precision &amp; recall vs injected ground truth</text>
-      <text x="16" y="64" font-size="11" fill="#cfd6e4">per-label confusion matrix</text>
-      <text x="16" y="88" font-size="10" fill="#8ea0bf">&quot;eval the eval&quot; — the vision judge</text>
-      <text x="16" y="102" font-size="10" fill="#8ea0bf">is itself graded, not assumed correct</text>
+    <!-- ───────── ROW 2 · eval the eval ───────── -->
+
+    <!-- PRECISION -->
+    <g transform="translate(36,156)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>PRECISION</text>
+      <text y="38" font-family='"Google Sans", sans-serif'>
+        <tspan font-size="26" font-weight="600" fill="#1f1f1f">91</tspan><tspan font-size="15" font-weight="500" fill="#5f6368">%</tspan>
+      </text>
+      <text y="62" font-size="11" fill="#5f6368">CI 62 — 98</text>
     </g>
 
-    <!-- Cluster summary -->
-    <g transform="translate(780,42)">
-      <rect width="360" height="120" rx="10" fill="#0b1425" stroke="#26336a" />
-      <text x="16" y="22" font-size="13" font-weight="700" fill="#9dc4ff">Failure clusters</text>
-      <text x="16" y="44" font-size="11" fill="#cfd6e4">3–6 themes from the whole corpus,</text>
-      <text x="16" y="60" font-size="11" fill="#cfd6e4">with counts + representative rollout</text>
-      <text x="16" y="84" font-size="10" fill="#8ea0bf">clustered by reading every finding in</text>
-      <text x="16" y="98" font-size="10" fill="#8ea0bf">one 1 M-context call — no k-means</text>
+    <!-- RECALL -->
+    <g transform="translate(189,156)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>RECALL</text>
+      <text y="38" font-family='"Google Sans", sans-serif'>
+        <tspan font-size="26" font-weight="600" fill="#1f1f1f">87</tspan><tspan font-size="15" font-weight="500" fill="#5f6368">%</tspan>
+      </text>
+      <text y="62" font-size="11" fill="#5f6368">CI 55 — 95</text>
     </g>
 
-    <!-- Cost & time headline -->
-    <g transform="translate(1160,42)">
-      <rect width="420" height="120" rx="10" fill="#0b1425" stroke="#5a4020" />
-      <text x="16" y="22" font-size="13" font-weight="700" fill="#ffd27a">Headline vs. manual review</text>
-      <text x="16" y="46" font-size="14" font-family="ui-monospace, Menlo, monospace" fill="#e6edf7">$X.XX  ·  Mm Ss  ·  N scenarios</text>
-      <text x="16" y="68" font-size="11" fill="#cfd6e4">compared to reviewer at $75/hr ·</text>
-      <text x="16" y="84" font-size="11" fill="#cfd6e4">~5 min/rollout sequential baseline</text>
-      <text x="16" y="104" font-size="10" fill="#8ea0bf">this is the &quot;hours → minutes&quot; number</text>
+    <!-- CLUSTERS -->
+    <g transform="translate(343,156)">
+      <text font-size="10" font-weight="600" fill="#5f6368" letter-spacing="1.6"
+            font-family='"Roboto Mono", monospace'>CLUSTERS</text>
+      <text y="38" font-size="26" font-weight="600" fill="#1f1f1f"
+            font-family='"Google Sans", sans-serif'>6</text>
+      <text y="62" font-size="11" fill="#5f6368">from 1 M ctx</text>
     </g>
   </g>
 
-  <!-- ==========================================================
-       Live telemetry note (top right of agent band)
-       ========================================================== -->
-  <g transform="translate(1200,420)">
-    <rect width="400" height="42" rx="8" fill="#111a30" stroke="#22304e" />
-    <text x="14" y="18" font-size="11" fill="#8ea0bf" font-weight="600" letter-spacing="0.08em">LIVE UI (Gradio)</text>
-    <text x="14" y="34" font-size="11" fill="#cfd6e4">banner: spend · elapsed · scenarios  +  /memories tree  +  video grid</text>
-  </g>
-
-  <!-- Footer caption -->
-  <text x="40" y="948" font-size="11" fill="#6f7e9a">
-    Figure. End-to-end pipeline. Colored cards are phases inside one Managed Agents session; dashed lines show custom-tool calls into the sim substrate;
-    outputs at the bottom are the artifacts a judge or ops reviewer consumes.
+  <!-- footnote (bottom-left, balancing the right-aligned callout) -->
+  <text x="40" y="784" font-size="11" fill="#80868b">
+    Cost baseline: $75/hr × 3 min/rollout (labor). Time baseline: sum of video durations + 60 s/rollout (sequential review).
   </text>
 </svg>
+<div class="footnote">
+  Simplified overview. For the exhaustive version with cohort substrate and calibration results, see <a href="pipeline-detailed.html">pipeline-detailed.html</a>.
+</div>
 </div>
 </body>
 </html>

@@ -12,3 +12,8 @@ artifacts/
 .gstack/
 API_RAT/assets/mujoco_menagerie/
 MUJOCO_LOG.TXT
+
+# Remotion
+robotics_pitch/node_modules/
+robotics_pitch/out/
+robotics_pitch/.remotion/
