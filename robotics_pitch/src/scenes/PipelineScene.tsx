@@ -70,7 +70,7 @@ const STAGGER = 14;
 // Real rollout videos from the last eval run — mix of successful (cal_01,
 // cal_05, dep_05, dep_13) and failed (cal_09, cal_13, dep_29, cal_04). Each
 // clip is 2.7 s @ 30 fps; we Loop them so they always look like a live run.
-const ROLLOUT_VIDEOS: { src: string; outcome: "pass" | "fail" }[] = [
+export const ROLLOUT_VIDEOS: { src: string; outcome: "pass" | "fail" }[] = [
   { src: "rollouts/cal_01.mp4", outcome: "pass" },
   { src: "rollouts/cal_09.mp4", outcome: "fail" },
   { src: "rollouts/dep_05.mp4", outcome: "pass" },
@@ -80,9 +80,9 @@ const ROLLOUT_VIDEOS: { src: string; outcome: "pass" | "fail" }[] = [
   { src: "rollouts/dep_13.mp4", outcome: "pass" },
   { src: "rollouts/cal_04.mp4", outcome: "fail" },
 ];
-const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30); // 81 frames per video
+export const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30); // 81 frames per video
 
-const PROMPT_TEXT = "Evaluate Lift policy under cube_xy_jitter_m=0.15";
+export const PROMPT_TEXT = "Evaluate Lift policy under cube_xy_jitter_m=0.15";
 
 export const PipelineScene: React.FC = () => {
   const frame = useCurrentFrame();
@@ -201,7 +201,7 @@ export const PipelineScene: React.FC = () => {
 
 // ---------------- Flow boxes ---------------------------------------------
 
-const PromptBox: React.FC<{
+export const PromptBox: React.FC<{
   text: string;
   enterAt: number;
   finishAt: number;
@@ -261,7 +261,7 @@ const PromptBox: React.FC<{
   );
 };
 
-const RolloutsBox: React.FC<{ enterAt: number; frame: number }> = ({
+export const RolloutsBox: React.FC<{ enterAt: number; frame: number }> = ({
   enterAt,
   frame,
 }) => {
@@ -360,7 +360,7 @@ const RolloutsBox: React.FC<{ enterAt: number; frame: number }> = ({
   );
 };
 
-const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
+export const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
   enterAt,
   frame,
 }) => {
@@ -480,7 +480,7 @@ const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
   );
 };
 
-const ReportBox: React.FC<{ enterAt: number; frame: number }> = ({
+export const ReportBox: React.FC<{ enterAt: number; frame: number }> = ({
   enterAt,
   frame,
 }) => {
@@ -545,7 +545,7 @@ const ReportBox: React.FC<{ enterAt: number; frame: number }> = ({
   );
 };
 
-const Arrow: React.FC<{ color: string; activeAt: number; frame: number }> = ({
+export const Arrow: React.FC<{ color: string; activeAt: number; frame: number }> = ({
   color,
   activeAt,
   frame,

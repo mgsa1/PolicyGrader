@@ -10,14 +10,20 @@
   <a href="#"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square&labelColor=1f1f1f"></a>
 </p>
 
-<!-- HERO ANIMATION — pipeline beat as a 22 s loop, click-through to the full explainer.
+<!-- HERO ANIMATION — two panoramic loops (cards + data-flow), click-through to the full explainer.
      Rendered by `robotics_pitch/` (Remotion). Re-render with:
-       cd robotics_pitch && npm run render:pipeline-gif    # → docs/media/pipeline.gif
-       cd robotics_pitch && npm run render                 # → docs/media/hero.mp4 -->
+       cd robotics_pitch && npm run render:pipeline-cards-gif   # → docs/media/pipeline-cards.gif
+       cd robotics_pitch && npm run render:pipeline-flow-gif    # → docs/media/pipeline-flow.gif
+       cd robotics_pitch && npm run render                      # → docs/media/hero.mp4 -->
 
 <p align="center">
   <a href="docs/media/hero.mp4">
-    <img src="docs/media/pipeline.gif" alt="Embodied Eval Orchestrator — pipeline beat (22 s loop)" width="100%" />
+    <img src="docs/media/pipeline-cards.gif" alt="Five-phase pipeline: planner · rollout · labeling · judge · reporter" width="100%" />
+  </a>
+</p>
+<p align="center">
+  <a href="docs/media/hero.mp4">
+    <img src="docs/media/pipeline-flow.gif" alt="Data flow: prompt → rollouts → K parallel judges → report" width="100%" />
   </a>
   <br/>
   <sub>▶ <a href="docs/media/hero.mp4">Play the full explainer</a> &middot; source in <a href="robotics_pitch/"><code>robotics_pitch/</code></a></sub>

@@ -8,7 +8,8 @@
     "render": "remotion render src/index.ts Hero ../docs/media/hero.mp4 --concurrency=2",
     "render:poster": "remotion still src/index.ts Hero ../docs/media/hero.png --frame=30",
     "render:gif": "remotion render src/index.ts Hero ../docs/media/hero.gif --codec=gif --width=960",
-    "render:pipeline-gif": "remotion render src/index.ts Pipeline ../docs/media/pipeline.gif --codec=gif --width=800 --every-nth-frame=2"
+    "render:pipeline-cards-gif": "remotion render src/index.ts PipelineCards ../docs/media/pipeline-cards.gif --codec=gif --width=960 --every-nth-frame=2",
+    "render:pipeline-flow-gif": "remotion render src/index.ts PipelineFlow ../docs/media/pipeline-flow.gif --codec=gif --width=960 --every-nth-frame=2"
   },
   "dependencies": {
     "@remotion/cli": "4.0.355",
