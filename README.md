@@ -1,6 +1,6 @@
-# Embodied Eval Orchestrator
+# PolicyGrader
 
-> **Robot manipulation evals — hours to minutes.**
+> **One prompt in. A full control policy stress test out.**
 > An agentic system that designs, runs, judges, and reports on robot policy evaluations end-to-end, while measuring its own judge against human ground truth.
 
 <p>
@@ -33,11 +33,11 @@
 
 ## The pitch
 
-Embodied AI is about to be everywhere — warehouses, kitchens, hospitals, homes. Every policy that ships has to be **evaluated** first, and evaluation today is a robotics engineer watching rollout videos frame-by-frame for hours.
+Embodied AI is about to be everywhere — warehouses, kitchens, hospitals, homes. Every policy that ships has to be **stress tested** first, and stress test today is a robotics engineer watching rollout videos frame-by-frame for hours.
 
-**Embodied Eval Orchestrator collapses that loop into minutes.** Describe the eval goal in English; an Opus 4.7 Managed Agent designs a test suite, runs rollouts in simulation, **pauses for a human to label a sampled subset** as ground truth, then a vision judge watches every failed rollout, names the failure frame, points at it (or honestly abstains), and a reporter clusters the deployment failures into actionable patterns.
+**PolicyGrader collapses that loop into minutes.** Describe the eval goal in English; an Opus 4.7 Managed Agent designs a test suite, runs rollouts in simulation, **pauses for a human to label a sampled subset** as ground truth, then a vision judge watches every failed rollout, names the failure frame, points at it (or honestly abstains), and a reporter clusters the deployment failures into actionable patterns.
 
-It’s not a vibes demo: **the system measures its own judge against human labels and tells you when not to trust it.**
+We propose a framework to benchmark the judge performance against a small sample of human labelled ground truth, to provide a confidence index in the vision analysis in the deployment.
 
 ---
 
@@ -51,32 +51,7 @@ It’s not a vibes demo: **the system measures its own judge against human label
 | **Wall time** | **31 m 40 s** | 1 h 17 m | **2.4× faster** |
 | **Judge findings** | 27 `missed_approach` · 3 `failed_grip` · 28 / 30 with pixel-accurate point | — | — |
 
-Calibration success 6/20 (30 %, knobs steered 14 into failure); deployment success 34/50 (68 %, BC-RNN under 0.15 m cube jitter). Baseline math (`$75/hr × 2 min/rollout` for cost, sum of video durations + 60 s/rollout review overhead for wall time) lives in [src/costing.py](src/costing.py).
-
----
-
-## The judge in action — pointing AND honest abstention
-
-The judge runs **once per failed rollout**: a single 1920-px Messages-API call over `clamp(video_duration × 3, 12, 36)` evenly-spaced frames. It returns a label, the failure frame index, and a pixel coordinate — **or `null`** when there is nothing to point at.
-
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="artifacts/runs/eval_d5a040/keyframes/dep_03.png" alt="Judge points at closed-finger contact" width="100%" />
-<br/>
-<sub><b>dep_03 · <code>missed_approach</code> · point=[840,1060]</b><br/>
-Gripper descends with fingers already shut and only nudges the cube. <b>Judge points</b> at the contact (red dot = <code>JudgeAnnotation.point</code>).</sub>
-</td>
-<td align="center" width="50%">
-<img src="artifacts/runs/eval_d5a040/keyframes/dep_42.png" alt="Judge abstains — no contact to point at" width="100%" />
-<br/>
-<sub><b>dep_42 · <code>missed_approach</code> · point=null</b><br/>
-Gripper hovers beside the cube without ever contacting it. <b>Judge abstains</b> — forcing a coordinate here is what caused our prior “random red dot” regressions.</sub>
-</td>
-</tr>
-</table>
-
-The 2-mode taxonomy (`missed_approach` / `failed_grip` + `other`) is documented in [docs/taxonomy.md](docs/taxonomy.md). Decisive cue: **did the cube ever leave the table inside the gripper?**
+Wall time on this laptop run is bottlenecked by single-process MuJoCo rollout generation. The AI grading work itself runs across K parallel Claude Managed Agents, so in a real deployment the pipeline's speed is bounded by the number of agents you fan out to, not by the host machine.
 
 ---
 
