@@ -20,3 +20,6 @@ robotics_pitch/.remotion/
 robotics_pitch/sequences/
 sequences/
 robotics_pitch/public/webcam/
+robotics_pitch/assets/webcam_recordings/
+robotics_pitch/assets/*.mp3
+robotics_pitch/public/audio/

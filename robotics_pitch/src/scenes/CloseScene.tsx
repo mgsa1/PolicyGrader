@@ -26,13 +26,15 @@ export const CloseScene: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  // Beat A: side-by-side reveal (0–4 s)
-  const eyebrowOp = useFadeIn(frame, 0, 14);
-  const leftOp = useFadeIn(frame, 6, 18);
-  const rightOp = useFadeIn(frame, 18, 18);
+  // Beat A: side-by-side reveal — front-loaded so the slate can wash in
+  // and the PolicyGrader logo can land by frame 50 (the recording cues the
+  // brand reveal that early).
+  const eyebrowOp = useFadeIn(frame, 0, 10);
+  const leftOp = useFadeIn(frame, 4, 12);
+  const rightOp = useFadeIn(frame, 10, 12);
 
-  // Beat B: dark slate washes in (5 s — 7 s)
-  const slateAt = 5 * fps;
+  // Beat B: dark slate washes in starting frame 14 — fully covered by ~32.
+  const slateAt = 14;
   const slateOp = interpolate(
     frame,
     [slateAt, slateAt + 18],
@@ -40,8 +42,9 @@ export const CloseScene: React.FC = () => {
     { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.bezier(0.22, 1, 0.36, 1) },
   );
 
-  // Beat C: final card text (6.5 s+)
-  const finalAt = Math.round(6.5 * fps);
+  // Beat C: final card text — fades in across [32, 50] so the PolicyGrader
+  // logo is fully visible by frame 50.
+  const finalAt = 32;
   const finalOp = useFadeIn(frame, finalAt, 18);
   const finalScale = spring({
     frame: frame - finalAt,
@@ -179,9 +182,9 @@ export const CloseScene: React.FC = () => {
             textAlign: "center",
           }}
         >
-          One prompt in.{" "}
+          Eval the policy.{" "}
           <span style={{ color: "#fff", fontWeight: 600 }}>
-            A full control policy stress test out.
+            Grade the grader.
           </span>
         </div>
 

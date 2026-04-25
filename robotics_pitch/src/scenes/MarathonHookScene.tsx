@@ -13,17 +13,17 @@ import {
 import { colors, fonts } from "../theme";
 import { useFadeIn } from "../components/easing";
 
-// Beijing humanoid marathon hook. Full scene runs ~50 s.
+// Beijing humanoid marathon hook. Full scene runs ~29 s.
 //
 // The reveal chain (forward play → Q1 → rewind → trip freeze → red
 // circle → Q2a/b/c) front-loads into the first ~20 s; the remaining
-// ~30 s is a long pause on the fully-composed final state (trip frame +
+// ~9 s is a held pause on the fully-composed final state (trip frame +
 // pulsing red circle + all questions visible) so VO has room to breathe.
 //
 // Beat 1 (0–6 s):  video plays forward 1.0 s → 7.0 s of source at native
 //                  speed — robot walks up to the obstacle, trips, and
 //                  collapses on the ground. No overlay yet.
-// Beat 2 (6–12 s): freeze on the collapse frame. After ~1 s of silent
+// Beat 2 (6–12 s): freeze on the collapse frame. After ~0.73 s of silent
 //                  hold, "What went wrong?" fades in (Q1) and holds for
 //                  ~5 s before the rewind kicks.
 // Beat 3 (12–13.5 s): video rewinds (1.5 s @ 1× speed, pre-encoded
@@ -31,7 +31,7 @@ import { useFadeIn } from "../components/easing";
 //                  moment of the trip.
 // Beat 4 (13.5–20 s): freeze on the trip frame. Red circle pulses in at
 //                  the foot. Q2 subtext lands in three staged lines.
-// Beat 5 (20–50 s): long held pause on the fully-resolved composition —
+// Beat 5 (20–29 s): held pause on the fully-resolved composition —
 //                  trip frame, red circle, Q1 (dimmed) + Q2a/b/c all
 //                  visible. This is the VO-room pause.
 
@@ -45,14 +45,14 @@ const CALIBRATE = false;
 
 // Beat boundaries in scene-frames @ 30 fps.
 const T_PLAY_END = 6 * 30; // forward video ends, freeze on collapse begins
-const T_Q1_AT = T_PLAY_END + 30; // 1 s of silent collapse hold, then Q1 fades in
+const T_Q1_AT = T_PLAY_END + 22; // ~0.73 s of silent collapse hold, then Q1 fades in
 const T_REWIND_START = 12 * 30; // ~5 s of Q1 hold, then rewind — long pause moved to AFTER the full reveal
 const T_REWIND_END = T_REWIND_START + Math.round(1.5 * 30); // 1.5 s reverse @ 1×
 // Q2 has three staged lines, anchored after the rewind so they land on
 // the trip-frame freeze with the red circle pulsing in. Apparition timers
 // are slowed ~20% vs. the original pacing for VO breathing room.
 const T_Q2A_AT = T_REWIND_END + 36; // "Figuring that / why it fails…"
-const T_Q2B_AT = T_Q2A_AT + Math.round(2.88 * 30); // delayed: "millions of times"
+const T_Q2B_AT = T_Q2A_AT + Math.round(4.08 * 30); // delayed: "millions of times"
 const T_Q2C_AT = T_Q2B_AT + Math.round(2.4 * 30); // delayed: bridge to robotics audience
 
 // Source-clip ranges (30 fps).
@@ -90,24 +90,24 @@ export const MarathonHookScene: React.FC = () => {
   });
 
   // --- Q2a ("Figuring it fails / requires judgement") --------------------
-  const q2aOp = useFadeIn(frame, T_Q2A_AT, 22);
-  const q2aY = interpolate(frame, [T_Q2A_AT, T_Q2A_AT + 28], [22, 0], {
+  const q2aOp = useFadeIn(frame, T_Q2A_AT, 26);
+  const q2aY = interpolate(frame, [T_Q2A_AT, T_Q2A_AT + 34], [22, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),
   });
 
   // --- Q2b ("Now try doing it millions of times") — delayed --------------
-  const q2bOp = useFadeIn(frame, T_Q2B_AT, 22);
-  const q2bY = interpolate(frame, [T_Q2B_AT, T_Q2B_AT + 28], [22, 0], {
+  const q2bOp = useFadeIn(frame, T_Q2B_AT, 26);
+  const q2bY = interpolate(frame, [T_Q2B_AT, T_Q2B_AT + 34], [22, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),
   });
 
   // --- Q2c (audience bridge) — further delayed ---------------------------
-  const q2cOp = useFadeIn(frame, T_Q2C_AT, 22);
-  const q2cY = interpolate(frame, [T_Q2C_AT, T_Q2C_AT + 28], [22, 0], {
+  const q2cOp = useFadeIn(frame, T_Q2C_AT, 26);
+  const q2cY = interpolate(frame, [T_Q2C_AT, T_Q2C_AT + 34], [22, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),

@@ -46,14 +46,14 @@ const VIDEO_LOOP_FRAMES = Math.round(2.7 * 30); // 81 frames per loop
 const TOTAL_TO_JUDGE = 3280;
 const STATIC_JUDGED = 47;
 const T_COUNTER_RAMP_START = 180; // ~6 s — start ticking once the focal card is fully revealed
-const T_COUNTER_RAMP_END = 420;   // ~14 s — counter freezes just before the collapse
+const T_COUNTER_RAMP_END = 310;   // ~10.3 s — counter freezes just before the collapse
 
-// Collapse → cluster reveal (Beat C+D, 15–22 s).
-const T_COLLAPSE_START = 450;     // ~15 s — Layout A starts fading
-const T_LAYOUT_A_HIDDEN = 490;    // ~16.3 s — Layout A fully gone
-const T_LAYOUT_B_VISIBLE = 510;   // ~17 s — Layout B fully arrived
-const T_CLUSTERS_HEADER = 470;    // ~15.7 s — "Packaged into…" header reveals
-const T_CLUSTER_FIRST = 520;      // ~17.3 s — first cluster card lands
+// Collapse → cluster reveal (Beat C+D, ~11.3–21 s).
+const T_COLLAPSE_START = 340;     // ~11.3 s — Layout A starts fading
+const T_LAYOUT_A_HIDDEN = 380;    // ~12.7 s — Layout A fully gone
+const T_LAYOUT_B_VISIBLE = 400;   // ~13.3 s — Layout B fully arrived
+const T_CLUSTERS_HEADER = 360;    // ~12 s — "Packaged into…" header reveals
+const T_CLUSTER_FIRST = 410;      // ~13.7 s — first cluster card lands
 const CLUSTER_GAP = 12;           // frames between successive clusters
 
 // Mini-grid sample under the focal thumbnail in Layout B — visualizes
@@ -68,7 +68,7 @@ const SAMPLE_KEYFRAMES = [
   "keyframes/dep_07.png", "keyframes/dep_08.png", "keyframes/dep_09.png", "keyframes/dep_10.png",
   "keyframes/dep_11.png", "keyframes/dep_12.png", "keyframes/dep_13.png", "keyframes/dep_14.png",
 ];
-const T_GRID_FIRST = 540;         // ~18 s — first sample tile lands
+const T_GRID_FIRST = 430;         // ~14.3 s — first sample tile lands
 const GRID_TILE_STEP = 2;         // frames between successive tile fade-ins
 
 // Failure-mode clusters surfaced by the reporter agent. Counts kept in sync

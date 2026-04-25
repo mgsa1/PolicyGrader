@@ -67,21 +67,79 @@ const PHASES = [
 // to introduce, and the two groups are separated by a deliberate beat so the
 // stack handoff reads on screen.
 const STAGGER = 36; // 1.2 s between cards within a group
-const GROUP_GAP = 60; // extra 2 s pause between sim and ai groups
+// AI-stack reveal runs noticeably slower than the sim stack (Labeling →
+// Judge → Reporter cascades) so each card has time to land before the next
+// slides in. Borrowed time comes from the prompt → rollouts → judges →
+// report flow gaps below.
+const AI_STAGGER = 53;
+// Extra ~3.5 s nominal pause between the Simulation and AI Analysis groups
+// (~4.2 s real-time once STRETCH is applied — the last sim card lands, then
+// VO has room before the first AI card slides in).
+const GROUP_GAP = 106;
 const CARD_LAND_AFTER = 28; // PhaseCard slide + artifact reveal duration
 
+const AI_BASE = 20 + 2 * STAGGER + GROUP_GAP;
 const CARD_DELAYS = [
   20, // 01 Planner    (sim)
   20 + STAGGER, // 02 Rollout    (sim)
-  20 + 2 * STAGGER + GROUP_GAP, // 03 Labeling   (ai)
-  20 + 3 * STAGGER + GROUP_GAP, // 04 Judge      (ai)
-  20 + 4 * STAGGER + GROUP_GAP, // 05 Reporter   (ai)
+  AI_BASE, // 03 Labeling   (ai)
+  AI_BASE + AI_STAGGER, // 04 Judge      (ai)
+  AI_BASE + 2 * AI_STAGGER, // 05 Reporter   (ai)
 ];
 const SIM_BRACKET_AT = 12;
 const AI_BRACKET_AT = CARD_DELAYS[2] - 10;
 
 // Anthropic coral — used for the Claude sparkle mark and the AI-stack wash.
 const ANTHROPIC_CORAL = "#cc785c";
+
+// Header lands immediately; the pipeline body (brackets, cards, flow) holds
+// for 2.5 s after (nominal — actual real-time hold is slightly longer once
+// the scene-wide STRETCH is applied), so VO has room to set up the beat
+// before assembly begins.
+const PRE_ROLL_FRAMES = 75;
+
+// Scene runs in a 40 s window. The first TITLE_ONLY_PAUSE_FRAMES are pure
+// hold-on-title — header is fading in / settled but the body clock has not
+// started ticking. After that, the body plays out at the STRETCH-slowed pace
+// (every internal anchor was tuned for the original 22 s pacing; the sim-side
+// budget is 24 s, so we stretch by 24/22, then PLAYBACK_SLOW dilates by
+// another 10 % — 1.0 = original speed, 1.1 = 10 % slower). From AI_BRACKET_AT
+// onward the body advances at STRETCH * AI_STACK_STRETCH so the AI stack +
+// downstream prompt → report flow get extra real-time to breathe.
+const TITLE_ONLY_PAUSE_FRAMES = 30; // 1 s at 30 fps
+const SCENE_NOMINAL_FRAMES = 22 * 30;
+const SCENE_BODY_FRAMES = 24 * 30;
+const PLAYBACK_SLOW = 1.1;
+const STRETCH = (SCENE_BODY_FRAMES / SCENE_NOMINAL_FRAMES) * PLAYBACK_SLOW;
+// AI portion runs ~55 % slower than the sim portion (combined factor ~1.86×)
+// so the Labeling → Judge → Reporter cascade and the prompt → rollouts →
+// judges → report flow have more time on screen.
+const AI_STACK_STRETCH = 1.55;
+
+// Convert a body-frame coord (CARD_DELAYS-style; 0 = first body anim trigger)
+// into the raw frame returned by useCurrentFrame, applying TITLE_ONLY_PAUSE,
+// the global STRETCH, and the piecewise AI_STACK_STRETCH past AI_BRACKET_AT.
+const bodyFrameToRaw = (bf: number): number => {
+  if (bf <= AI_BRACKET_AT) {
+    return (bf + PRE_ROLL_FRAMES) * STRETCH + TITLE_ONLY_PAUSE_FRAMES;
+  }
+  return (
+    (AI_BRACKET_AT + PRE_ROLL_FRAMES) * STRETCH +
+    (bf - AI_BRACKET_AT) * STRETCH * AI_STACK_STRETCH +
+    TITLE_ONLY_PAUSE_FRAMES
+  );
+};
+
+// Inverse: convert a raw frame into the body-frame coord used by the
+// component and passed down to box subcomponents.
+const rawFrameToBodyFrame = (raw: number): number => {
+  const adjusted = Math.max(0, raw - TITLE_ONLY_PAUSE_FRAMES);
+  const boundaryRaw = (AI_BRACKET_AT + PRE_ROLL_FRAMES) * STRETCH;
+  if (adjusted < boundaryRaw) {
+    return adjusted / STRETCH - PRE_ROLL_FRAMES;
+  }
+  return AI_BRACKET_AT + (adjusted - boundaryRaw) / (STRETCH * AI_STACK_STRETCH);
+};
 
 export const ROLLOUT_VIDEOS: { src: string; outcome: "pass" | "fail" }[] = [
   { src: "rollouts/cal_05.mp4", outcome: "pass" },
@@ -98,20 +156,34 @@ export const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30);
 export const PROMPT_TEXT = "Evaluate Lift policy under cube_xy_jitter_m=0.15";
 
 export const PipelineScene: React.FC = () => {
-  const frame = useCurrentFrame();
+  const rawFrame = useCurrentFrame();
+  // Header clock: starts immediately at scene-frame 0, stretched at the same
+  // pace as the body so the title fade matches the rest of the scene's feel.
+  const headerSceneFrame = rawFrame / STRETCH;
+  // Body clock: held at 0 for the title-only pause, then runs at the global
+  // STRETCH rate up to AI_BRACKET_AT, then at STRETCH * AI_STACK_STRETCH from
+  // there onward. The piecewise mapping is what fills the 40 s scene without
+  // touching individual constants.
+  const frame = rawFrameToBodyFrame(rawFrame);
+  const sceneFrame = frame + PRE_ROLL_FRAMES;
   const { fps } = useVideoConfig();
 
-  const headerOp = useFadeIn(frame, 0, 18);
+  const headerOp = useFadeIn(headerSceneFrame, 0, 18);
 
   // After the last AI card lands, hold so the audience absorbs the full stack
-  // before the data flow kicks off.
+  // before the data flow kicks off. ~4.5 s nominal (~5.4 s real-time after
+  // STRETCH) — long enough for the AI stack to register before the prompt
+  // begins typing.
   const cardsLandedAt = CARD_DELAYS[CARD_DELAYS.length - 1] + CARD_LAND_AFTER;
-  const HOLD_AFTER_CARDS = 60;
+  const HOLD_AFTER_CARDS = 135;
   const T_PROMPT_ENTER = cardsLandedAt + HOLD_AFTER_CARDS;
   const T_PROMPT_TYPED = T_PROMPT_ENTER + 20;
-  const T_ROLLOUTS_OUT = T_PROMPT_TYPED + 30;
-  const T_JUDGES_OUT = T_ROLLOUTS_OUT + 50;
-  const T_REPORT_OUT = T_JUDGES_OUT + 45;
+  // Data-pipeline gaps trimmed from 30 / 50 / 45 → 25 / 40 / 36 (-24 body-
+  // frames total) so the AI cards above can take ~1.5 s more on screen
+  // without changing total scene length.
+  const T_ROLLOUTS_OUT = T_PROMPT_TYPED + 25;
+  const T_JUDGES_OUT = T_ROLLOUTS_OUT + 40;
+  const T_REPORT_OUT = T_JUDGES_OUT + 36;
 
   return (
     <AbsoluteFill
@@ -207,7 +279,12 @@ export const PipelineScene: React.FC = () => {
                 artifact={p.artifact}
                 detail={p.detail}
                 color={p.color}
-                delayFrames={CARD_DELAYS[i]}
+                // PhaseCard uses its own useCurrentFrame() (raw, un-stretched),
+                // so translate the body-local delay into raw-frame coords via
+                // bodyFrameToRaw — which also applies the AI_STACK_STRETCH for
+                // AI cards so they land in lockstep with the body's piecewise
+                // pacing.
+                delayFrames={bodyFrameToRaw(CARD_DELAYS[i])}
                 badge={p.badge}
               />
             ))}
