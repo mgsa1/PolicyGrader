@@ -13,11 +13,15 @@ const stageStyle = {
   fontFeatureSettings: '"tnum" 1, "ss01" 1',
 } as const;
 
-// Cards row only — bottom data-flow row falls below the 800-px canvas.
+// Cards row only — translate the scene up so its title/header fall above
+// the canvas, leaving just SIM/AI stack brackets + 5 phase cards. The README
+// already carries the tagline above the GIF, so the in-scene title is dead
+// real estate for the hero.
 const PipelineCardsStandalone: React.FC = () => (
   <AbsoluteFill style={stageStyle}>
-    <Topbar />
-    <PipelineScene />
+    <AbsoluteFill style={{ transform: "translateY(-280px)" }}>
+      <PipelineScene />
+    </AbsoluteFill>
   </AbsoluteFill>
 );
 
@@ -45,7 +49,7 @@ export const Root: React.FC = () => {
         durationInFrames={22 * HERO_FPS}
         fps={HERO_FPS}
         width={1920}
-        height={800}
+        height={370}
       />
       <Composition
         id="PipelineFlow"
@@ -53,7 +57,7 @@ export const Root: React.FC = () => {
         durationInFrames={10 * HERO_FPS}
         fps={HERO_FPS}
         width={1920}
-        height={520}
+        height={430}
       />
     </>
   );

@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { colors, fonts } from "../theme";
+import { colors } from "../theme";
 import {
   Arrow,
   JudgesBox,
@@ -11,8 +11,8 @@ import {
 } from "./PipelineScene";
 
 // Standalone flow row, reusing the components from PipelineScene with their
-// timing reset so the four boxes animate in from frame 0. Sized for a wide
-// README banner (1920x500).
+// timing reset so the four boxes animate in from frame 0. Sized for a tight
+// README banner (no subtitle — the cards GIF above already names the flow).
 
 export const PipelineFlowScene: React.FC = () => {
   const frame = useCurrentFrame();
@@ -26,26 +26,14 @@ export const PipelineFlowScene: React.FC = () => {
   return (
     <AbsoluteFill
       style={{
-        paddingTop: 70,
+        paddingTop: 32,
         paddingLeft: 64,
         paddingRight: 64,
-        paddingBottom: 40,
+        paddingBottom: 32,
         display: "flex",
         flexDirection: "column",
       }}
     >
-      <div
-        style={{
-          fontFamily: fonts.mono,
-          fontSize: 12,
-          letterSpacing: 2.6,
-          color: colors.ink4,
-          textTransform: "uppercase",
-          marginBottom: 24,
-        }}
-      >
-        Data flow · prompt → rollouts → K parallel judges → report
-      </div>
       <div
         style={{
           flex: 1,
