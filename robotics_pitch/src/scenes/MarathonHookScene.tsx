@@ -13,77 +13,101 @@ import {
 import { colors, fonts } from "../theme";
 import { useFadeIn } from "../components/easing";
 
-// 0:00–0:18 · Beijing humanoid marathon hook.
+// Beijing humanoid marathon hook. Full scene runs ~50 s.
 //
-// The clip plays from 0:02 to 0:04 on the LEFT half of the screen, then
-// freezes on the trip frame with a red circle on the robot's left foot.
-// Text on the RIGHT phases in over the freeze in two beats:
-//   Beat 1 (5–10 s): "What went wrong?" — VO answers orally, hold pause.
-//   Beat 2 (10–18 s): "Figuring it fails is easy. Figuring why it fails
-//                       requires judgement. Try doing this millions of times."
+// The reveal chain (forward play → Q1 → rewind → trip freeze → red
+// circle → Q2a/b/c) front-loads into the first ~20 s; the remaining
+// ~30 s is a long pause on the fully-composed final state (trip frame +
+// pulsing red circle + all questions visible) so VO has room to breathe.
 //
-// The clip is 720×768 (vertical-ish). We let it occupy the full left half
-// at native aspect, contained inside a 720-wide card.
+// Beat 1 (0–6 s):  video plays forward 1.0 s → 7.0 s of source at native
+//                  speed — robot walks up to the obstacle, trips, and
+//                  collapses on the ground. No overlay yet.
+// Beat 2 (6–12 s): freeze on the collapse frame. After ~1 s of silent
+//                  hold, "What went wrong?" fades in (Q1) and holds for
+//                  ~5 s before the rewind kicks.
+// Beat 3 (12–13.5 s): video rewinds (1.5 s @ 1× speed, pre-encoded
+//                  reverse clip) — the collapse undoes itself back to the
+//                  moment of the trip.
+// Beat 4 (13.5–20 s): freeze on the trip frame. Red circle pulses in at
+//                  the foot. Q2 subtext lands in three staged lines.
+// Beat 5 (20–50 s): long held pause on the fully-resolved composition —
+//                  trip frame, red circle, Q1 (dimmed) + Q2a/b/c all
+//                  visible. This is the VO-room pause.
 
 // ============== TUNE HERE ================================================
-// Coordinates of the foot the red dot should highlight, in 0..1 of the clip
-// box. Open Remotion Studio, set CALIBRATE = true below, scrub to the freeze
-// frame, read off the grid coords under the foot, write them here, set
-// CALIBRATE back to false.
+// Coordinates of the foot the red dot should highlight (0..1 of clip box).
+// Set CALIBRATE = true to overlay a coordinate grid in Studio for tuning.
 const FOOT_X = 0.41;
 const FOOT_Y = 0.77;
-
-// Set true to overlay a coordinate grid on the freeze frame for calibration.
-// Set back to false before rendering the final video.
 const CALIBRATE = false;
 // =========================================================================
 
-// Source clip is 30 fps. Play 4.5 s of pre-trip footage from 1.0 s → 5.5 s,
-// then freeze on the "just before trip" frame extracted at 5.5 s.
-const VIDEO_PLAY_FRAMES = Math.round(4.5 * 30); // 135 frames
-const VIDEO_START_FROM = Math.round(1.0 * 30); // start at 1.0 s into source
+// Beat boundaries in scene-frames @ 30 fps.
+const T_PLAY_END = 6 * 30; // forward video ends, freeze on collapse begins
+const T_Q1_AT = T_PLAY_END + 30; // 1 s of silent collapse hold, then Q1 fades in
+const T_REWIND_START = 12 * 30; // ~5 s of Q1 hold, then rewind — long pause moved to AFTER the full reveal
+const T_REWIND_END = T_REWIND_START + Math.round(1.5 * 30); // 1.5 s reverse @ 1×
+// Q2 has three staged lines, anchored after the rewind so they land on
+// the trip-frame freeze with the red circle pulsing in. Apparition timers
+// are slowed ~20% vs. the original pacing for VO breathing room.
+const T_Q2A_AT = T_REWIND_END + 36; // "Figuring that / why it fails…"
+const T_Q2B_AT = T_Q2A_AT + Math.round(2.88 * 30); // delayed: "millions of times"
+const T_Q2C_AT = T_Q2B_AT + Math.round(2.4 * 30); // delayed: bridge to robotics audience
 
-const Q1_AT = Math.round(7.5 * 30); // "What went wrong?" — 1.5 s after freeze
-const Q2_AT = Math.round(12 * 30); // long line — 6.5 s after freeze
+// Source-clip ranges (30 fps).
+const FWD_START_FROM = 1 * 30; // start at 1.0 s
+const FWD_END_AT = 7 * 30; // end at 7.0 s — collapse complete
 
 export const MarathonHookScene: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
 
-  // Red circle: pulses in at the freeze (scene-frame VIDEO_PLAY_FRAMES).
+  // --- Red circle (trip moment) -------------------------------------------
   const circlePulseScale = interpolate(
     frame,
-    [
-      VIDEO_PLAY_FRAMES - 6,
-      VIDEO_PLAY_FRAMES + 2,
-      VIDEO_PLAY_FRAMES + 6,
-    ],
+    [T_REWIND_END - 6, T_REWIND_END + 2, T_REWIND_END + 6],
     [2.4, 1.0, 1.0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.bezier(0.22, 1, 0.36, 1) },
   );
   const circleOp = interpolate(
     frame,
-    [VIDEO_PLAY_FRAMES - 6, VIDEO_PLAY_FRAMES + 4],
+    [T_REWIND_END - 6, T_REWIND_END + 4],
     [0, 1],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );
 
-  // Question 1 — "What went wrong?"
-  const q1Op = useFadeIn(frame, Q1_AT, 22);
-  const q1Y = interpolate(frame, [Q1_AT, Q1_AT + 28], [22, 0], {
+  // --- Q1 ("What went wrong?") --------------------------------------------
+  const q1Op = useFadeIn(frame, T_Q1_AT, 22);
+  const q1Y = interpolate(frame, [T_Q1_AT, T_Q1_AT + 28], [22, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),
   });
-  // Q1 dims slightly when Q2 enters — keeps it in view but de-emphasized.
-  const q1Fade = interpolate(frame, [Q2_AT - 4, Q2_AT + 18], [1, 0.45], {
+  // Q1 dims slightly when Q2 enters but stays on screen.
+  const q1Fade = interpolate(frame, [T_Q2A_AT - 4, T_Q2A_AT + 18], [1, 0.45], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  // Question 2 — the long line.
-  const q2Op = useFadeIn(frame, Q2_AT, 24);
-  const q2Y = interpolate(frame, [Q2_AT, Q2_AT + 30], [24, 0], {
+  // --- Q2a ("Figuring it fails / requires judgement") --------------------
+  const q2aOp = useFadeIn(frame, T_Q2A_AT, 22);
+  const q2aY = interpolate(frame, [T_Q2A_AT, T_Q2A_AT + 28], [22, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.22, 1, 0.36, 1),
+  });
+
+  // --- Q2b ("Now try doing it millions of times") — delayed --------------
+  const q2bOp = useFadeIn(frame, T_Q2B_AT, 22);
+  const q2bY = interpolate(frame, [T_Q2B_AT, T_Q2B_AT + 28], [22, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.22, 1, 0.36, 1),
+  });
+
+  // --- Q2c (audience bridge) — further delayed ---------------------------
+  const q2cOp = useFadeIn(frame, T_Q2C_AT, 22);
+  const q2cY = interpolate(frame, [T_Q2C_AT, T_Q2C_AT + 28], [22, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),
@@ -121,26 +145,49 @@ export const MarathonHookScene: React.FC = () => {
               "0 28px 70px rgba(31,31,31,0.18), 0 0 0 1px rgba(31,31,31,0.08)",
           }}
         >
-          {/* Beat 1: video plays 0:02 → 0:04. */}
-          <Sequence from={0} durationInFrames={VIDEO_PLAY_FRAMES}>
+          {/* Beat 1: forward play 1.0 s → 7.0 s of source. */}
+          <Sequence from={0} durationInFrames={T_PLAY_END}>
             <OffthreadVideo
               src={staticFile("marathon.mp4")}
-              startFrom={VIDEO_START_FROM}
-              endAt={VIDEO_START_FROM + VIDEO_PLAY_FRAMES}
+              startFrom={FWD_START_FROM}
+              endAt={FWD_END_AT}
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
               muted
             />
           </Sequence>
 
-          {/* Beat 2: freeze on the trip-frame still for the rest of the scene. */}
-          <Sequence from={VIDEO_PLAY_FRAMES}>
+          {/* Beat 2: freeze on collapse still. */}
+          <Sequence
+            from={T_PLAY_END}
+            durationInFrames={T_REWIND_START - T_PLAY_END}
+          >
+            <Img
+              src={staticFile("marathon_collapse.jpg")}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          </Sequence>
+
+          {/* Beat 3: reversed clip plays — collapse → trip. */}
+          <Sequence
+            from={T_REWIND_START}
+            durationInFrames={T_REWIND_END - T_REWIND_START}
+          >
+            <OffthreadVideo
+              src={staticFile("marathon_rewind.mp4")}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              muted
+            />
+          </Sequence>
+
+          {/* Beat 4: freeze on trip frame for the rest of the scene. */}
+          <Sequence from={T_REWIND_END}>
             <Img
               src={staticFile("marathon_trip.jpg")}
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
           </Sequence>
 
-          {/* Red circle annotation on the robot's left foot. */}
+          {/* Red circle annotation — only after the rewind lands on the trip. */}
           <div
             style={{
               position: "absolute",
@@ -164,7 +211,7 @@ export const MarathonHookScene: React.FC = () => {
         </div>
       </div>
 
-      {/* RIGHT: text overlay (only after the freeze) */}
+      {/* RIGHT: text overlay */}
       <div
         style={{
           flex: 0.95,
@@ -174,7 +221,7 @@ export const MarathonHookScene: React.FC = () => {
           paddingRight: 24,
         }}
       >
-        {/* Q1: "What went wrong?" */}
+        {/* Q1: "What went wrong?" — appears over the collapse pause */}
         <div
           style={{
             opacity: q1Op * q1Fade,
@@ -190,11 +237,11 @@ export const MarathonHookScene: React.FC = () => {
           <span style={{ color: colors.err }}>wrong</span>?
         </div>
 
-        {/* Q2: the long line */}
+        {/* Q2a: appears after the rewind to the trip frame */}
         <div
           style={{
-            opacity: q2Op,
-            transform: `translateY(${q2Y}px)`,
+            opacity: q2aOp,
+            transform: `translateY(${q2aY}px)`,
             fontSize: 38,
             fontWeight: 500,
             lineHeight: 1.25,
@@ -209,15 +256,38 @@ export const MarathonHookScene: React.FC = () => {
           Figuring{" "}
           <span style={{ color: colors.ink3 }}>why</span> it fails requires{" "}
           <span style={{ color: colors.ink, fontWeight: 700 }}>judgement</span>.
-          <br />
-          <br />
-          <span style={{ fontSize: 28, color: colors.ink3 }}>
-            Now try doing it{" "}
-            <span style={{ color: colors.accent, fontWeight: 600 }}>
-              millions of times
-            </span>
-            .
+        </div>
+
+        {/* Q2b: delayed line — lands ~2.4 s after Q2a */}
+        <div
+          style={{
+            opacity: q2bOp,
+            transform: `translateY(${q2bY}px)`,
+            fontSize: 28,
+            color: colors.ink3,
+            maxWidth: 720,
+            lineHeight: 1.35,
+          }}
+        >
+          Now try doing it{" "}
+          <span style={{ color: colors.accent, fontWeight: 600 }}>
+            millions of times
           </span>
+          .
+        </div>
+
+        {/* Q2c: audience bridge — lands ~2.0 s after Q2b */}
+        <div
+          style={{
+            opacity: q2cOp,
+            transform: `translateY(${q2cY}px)`,
+            fontSize: 26,
+            color: colors.ink3,
+            maxWidth: 720,
+            lineHeight: 1.35,
+          }}
+        >
+          It's what every robotics team does after every training run.
         </div>
       </div>
     </AbsoluteFill>
@@ -231,7 +301,6 @@ const CalibrationGrid: React.FC<{ x: number; y: number }> = ({ x, y }) => {
   const ticks = Array.from({ length: 11 }, (_, i) => i / 10);
   return (
     <>
-      {/* Mesh lines */}
       {ticks.map((t) => (
         <React.Fragment key={`v${t}`}>
           <div
@@ -258,7 +327,6 @@ const CalibrationGrid: React.FC<{ x: number; y: number }> = ({ x, y }) => {
           />
         </React.Fragment>
       ))}
-      {/* X-axis labels along the bottom */}
       {ticks.map((t) => (
         <div
           key={`xl${t}`}
@@ -279,7 +347,6 @@ const CalibrationGrid: React.FC<{ x: number; y: number }> = ({ x, y }) => {
           {t.toFixed(1)}
         </div>
       ))}
-      {/* Y-axis labels along the left */}
       {ticks.map((t) => (
         <div
           key={`yl${t}`}
@@ -300,7 +367,6 @@ const CalibrationGrid: React.FC<{ x: number; y: number }> = ({ x, y }) => {
           {t.toFixed(1)}
         </div>
       ))}
-      {/* Crosshair at current FOOT_X / FOOT_Y */}
       <div
         style={{
           position: "absolute",
@@ -323,7 +389,6 @@ const CalibrationGrid: React.FC<{ x: number; y: number }> = ({ x, y }) => {
           pointerEvents: "none",
         }}
       />
-      {/* Coords readout */}
       <div
         style={{
           position: "absolute",

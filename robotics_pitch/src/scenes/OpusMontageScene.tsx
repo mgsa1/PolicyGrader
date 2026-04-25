@@ -2,7 +2,6 @@ import React from "react";
 import {
   AbsoluteFill,
   useCurrentFrame,
-  useVideoConfig,
   Img,
   staticFile,
   interpolate,
@@ -11,9 +10,14 @@ import {
 import { colors, fonts } from "../theme";
 import { useFadeIn } from "../components/easing";
 
-// 1:55–2:20 · Why Opus 4.7.
+// Why Opus 4.7 + Managed Agents.
 // Persistent left rail with a check-stack that builds up as each capability
-// is announced. Right side cycles through four visual beats, ~6 s each.
+// is announced. Right side cycles through three visual beats, 5 s each
+// (15 s total — Hero.tsx Sequence is 15 s long).
+//
+// The point-abstention + telemetry engineering story has its own scene
+// (JudgeChallengesScene, sequenced just before this one) — this scene
+// stays focused on the three capabilities that make the pipeline run.
 //
 // Face PiP corner: lower-right (360x360). Each beat keeps its load-bearing
 // content in the upper-left of the right column.
@@ -23,6 +27,7 @@ type Beat = {
   title: string;
   monoTag: string;
   description: string;
+  dur: number; // frames
 };
 
 const BEATS: Beat[] = [
@@ -32,6 +37,7 @@ const BEATS: Beat[] = [
     monoTag: "claude-opus-4-7 · vision",
     description:
       "The judge sees a 2-cm cube and points at the contact pixel. A coordinate — not a vibe.",
+    dur: 5 * 30,
   },
   {
     key: "managed",
@@ -39,6 +45,7 @@ const BEATS: Beat[] = [
     monoTag: "managed-agents-2026-04-01",
     description:
       "Four roles, K judge workers, one orchestrator. Linear horizontal scaling.",
+    dur: 5 * 30,
   },
   {
     key: "context",
@@ -46,26 +53,33 @@ const BEATS: Beat[] = [
     monoTag: "context_window = 1_000_000",
     description:
       "The reporter sees every finding in one shot — no embeddings, no stitching, just reasoning.",
-  },
-  {
-    key: "memory",
-    title: "/memories/ · file-based hand-off",
-    monoTag: "submit_* · mirror_root/",
-    description:
-      "Agents think to disk. Every artifact replays the run on demand.",
+    dur: 5 * 30,
   },
 ];
 
-const BEAT_DUR = 6 * 30; // 6 s @ 30 fps
+// Cumulative start frame for each beat — derived from per-beat durations.
+const BEAT_STARTS: number[] = (() => {
+  const starts: number[] = [];
+  let cum = 0;
+  for (const b of BEATS) {
+    starts.push(cum);
+    cum += b.dur;
+  }
+  return starts;
+})();
 
 export const OpusMontageScene: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
 
   const headerOp = useFadeIn(frame, 0, 16);
 
-  // Active beat index.
-  const beatIdx = Math.min(BEATS.length - 1, Math.floor(frame / BEAT_DUR));
+  // Active beat index — last beat whose start frame we've reached.
+  const beatIdx = (() => {
+    for (let i = BEATS.length - 1; i >= 0; i--) {
+      if (frame >= BEAT_STARTS[i]) return i;
+    }
+    return 0;
+  })();
 
   return (
     <AbsoluteFill
@@ -88,20 +102,22 @@ export const OpusMontageScene: React.FC = () => {
             textTransform: "uppercase",
           }}
         >
-          Why Opus 4.7
+          Why Opus 4.7 + Managed Agents
         </div>
         <div
           style={{
             marginTop: 14,
-            fontSize: 44,
+            fontSize: 40,
             fontWeight: 600,
             letterSpacing: -0.8,
             color: colors.ink,
             lineHeight: 1.05,
           }}
         >
-          Four capabilities.{" "}
-          <span style={{ color: colors.accent }}>One pipeline only it can run.</span>
+          Three capabilities.{" "}
+          <span style={{ color: colors.accent }}>
+            Uniquely enabled by Opus 4.7 and Claude Managed Agents.
+          </span>
         </div>
       </div>
 
@@ -116,7 +132,7 @@ export const OpusMontageScene: React.FC = () => {
           }}
         >
           {BEATS.map((b, i) => {
-            const enterAt = i * BEAT_DUR + 4;
+            const enterAt = BEAT_STARTS[i] + 4;
             const op = useFadeIn(frame, enterAt, 16);
             const isActive = beatIdx === i;
             const isDone = beatIdx > i;
@@ -191,8 +207,8 @@ export const OpusMontageScene: React.FC = () => {
           }}
         >
           {BEATS.map((b, i) => {
-            const start = i * BEAT_DUR;
-            const end = start + BEAT_DUR;
+            const start = BEAT_STARTS[i];
+            const end = start + b.dur;
             const op = interpolate(
               frame,
               [start, start + 8, end - 8, end],
@@ -229,20 +245,26 @@ const BeatVisual: React.FC<{ beat: Beat; frame: number }> = ({ beat, frame }) =>
       return <ManagedBeat frame={frame} />;
     case "context":
       return <ContextBeat frame={frame} />;
-    case "memory":
-      return <MemoryBeat frame={frame} />;
     default:
       return null;
   }
 };
 
 // 2576-pixel vision with pointing — zoom into a keyframe with a red dot.
+// The dot anchor (DOT_X / DOT_Y) is the gripper-cube contact pixel on
+// dep_31.png; zoom origin shares the same anchor so the push-in lands
+// on the contact, not on the robot's body.
+const DOT_X_PCT = 50;
+const DOT_Y_PCT = 58;
 const VisionBeat: React.FC<{ frame: number }> = ({ frame }) => {
-  const zoom = interpolate(frame, [0, 60], [1.0, 1.18], {
+  const zoom = interpolate(frame, [0, 60], [1.0, 1.35], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.22, 1, 0.36, 1),
   });
+  // Caption shows the same anchor in 2576-px coords so it tracks the dot.
+  const pointX = Math.round((DOT_X_PCT / 100) * 2576);
+  const pointY = Math.round((DOT_Y_PCT / 100) * 2576);
   return (
     <div
       style={{
@@ -255,13 +277,13 @@ const VisionBeat: React.FC<{ frame: number }> = ({ frame }) => {
       }}
     >
       <Img
-        src={staticFile("keyframes/dep_14.png")}
+        src={staticFile("keyframes/dep_31.png")}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
           transform: `scale(${zoom})`,
-          transformOrigin: "55% 47%",
+          transformOrigin: `${DOT_X_PCT}% ${DOT_Y_PCT}%`,
         }}
       />
       {/* Pixel coordinate readout */}
@@ -278,13 +300,13 @@ const VisionBeat: React.FC<{ frame: number }> = ({ frame }) => {
           color: "#fff",
         }}
       >
-        2576 × 2576 px · point = (403, 312)
+        2576 × 2576 px · point = ({pointX}, {pointY})
       </div>
       <div
         style={{
           position: "absolute",
-          left: "55%",
-          top: "47%",
+          left: `${DOT_X_PCT}%`,
+          top: `${DOT_Y_PCT}%`,
           width: 18,
           height: 18,
           marginLeft: -9,
@@ -333,7 +355,7 @@ const SessionPane: React.FC<{ name: string; frame: number; offset: number }> = (
     "→ tool_call: judge.frame_walk",
     "  frames = 18 · res = 1920",
     "← findings: failed_grip",
-    "  point = (403, 312)",
+    "  point = (1262, 1546)",
     "→ submit_findings()",
     "  end_turn",
   ];
@@ -488,70 +510,3 @@ const ContextBeat: React.FC<{ frame: number }> = ({ frame }) => {
   );
 };
 
-// /memories/ tree filling up as agents hand off.
-const MemoryBeat: React.FC<{ frame: number }> = ({ frame }) => {
-  const lines = [
-    { depth: 0, name: "/memories/", at: 0, color: colors.ink3 },
-    { depth: 1, name: "plan.md", at: 8, color: colors.phasePlanner },
-    { depth: 1, name: "test_matrix.csv", at: 14, color: colors.phasePlanner },
-    { depth: 1, name: "rollouts/", at: 22, color: colors.phaseRollout },
-    { depth: 2, name: "cal_00.mp4", at: 28, color: colors.phaseRollout },
-    { depth: 2, name: "cal_01.mp4", at: 32, color: colors.phaseRollout },
-    { depth: 2, name: "dep_14.mp4", at: 38, color: colors.phaseRollout },
-    { depth: 1, name: "human_labels.jsonl", at: 48, color: colors.phaseLabeling },
-    { depth: 1, name: "findings.jsonl", at: 60, color: colors.phaseJudge },
-    { depth: 1, name: "report.md", at: 80, color: colors.phaseReport },
-  ];
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        background: "#0e1116",
-        border: `1px solid ${colors.line}`,
-        borderRadius: 16,
-        padding: 22,
-        fontFamily: fonts.mono,
-        fontSize: 14,
-        color: "#a8c7fa",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          letterSpacing: 1.6,
-          color: "#6f7681",
-          textTransform: "uppercase",
-          marginBottom: 14,
-        }}
-      >
-        ● mirror_root · artifact tree
-      </div>
-
-      {lines.map((l) => {
-        const op = interpolate(frame, [l.at - 4, l.at + 8], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
-        return (
-          <div
-            key={l.name}
-            style={{
-              opacity: op,
-              paddingLeft: l.depth * 22,
-              lineHeight: 1.7,
-              color: l.depth === 0 ? "#9aa0a6" : "#fff",
-            }}
-          >
-            <span style={{ color: l.color }}>↳</span>{" "}
-            <span style={{ color: l.depth === 0 ? "#9aa0a6" : "#e8eaed" }}>
-              {l.name}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-};

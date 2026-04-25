@@ -6,11 +6,12 @@ import { MarathonHookScene } from "./scenes/MarathonHookScene";
 import { PersonalBeatScene } from "./scenes/PersonalBeatScene";
 import { NameRevealScene } from "./scenes/NameRevealScene";
 import { PipelineScene } from "./scenes/PipelineScene";
-import { JudgeScene } from "./scenes/JudgeScene";
+import { JudgeAnalysisScene } from "./scenes/JudgeAnalysisScene";
 import { PopulationsScene } from "./scenes/PopulationsScene";
-import { JudgeTrustScene } from "./scenes/JudgeTrustScene";
+import { JudgeChallengesScene } from "./scenes/JudgeChallengesScene";
 import { OpusMontageScene } from "./scenes/OpusMontageScene";
 import { CloseScene } from "./scenes/CloseScene";
+import { RatApiScene } from "./scenes/RatApiScene";
 import { Topbar } from "./components/Topbar";
 import { FaceSafeZone } from "./components/FaceSafeZone";
 import { colors, fonts } from "./theme";
@@ -26,19 +27,33 @@ const sec = (s: number) => Math.round(s * HERO_FPS);
 // Face-overlay corner: the user PiPs themselves at recording time.
 // Scenes flagged `faceCam` keep a 360x360 px face-safe zone clear in the
 // `faceSafeCorner` corner. See `FaceSafeZone` for the debug overlay.
+// `name` is the label shown in the Remotion Studio timeline — keep it
+// short and ordered so scenes are easy to refer to in conversation.
 const SCENE_PLAN = [
-  { name: "marathon", start: 0, dur: 18, faceCam: false },
-  { name: "personal", start: 18, dur: 15, faceCam: true, faceSafeCorner: "br" as const },
-  { name: "nameReveal", start: 33, dur: 15, faceCam: true, faceSafeCorner: "br" as const },
-  { name: "pipeline", start: 48, dur: 22, faceCam: true, faceSafeCorner: "br" as const },
-  { name: "judgeDemo", start: 70, dur: 15, faceCam: false },
-  { name: "populations", start: 85, dur: 15, faceCam: false },
-  { name: "judgeTrust", start: 100, dur: 15, faceCam: false },
-  { name: "opus", start: 115, dur: 25, faceCam: true, faceSafeCorner: "br" as const },
-  { name: "close", start: 140, dur: 10, faceCam: false },
+  { name: "01 · Marathon hook", start: 0, dur: 50, faceCam: false, Component: MarathonHookScene },
+  { name: "02 · Personal beat", start: 50, dur: 15, faceCam: true, faceSafeCorner: "br" as const, Component: PersonalBeatScene },
+  { name: "03 · Name reveal", start: 65, dur: 15, faceCam: true, faceSafeCorner: "br" as const, Component: NameRevealScene },
+  { name: "04 · Pipeline", start: 80, dur: 22, faceCam: true, faceSafeCorner: "br" as const, Component: PipelineScene },
+  // Visual evaluation: failed video left, judge analysis right. Final 7 s of
+  // the scene cross-fade into a thumbnail + cluster cards reveal — the prior
+  // JudgeTrustScene's deployment findings were folded into this beat.
+  { name: "05 · Judge analysis", start: 102, dur: 22, faceCam: false, Component: JudgeAnalysisScene },
+  // Engineering-challenge beat: point-abstention + telemetry-as-context,
+  // with a 4×2 wall of buggy-dot keyframes between the bug and the fix.
+  { name: "06 · Judge challenges", start: 124, dur: 16, faceCam: false, Component: JudgeChallengesScene },
+  { name: "07 · Populations", start: 140, dur: 12, faceCam: false, Component: PopulationsScene },
+  { name: "08 · Opus 4.7", start: 152, dur: 15, faceCam: true, faceSafeCorner: "br" as const, Component: OpusMontageScene },
+  // Close holds ~5 s on the final card before the API_RAT post-credits, so
+  // the headline numbers have time to land for VO.
+  { name: "09 · Close", start: 167, dur: 15, faceCam: false, Component: CloseScene },
+  // Post-credits sign-off referencing the user's side project, API_RAT.
+  // The marathon hook is intentionally long (~30 s held pose on the
+  // fully-resolved trip frame for VO room); user is reworking total length
+  // separately.
+  { name: "10 · API_RAT", start: 182, dur: 11, faceCam: false, Component: RatApiScene },
 ] as const;
 
-export const HERO_DURATION_FRAMES = sec(150);
+export const HERO_DURATION_FRAMES = sec(193);
 
 // Toggle to render face-safe-zone debug rectangles. Off for production renders.
 const SHOW_FACE_SAFE_DEBUG = false;
@@ -60,33 +75,16 @@ export const Hero: React.FC = () => {
 
       <Topbar />
 
-      <Sequence from={sec(SCENE_PLAN[0].start)} durationInFrames={sec(SCENE_PLAN[0].dur)}>
-        <MarathonHookScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[1].start)} durationInFrames={sec(SCENE_PLAN[1].dur)}>
-        <PersonalBeatScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[2].start)} durationInFrames={sec(SCENE_PLAN[2].dur)}>
-        <NameRevealScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[3].start)} durationInFrames={sec(SCENE_PLAN[3].dur)}>
-        <PipelineScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[4].start)} durationInFrames={sec(SCENE_PLAN[4].dur)}>
-        <JudgeScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[5].start)} durationInFrames={sec(SCENE_PLAN[5].dur)}>
-        <PopulationsScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[6].start)} durationInFrames={sec(SCENE_PLAN[6].dur)}>
-        <JudgeTrustScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[7].start)} durationInFrames={sec(SCENE_PLAN[7].dur)}>
-        <OpusMontageScene />
-      </Sequence>
-      <Sequence from={sec(SCENE_PLAN[8].start)} durationInFrames={sec(SCENE_PLAN[8].dur)}>
-        <CloseScene />
-      </Sequence>
+      {SCENE_PLAN.map(({ name, start, dur, Component }) => (
+        <Sequence
+          key={name}
+          name={name}
+          from={sec(start)}
+          durationInFrames={sec(dur)}
+        >
+          <Component />
+        </Sequence>
+      ))}
 
       {SHOW_FACE_SAFE_DEBUG ? (
         <>

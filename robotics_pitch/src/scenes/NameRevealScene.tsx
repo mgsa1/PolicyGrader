@@ -10,21 +10,15 @@ import {
 import { colors, fonts, numbers } from "../theme";
 import { useFadeIn } from "../components/easing";
 
-// 0:33–0:48 · Name reveal + value + comparison panel.
+// 0:33–0:48 · Name reveal.
 //
-//   Beat A (0–7 s): "PolicyGrader." big, with the "One prompt in / measured
-//                   eval out" tagline + "Powered by Claude Opus 4.7 and
-//                   Claude Managed Agents" sub.
-//   Beat B (7–15 s): the absolute key value prop — the run-level hero's
-//                   "This run vs manual review" 6-cell metric grid from
-//                   src/ui/panes/chrome.py::_hero_right:
-//                     Cost / Wall time / Scenarios /
-//                     Label accuracy / Avg recall / Clusters
-//                   Cost & Wall time carry strikethrough baselines and a
-//                   delta percentage; Scenarios shows the cohort split with
-//                   the cal/dep colors.
+//   Beat A (0–10 s): centered title block — PolicyGrader · tagline ·
+//                    "Powered by Claude Opus 4.7 and Claude Managed Agents".
+//                    Nothing else on screen. Vertically + horizontally centered.
+//   Beat B (10–15 s): the "This run vs manual review" 6-cell dashboard
+//                    slides up from the bottom of the viewport. The title
+//                    nudges up to share the screen.
 
-// Mirror format_cost ("$X.XX") and format_duration ("Hh Mm Ss").
 const formatCost = (usd: number) => `$${usd.toFixed(2)}`;
 const formatDuration = (seconds: number) => {
   const total = Math.floor(seconds);
@@ -34,15 +28,23 @@ const formatDuration = (seconds: number) => {
   return h ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
 };
 
-const PIPELINE_SECONDS = numbers.pipelineHours * 3600;
-const MANUAL_SECONDS = numbers.manualHours * 3600;
-const TIME_SAVED_SECONDS = MANUAL_SECONDS - PIPELINE_SECONDS;
+// Hardcoded for the dashboard reveal — illustration scenario:
+//   2 830 scenarios = 50 cal + 2 780 dep
+//   pipeline wall time = 50 min · manual baseline still 71 h
+const DASHBOARD = {
+  scenarios: 2830,
+  scenariosCal: 50,
+  scenariosDep: 2780,
+  pipelineSeconds: 50 * 60, // 50 min → "50m 0s"
+  manualSeconds: 71 * 3600,
+  timeDeltaPct: -99,
+};
 
 export const NameRevealScene: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Beat A — title card.
+  // --- Beat A: centered title -------------------------------------------
   const eyebrowOp = useFadeIn(frame, 6, 18);
   const titleOp = useFadeIn(frame, 14, 22);
   const titleScale = spring({
@@ -50,70 +52,44 @@ export const NameRevealScene: React.FC = () => {
     fps,
     config: { damping: 18, stiffness: 160, mass: 0.7 },
   });
-  const taglineOp = useFadeIn(frame, 32, 22);
-  const poweredOp = useFadeIn(frame, 50, 22);
+  const taglineOp = useFadeIn(frame, 36, 22);
+  const poweredOp = useFadeIn(frame, 56, 22);
 
-  // Beat B — Overview KPI strip slides up.
-  const kpiEnter = 7 * fps;
-  const kpiEyebrowOp = useFadeIn(frame, kpiEnter, 14);
-  const kpiOp = useFadeIn(frame, kpiEnter + 6, 18);
-  const kpiY = interpolate(
-    frame,
-    [kpiEnter + 6, kpiEnter + 28],
-    [40, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-      easing: Easing.bezier(0.22, 1, 0.36, 1),
-    },
-  );
+  // --- Beat B: dashboard slides in at the very end ----------------------
+  const dashEnter = 10 * fps; // dashboard begins entering at 10 s
+  const dashT = interpolate(frame, [dashEnter, dashEnter + 30], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.22, 1, 0.36, 1),
+  });
+  const dashTranslateY = (1 - dashT) * 110; // %, slides up from below
 
-  // Title card drifts up + dims slightly when KPI enters.
-  const titleDrift = interpolate(
-    frame,
-    [kpiEnter - 4, kpiEnter + 18],
-    [0, -28],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-      easing: Easing.bezier(0.22, 1, 0.36, 1),
-    },
-  );
-  const titleFade = interpolate(
-    frame,
-    [kpiEnter - 4, kpiEnter + 18],
-    [1, 0.65],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-  );
+  // Title nudges up a touch when the dashboard arrives.
+  const titleNudgeY = -dashT * 70;
 
   return (
-    <AbsoluteFill
-      style={{
-        paddingTop: 132,
-        paddingLeft: 96,
-        paddingRight: 96,
-        display: "flex",
-        flexDirection: "column",
-        gap: 24,
-      }}
-    >
-      {/* Beat A: title card */}
-      <div
+    <AbsoluteFill style={{ position: "relative" }}>
+      {/* Beat A: centered title block */}
+      <AbsoluteFill
         style={{
-          opacity: titleFade,
-          transform: `translateY(${titleDrift}px)`,
-          maxWidth: 1280,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+          padding: "0 96px",
+          transform: `translateY(${titleNudgeY}px)`,
         }}
       >
         <div
           style={{
             opacity: eyebrowOp,
             fontFamily: fonts.mono,
-            fontSize: 12,
-            letterSpacing: 2.6,
+            fontSize: 13,
+            letterSpacing: 2.8,
             color: colors.ink4,
             textTransform: "uppercase",
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
             gap: 12,
           }}
@@ -132,14 +108,13 @@ export const NameRevealScene: React.FC = () => {
 
         <div
           style={{
-            marginTop: 14,
+            marginTop: 22,
             opacity: titleOp,
             transform: `scale(${0.96 + titleScale * 0.04})`,
-            transformOrigin: "left center",
-            fontSize: 124,
+            fontSize: 168,
             fontWeight: 700,
-            lineHeight: 0.96,
-            letterSpacing: -3.4,
+            lineHeight: 0.95,
+            letterSpacing: -4.4,
             color: colors.ink,
           }}
         >
@@ -150,8 +125,8 @@ export const NameRevealScene: React.FC = () => {
         <div
           style={{
             opacity: taglineOp,
-            marginTop: 18,
-            fontSize: 30,
+            marginTop: 28,
+            fontSize: 36,
             color: colors.ink2,
             lineHeight: 1.3,
             letterSpacing: -0.4,
@@ -160,15 +135,15 @@ export const NameRevealScene: React.FC = () => {
           <span style={{ fontWeight: 600, color: colors.ink }}>
             One prompt in.
           </span>{" "}
-          <span style={{ color: colors.ink3 }}>A measured eval out.</span>
+          <span style={{ color: colors.ink3 }}>A full control policy stress test out.</span>
         </div>
 
         <div
           style={{
             opacity: poweredOp,
-            marginTop: 12,
+            marginTop: 18,
             fontFamily: fonts.mono,
-            fontSize: 14,
+            fontSize: 16,
             letterSpacing: 0.4,
             color: colors.ink4,
           }}
@@ -182,37 +157,37 @@ export const NameRevealScene: React.FC = () => {
             Claude Managed Agents
           </span>
         </div>
-      </div>
+      </AbsoluteFill>
 
-      {/* Beat B: "This run vs manual review" — the absolute key value prop */}
+      {/* Beat B: dashboard slides up from the bottom edge */}
       <div
         style={{
-          marginTop: 8,
-          opacity: kpiOp,
-          transform: `translateY(${kpiY}px)`,
+          position: "absolute",
+          left: 64,
+          right: 64,
+          bottom: 32,
+          transform: `translateY(${dashTranslateY}%)`,
+          opacity: dashT,
         }}
       >
-        {/* Eyebrow — mirrors .pg-hero-right-eyebrow in chrome.py */}
         <div
           style={{
-            opacity: kpiEyebrowOp,
-            marginBottom: 16,
             fontFamily: fonts.mono,
             fontSize: 12,
             letterSpacing: 2.6,
             color: colors.ink4,
             textTransform: "uppercase",
+            marginBottom: 12,
           }}
         >
           This run vs manual review
         </div>
 
-        {/* 6-cell metric grid — 3 cols × 2 rows. Mirrors .pg-metric-grid. */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 12,
+            gridTemplateColumns: "repeat(6, 1fr)",
+            gap: 10,
           }}
         >
           <MetricCell
@@ -223,14 +198,14 @@ export const NameRevealScene: React.FC = () => {
           />
           <MetricCell
             label="Wall time"
-            value={formatDuration(PIPELINE_SECONDS)}
-            baseline={formatDuration(MANUAL_SECONDS)}
-            deltaPct={numbers.timeDeltaPct}
+            value={formatDuration(DASHBOARD.pipelineSeconds)}
+            baseline={formatDuration(DASHBOARD.manualSeconds)}
+            deltaPct={DASHBOARD.timeDeltaPct}
           />
           <MetricCell
             label="Scenarios"
-            value={numbers.scenarios.toLocaleString()}
-            cohortSub={{ cal: numbers.scenariosCal, dep: numbers.scenariosDep }}
+            value={DASHBOARD.scenarios.toLocaleString()}
+            cohortSub={{ cal: DASHBOARD.scenariosCal, dep: DASHBOARD.scenariosDep }}
           />
           <MetricCell
             label="Label accuracy"
@@ -258,12 +233,9 @@ export const NameRevealScene: React.FC = () => {
 type MetricCellProps = {
   label: string;
   value: string;
-  // Cost / Wall time variants get strikethrough baseline + signed delta.
   baseline?: string;
   deltaPct?: number;
-  // Scenarios variant gets a cohort split.
   cohortSub?: { cal: number; dep: number };
-  // Other variants get a plain mono sub line.
   sub?: string;
 };
 
@@ -279,19 +251,19 @@ const MetricCell: React.FC<MetricCellProps> = ({
     style={{
       background: colors.surface,
       border: `1px solid ${colors.line}`,
-      borderRadius: 14,
-      padding: "18px 20px",
+      borderRadius: 12,
+      padding: "14px 16px",
       display: "flex",
       flexDirection: "column",
-      gap: 8,
+      gap: 6,
       boxShadow: "0 4px 14px rgba(31,31,31,0.04)",
     }}
   >
     <div
       style={{
         fontFamily: fonts.mono,
-        fontSize: 11,
-        letterSpacing: 1.8,
+        fontSize: 10,
+        letterSpacing: 1.6,
         color: colors.ink4,
         textTransform: "uppercase",
       }}
@@ -300,10 +272,10 @@ const MetricCell: React.FC<MetricCellProps> = ({
     </div>
     <div
       style={{
-        fontSize: 38,
+        fontSize: 28,
         fontWeight: 600,
         color: colors.ink,
-        letterSpacing: -0.8,
+        letterSpacing: -0.6,
         lineHeight: 1,
         fontVariantNumeric: "tabular-nums",
       }}
@@ -313,10 +285,10 @@ const MetricCell: React.FC<MetricCellProps> = ({
     <div
       style={{
         fontFamily: fonts.mono,
-        fontSize: 12,
+        fontSize: 11,
         color: colors.ink4,
         display: "flex",
-        gap: 8,
+        gap: 6,
         alignItems: "baseline",
       }}
     >

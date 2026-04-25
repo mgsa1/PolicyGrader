@@ -15,15 +15,12 @@ import { PhaseCard } from "../components/PhaseCard";
 
 // 0:48–1:10 · The pipeline.
 //
-// Five phase cards anchor the architecture (planner / rollout / labeling /
-// judge / reporter). Below them, an animated flow shows what actually
-// travels along the pipe:
+// Five phase cards anchor the architecture; below them an animated flow
+// shows the data moving:
+//   prompt → rollout videos → K judge sessions → report.md
 //
-//   prompt  →  rollout videos  →  K judge sessions  →  report.md
-//
-// Each beat of the flow lights up one of the phase cards above, so the
-// viewer maps the abstraction (cards) to the concrete data (boxes below).
-// No "submit_*" prose — the picture carries the message.
+// Per-rollout failure-analysis lives in its OWN downstream scene (Sequence 5,
+// JudgeAnalysisScene), so this scene stays focused on the pipeline picture.
 
 const PHASES = [
   {
@@ -65,22 +62,38 @@ const PHASES = [
   },
 ];
 
-const STAGGER = 14;
+// Two stacks: SIMULATION (Planner + Rollout) and AI ANALYSIS (Labeling + Judge
+// + Reporter). The reveal is paced for voice-over — each card lands with room
+// to introduce, and the two groups are separated by a deliberate beat so the
+// stack handoff reads on screen.
+const STAGGER = 36; // 1.2 s between cards within a group
+const GROUP_GAP = 60; // extra 2 s pause between sim and ai groups
+const CARD_LAND_AFTER = 28; // PhaseCard slide + artifact reveal duration
 
-// Real rollout videos from the last eval run — mix of successful (cal_01,
-// cal_05, dep_05, dep_13) and failed (cal_09, cal_13, dep_29, cal_04). Each
-// clip is 2.7 s @ 30 fps; we Loop them so they always look like a live run.
+const CARD_DELAYS = [
+  20, // 01 Planner    (sim)
+  20 + STAGGER, // 02 Rollout    (sim)
+  20 + 2 * STAGGER + GROUP_GAP, // 03 Labeling   (ai)
+  20 + 3 * STAGGER + GROUP_GAP, // 04 Judge      (ai)
+  20 + 4 * STAGGER + GROUP_GAP, // 05 Reporter   (ai)
+];
+const SIM_BRACKET_AT = 12;
+const AI_BRACKET_AT = CARD_DELAYS[2] - 10;
+
+// Anthropic coral — used for the Claude sparkle mark and the AI-stack wash.
+const ANTHROPIC_CORAL = "#cc785c";
+
 export const ROLLOUT_VIDEOS: { src: string; outcome: "pass" | "fail" }[] = [
-  { src: "rollouts/cal_01.mp4", outcome: "pass" },
-  { src: "rollouts/cal_09.mp4", outcome: "fail" },
-  { src: "rollouts/dep_05.mp4", outcome: "pass" },
-  { src: "rollouts/cal_13.mp4", outcome: "fail" },
   { src: "rollouts/cal_05.mp4", outcome: "pass" },
   { src: "rollouts/dep_29.mp4", outcome: "fail" },
   { src: "rollouts/dep_13.mp4", outcome: "pass" },
+  { src: "rollouts/cal_09.mp4", outcome: "fail" },
+  { src: "rollouts/cal_13.mp4", outcome: "fail" },
+  { src: "rollouts/cal_01.mp4", outcome: "pass" },
   { src: "rollouts/cal_04.mp4", outcome: "fail" },
+  { src: "rollouts/dep_05.mp4", outcome: "pass" },
 ];
-export const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30); // 81 frames per video
+export const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30);
 
 export const PROMPT_TEXT = "Evaluate Lift policy under cube_xy_jitter_m=0.15";
 
@@ -90,14 +103,15 @@ export const PipelineScene: React.FC = () => {
 
   const headerOp = useFadeIn(frame, 0, 18);
 
-  // All cards have landed by this frame.
-  const cardsLandedAt = 20 + (PHASES.length - 1) * STAGGER + 22;
-
-  // Flow animation timeline (after cards land).
-  const T_PROMPT_TYPED = cardsLandedAt + 8; // prompt finishes typing
-  const T_ROLLOUTS_OUT = T_PROMPT_TYPED + 18; // first thumb appears
-  const T_JUDGES_OUT = T_ROLLOUTS_OUT + 30; // judges start receiving
-  const T_REPORT_OUT = T_JUDGES_OUT + 28; // reporter consolidates
+  // After the last AI card lands, hold so the audience absorbs the full stack
+  // before the data flow kicks off.
+  const cardsLandedAt = CARD_DELAYS[CARD_DELAYS.length - 1] + CARD_LAND_AFTER;
+  const HOLD_AFTER_CARDS = 60;
+  const T_PROMPT_ENTER = cardsLandedAt + HOLD_AFTER_CARDS;
+  const T_PROMPT_TYPED = T_PROMPT_ENTER + 20;
+  const T_ROLLOUTS_OUT = T_PROMPT_TYPED + 30;
+  const T_JUDGES_OUT = T_ROLLOUTS_OUT + 50;
+  const T_REPORT_OUT = T_JUDGES_OUT + 45;
 
   return (
     <AbsoluteFill
@@ -136,70 +150,223 @@ export const PipelineScene: React.FC = () => {
         </div>
       </div>
 
-      {/* Phase cards row */}
-      <div
-        style={{
-          marginTop: 38,
-          display: "flex",
-          alignItems: "stretch",
-          gap: 14,
-        }}
-      >
-        {PHASES.map((p, i) => (
-          <PhaseCard
-            key={p.number}
-            index={i}
-            total={PHASES.length}
-            number={p.number}
-            name={p.name.toUpperCase()}
-            artifact={p.artifact}
-            detail={p.detail}
-            color={p.color}
-            delayFrames={20 + i * STAGGER}
-            badge={p.badge}
+      <div style={{ marginTop: 38 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)",
+            gap: 14,
+            marginBottom: 18,
+          }}
+        >
+          <StackBracket
+            label="Simulation Stack"
+            enterAt={SIM_BRACKET_AT}
+            frame={frame}
+            style={{ gridColumn: "1 / span 2" }}
           />
-        ))}
+          <StackBracket
+            label="AI Analysis Stack"
+            enterAt={AI_BRACKET_AT}
+            frame={frame}
+            style={{ gridColumn: "3 / span 3" }}
+            icon={<ClaudeMark size={13} color={ANTHROPIC_CORAL} />}
+          />
+        </div>
+        <div style={{ position: "relative" }}>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              gridTemplateColumns: "repeat(5, 1fr)",
+              gap: 14,
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          >
+            <AnthropicWash enterAt={AI_BRACKET_AT} frame={frame} />
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(5, 1fr)",
+              gap: 14,
+              alignItems: "stretch",
+              position: "relative",
+              zIndex: 1,
+            }}
+          >
+            {PHASES.map((p, i) => (
+              <PhaseCard
+                key={p.number}
+                index={i}
+                total={PHASES.length}
+                number={p.number}
+                name={p.name.toUpperCase()}
+                artifact={p.artifact}
+                detail={p.detail}
+                color={p.color}
+                delayFrames={CARD_DELAYS[i]}
+                badge={p.badge}
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* Animated flow underneath: prompt → rollouts → K judges → report */}
       <div
         style={{
-          marginTop: 36,
-          flex: 1,
+          marginTop: 42,
+          height: 340,
           display: "grid",
           gridTemplateColumns: "1.1fr 28px 1.4fr 28px 1.1fr 28px 0.9fr",
-          alignItems: "center",
+          alignItems: "stretch",
           gap: 0,
         }}
       >
-        {/* 1. Prompt */}
         <PromptBox
           text={PROMPT_TEXT}
-          enterAt={cardsLandedAt}
+          enterAt={T_PROMPT_ENTER}
           finishAt={T_PROMPT_TYPED}
           frame={frame}
         />
-
         <Arrow color={colors.phasePlanner} activeAt={T_PROMPT_TYPED} frame={frame} />
-
-        {/* 2. Rollout videos */}
         <RolloutsBox enterAt={T_ROLLOUTS_OUT} frame={frame} />
-
         <Arrow color={colors.phaseJudge} activeAt={T_JUDGES_OUT} frame={frame} />
-
-        {/* 3. K judge sessions */}
         <JudgesBox enterAt={T_JUDGES_OUT} frame={frame} />
-
         <Arrow color={colors.phaseReport} activeAt={T_REPORT_OUT} frame={frame} />
-
-        {/* 4. report.md */}
         <ReportBox enterAt={T_REPORT_OUT} frame={frame} />
       </div>
     </AbsoluteFill>
   );
 };
 
-// ---------------- Flow boxes ---------------------------------------------
+// ---- Anthropic-flavoured AI Analysis underlay ---------------------------
+
+const ClaudeMark: React.FC<{ size: number; color: string }> = ({
+  size,
+  color,
+}) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    style={{ display: "block" }}
+    aria-hidden
+  >
+    <path
+      d="M12 0 L13.2 8.5 L19.8 4.2 L15.5 10.8 L24 12 L15.5 13.2 L19.8 19.8 L13.2 15.5 L12 24 L10.8 15.5 L4.2 19.8 L8.5 13.2 L0 12 L8.5 10.8 L4.2 4.2 L10.8 8.5 Z"
+      fill={color}
+    />
+  </svg>
+);
+
+const AnthropicWash: React.FC<{ enterAt: number; frame: number }> = ({
+  enterAt,
+  frame,
+}) => {
+  const op = useFadeIn(frame, enterAt, 22);
+  return (
+    <div
+      style={{
+        gridColumn: "3 / span 3",
+        gridRow: 1,
+        background:
+          "linear-gradient(180deg, rgba(204,120,92,0.09) 0%, rgba(204,120,92,0.04) 100%)",
+        borderRadius: 18,
+        margin: "-14px -8px",
+        opacity: op,
+        pointerEvents: "none",
+      }}
+    />
+  );
+};
+
+// ---- Stack bracket (groups phase cards into Simulation / AI Analysis) ---
+
+const StackBracket: React.FC<{
+  label: string;
+  enterAt: number;
+  frame: number;
+  style?: React.CSSProperties;
+  icon?: React.ReactNode;
+}> = ({ label, enterAt, frame, style, icon }) => {
+  const op = useFadeIn(frame, enterAt, 18);
+  const dropY = interpolate(frame, [enterAt, enterAt + 22], [-6, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.22, 1, 0.36, 1),
+  });
+  return (
+    <div
+      style={{
+        ...style,
+        opacity: op,
+        transform: `translateY(${dropY}px)`,
+        position: "relative",
+        height: 30,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 15,
+          left: 0,
+          right: 0,
+          height: 1,
+          background: colors.line2,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          top: 15,
+          left: 0,
+          width: 1,
+          height: 15,
+          background: colors.line2,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          top: 15,
+          right: 0,
+          width: 1,
+          height: 15,
+          background: colors.line2,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: colors.bg,
+          padding: "0 16px",
+          fontFamily: fonts.mono,
+          fontSize: 12,
+          letterSpacing: 2.4,
+          color: colors.ink4,
+          textTransform: "uppercase",
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+          lineHeight: "30px",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        {icon}
+        {label}
+      </div>
+    </div>
+  );
+};
+
+// ---- Flow boxes ---------------------------------------------------------
 
 export const PromptBox: React.FC<{
   text: string;
@@ -215,27 +382,26 @@ export const PromptBox: React.FC<{
       Math.floor(((frame - enterAt) / (finishAt - enterAt)) * text.length),
     ),
   );
-  // Cursor blinks while typing.
-  const showCursor = frame >= enterAt && frame < finishAt + 30 && (frame % 30 < 18);
+  const showCursor =
+    frame >= enterAt && frame < finishAt + 30 && frame % 30 < 18;
   return (
     <div
       style={{
         opacity: op,
         background: colors.surface,
         border: `1px solid ${colors.line}`,
-        borderRadius: 12,
-        padding: 16,
+        borderRadius: 10,
+        padding: "12px 14px",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        boxShadow: "0 4px 14px rgba(31,31,31,0.04)",
+        gap: 6,
       }}
     >
       <div
         style={{
           fontFamily: fonts.mono,
-          fontSize: 10,
-          letterSpacing: 1.8,
+          fontSize: 9,
+          letterSpacing: 1.6,
           color: colors.phasePlanner,
           textTransform: "uppercase",
           fontWeight: 600,
@@ -246,16 +412,13 @@ export const PromptBox: React.FC<{
       <div
         style={{
           fontFamily: fonts.mono,
-          fontSize: 14,
+          fontSize: 13,
           color: colors.ink,
-          lineHeight: 1.45,
-          minHeight: 60,
+          lineHeight: 1.4,
         }}
       >
         {text.slice(0, charsVisible)}
-        {showCursor ? (
-          <span style={{ color: colors.accent }}>▍</span>
-        ) : null}
+        {showCursor ? <span style={{ color: colors.accent }}>▍</span> : null}
       </div>
     </div>
   );
@@ -264,131 +427,129 @@ export const PromptBox: React.FC<{
 export const RolloutsBox: React.FC<{ enterAt: number; frame: number }> = ({
   enterAt,
   frame,
-}) => {
-  return (
+}) => (
+  <div
+    style={{
+      opacity: useFadeIn(frame, enterAt - 4, 14),
+      background: colors.surface,
+      border: `1px solid ${colors.line}`,
+      borderRadius: 10,
+      padding: "10px 12px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 6,
+    }}
+  >
     <div
       style={{
-        background: colors.surface,
-        border: `1px solid ${colors.line}`,
-        borderRadius: 12,
-        padding: 14,
+        fontFamily: fonts.mono,
+        fontSize: 9,
+        letterSpacing: 1.6,
+        color: colors.phaseRollout,
+        textTransform: "uppercase",
+        fontWeight: 600,
         display: "flex",
-        flexDirection: "column",
-        gap: 10,
+        justifyContent: "space-between",
       }}
     >
-      <div
-        style={{
-          opacity: useFadeIn(frame, enterAt - 4, 14),
-          fontFamily: fonts.mono,
-          fontSize: 10,
-          letterSpacing: 1.8,
-          color: colors.phaseRollout,
-          textTransform: "uppercase",
-          fontWeight: 600,
-          display: "flex",
-          justifyContent: "space-between",
-        }}
-      >
-        <span>● rollouts</span>
-        <span style={{ color: colors.ink4 }}>video × N</span>
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 6,
-        }}
-      >
-        {ROLLOUT_VIDEOS.map((v, i) => {
-          const delay = enterAt + i * 4;
-          const op = interpolate(frame, [delay, delay + 12], [0, 1], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-            easing: Easing.bezier(0.22, 1, 0.36, 1),
-          });
-          const scale = interpolate(frame, [delay, delay + 16], [0.9, 1], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-            easing: Easing.bezier(0.22, 1, 0.36, 1),
-          });
-          const ringColor = v.outcome === "pass" ? colors.ok : colors.err;
-          return (
+      <span>● rollouts</span>
+      <span style={{ color: colors.ink4 }}>video × N</span>
+    </div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(4, 1fr)",
+        gap: 5,
+        flex: 1,
+      }}
+    >
+      {ROLLOUT_VIDEOS.map((v, i) => {
+        const delay = enterAt + i * 4;
+        const op = interpolate(frame, [delay, delay + 12], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+          easing: Easing.bezier(0.22, 1, 0.36, 1),
+        });
+        const scale = interpolate(frame, [delay, delay + 16], [0.9, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+          easing: Easing.bezier(0.22, 1, 0.36, 1),
+        });
+        const ringColor = v.outcome === "pass" ? colors.ok : colors.err;
+        return (
+          <div
+            key={v.src}
+            style={{
+              position: "relative",
+              opacity: op,
+              transform: `scale(${scale})`,
+              aspectRatio: "1 / 1",
+              borderRadius: 6,
+              overflow: "hidden",
+              background: colors.surface2,
+              boxShadow: `0 0 0 1.5px ${ringColor}aa`,
+            }}
+          >
+            <Loop durationInFrames={ROLLOUT_LOOP_FRAMES}>
+              <OffthreadVideo
+                src={staticFile(v.src)}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                muted
+              />
+            </Loop>
             <div
-              key={v.src}
               style={{
-                position: "relative",
-                opacity: op,
-                transform: `scale(${scale})`,
-                aspectRatio: "1 / 1",
-                borderRadius: 6,
-                overflow: "hidden",
-                background: colors.surface2,
-                boxShadow: `0 0 0 1.5px ${ringColor}aa`,
+                position: "absolute",
+                bottom: 4,
+                right: 4,
+                fontFamily: fonts.mono,
+                fontSize: 8,
+                letterSpacing: 1.0,
+                padding: "1px 5px",
+                borderRadius: 3,
+                background: ringColor,
+                color: "#fff",
+                textTransform: "uppercase",
+                fontWeight: 700,
               }}
             >
-              <Loop durationInFrames={ROLLOUT_LOOP_FRAMES}>
-                <OffthreadVideo
-                  src={staticFile(v.src)}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  muted
-                />
-              </Loop>
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 4,
-                  right: 4,
-                  fontFamily: fonts.mono,
-                  fontSize: 8,
-                  letterSpacing: 1.0,
-                  padding: "1px 5px",
-                  borderRadius: 3,
-                  background: ringColor,
-                  color: "#fff",
-                  textTransform: "uppercase",
-                  fontWeight: 700,
-                }}
-              >
-                {v.outcome}
-              </div>
+              {v.outcome}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
     </div>
-  );
-};
+  </div>
+);
 
 export const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
   enterAt,
   frame,
 }) => {
-  // Four "judge worker" mini-terminals stacked vertically.
   const workers = [
     { id: "judge-1", lines: ["→ rollout=cal_07", "← failed_grip", "  point=(403,312)"] },
     { id: "judge-2", lines: ["→ rollout=dep_14", "← missed_approach", "  point=null"] },
-    { id: "judge-3", lines: ["→ rollout=dep_02", "← failed_grip", "  point=(388,294)"] },
+    { id: "judge-3", lines: ["→ rollout=cal_04", "← failed_grip", "  point=(957,1101)"] },
     { id: "judge-4", lines: ["→ rollout=dep_11", "← missed_approach", "  point=null"] },
   ];
   return (
     <div
       style={{
+        opacity: useFadeIn(frame, enterAt - 4, 14),
         background: colors.surface,
         border: `1px solid ${colors.line}`,
-        borderRadius: 12,
-        padding: 14,
+        borderRadius: 10,
+        padding: "10px 12px",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 6,
       }}
     >
       <div
         style={{
-          opacity: useFadeIn(frame, enterAt - 4, 14),
           fontFamily: fonts.mono,
-          fontSize: 10,
-          letterSpacing: 1.8,
+          fontSize: 9,
+          letterSpacing: 1.6,
           color: colors.phaseJudge,
           textTransform: "uppercase",
           fontWeight: 600,
@@ -403,7 +564,7 @@ export const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
-          gap: 6,
+          gap: 5,
         }}
       >
         {workers.map((w, i) => {
@@ -419,12 +580,12 @@ export const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
               style={{
                 opacity: op,
                 background: "#0e1116",
-                borderRadius: 6,
-                padding: "8px 10px",
+                borderRadius: 5,
+                padding: "6px 8px",
                 fontFamily: fonts.mono,
-                fontSize: 9,
+                fontSize: 8.5,
                 color: "#a8c7fa",
-                lineHeight: 1.45,
+                lineHeight: 1.4,
               }}
             >
               <div
@@ -456,19 +617,18 @@ export const JudgesBox: React.FC<{ enterAt: number; frame: number }> = ({
           );
         })}
       </div>
-      {/* +k hint — there are as many judges as the user asked for. */}
       <div
         style={{
           opacity: useFadeIn(frame, enterAt + workers.length * 6 + 8, 16),
-          marginTop: 4,
-          padding: "6px 8px",
-          border: `1px dashed ${colors.phaseJudge}80`,
-          borderRadius: 6,
-          background: `${colors.phaseJudge}0d`,
+          marginTop: 2,
+          padding: "4px 8px",
+          border: `1px dashed ${colors.phaseJudge}66`,
+          borderRadius: 5,
+          background: `${colors.phaseJudge}0a`,
           fontFamily: fonts.mono,
-          fontSize: 9,
+          fontSize: 8.5,
           color: colors.phaseJudge,
-          letterSpacing: 1.2,
+          letterSpacing: 1.0,
           textTransform: "uppercase",
           textAlign: "center",
           fontWeight: 600,
@@ -499,20 +659,20 @@ export const ReportBox: React.FC<{ enterAt: number; frame: number }> = ({
       style={{
         opacity: op,
         background: colors.surface,
-        border: `1px solid ${colors.phaseReport}`,
-        borderRadius: 12,
-        padding: 14,
+        border: `1px solid ${colors.phaseReport}80`,
+        borderRadius: 10,
+        padding: "10px 12px",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
-        boxShadow: `0 0 0 4px ${colors.phaseReport}14`,
+        gap: 4,
+        boxShadow: `0 0 0 3px ${colors.phaseReport}10`,
       }}
     >
       <div
         style={{
           fontFamily: fonts.mono,
-          fontSize: 10,
-          letterSpacing: 1.8,
+          fontSize: 9,
+          letterSpacing: 1.6,
           color: colors.phaseReport,
           textTransform: "uppercase",
           fontWeight: 600,
@@ -531,10 +691,10 @@ export const ReportBox: React.FC<{ enterAt: number; frame: number }> = ({
             style={{
               opacity: lineOp,
               fontFamily: fonts.mono,
-              fontSize: l.weight ? 11 : 10,
+              fontSize: l.weight ? 10 : 9,
               fontWeight: l.weight ?? 400,
               color: l.weight ? colors.ink : colors.ink3,
-              lineHeight: 1.4,
+              lineHeight: 1.35,
             }}
           >
             {l.text}
@@ -551,7 +711,6 @@ export const Arrow: React.FC<{ color: string; activeAt: number; frame: number }>
   frame,
 }) => {
   const op = useFadeIn(frame, activeAt - 6, 14);
-  // Token slides along the arrow once.
   const tokenT = interpolate(
     frame,
     [activeAt - 4, activeAt + 14],
@@ -559,45 +718,55 @@ export const Arrow: React.FC<{ color: string; activeAt: number; frame: number }>
     { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.bezier(0.22, 1, 0.36, 1) },
   );
   return (
-    <div style={{ position: "relative", height: 24, opacity: op }}>
-      <div
-        style={{
-          position: "absolute",
-          top: 11,
-          left: 0,
-          right: 0,
-          height: 2,
-          background: color,
-          opacity: 0.55,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          top: 4,
-          right: -2,
-          width: 0,
-          height: 0,
-          borderLeft: `8px solid ${color}`,
-          borderTop: "8px solid transparent",
-          borderBottom: "8px solid transparent",
-        }}
-      />
-      {tokenT >= 0 && tokenT <= 1 ? (
+    <div
+      style={{
+        position: "relative",
+        height: "100%",
+        opacity: op,
+        display: "flex",
+        alignItems: "center",
+      }}
+    >
+      <div style={{ position: "relative", width: "100%", height: 24 }}>
         <div
           style={{
             position: "absolute",
-            top: 6,
-            left: `${tokenT * 100}%`,
-            width: 12,
-            height: 12,
-            marginLeft: -6,
-            borderRadius: 999,
-            background: "#fff",
-            boxShadow: `0 0 0 2px ${color}, 0 0 12px ${color}`,
+            top: 11,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: color,
+            opacity: 0.55,
           }}
         />
-      ) : null}
+        <div
+          style={{
+            position: "absolute",
+            top: 4,
+            right: -2,
+            width: 0,
+            height: 0,
+            borderLeft: `8px solid ${color}`,
+            borderTop: "8px solid transparent",
+            borderBottom: "8px solid transparent",
+          }}
+        />
+        {tokenT >= 0 && tokenT <= 1 ? (
+          <div
+            style={{
+              position: "absolute",
+              top: 6,
+              left: `${tokenT * 100}%`,
+              width: 12,
+              height: 12,
+              marginLeft: -6,
+              borderRadius: 999,
+              background: "#fff",
+              boxShadow: `0 0 0 2px ${color}, 0 0 12px ${color}`,
+            }}
+          />
+        ) : null}
+      </div>
     </div>
   );
 };

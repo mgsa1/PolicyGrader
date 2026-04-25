@@ -19,6 +19,9 @@ import { useFadeIn } from "../components/easing";
 const usd = (n: number) =>
   "$" + n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
+const pctDrop = (baseline: number, actual: number) =>
+  `−${Math.round((1 - actual / baseline) * 100)}%`;
+
 export const CloseScene: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
@@ -121,7 +124,9 @@ export const CloseScene: React.FC = () => {
           opacity={rightOp}
           eyebrow="PolicyGrader"
           cost={usd(numbers.pipelineCostUsd)}
-          time={`${numbers.pipelineHours} h`}
+          time={`${numbers.pipelineMinutes} min`}
+          costDelta={pctDrop(numbers.manualCostUsd, numbers.pipelineCostUsd)}
+          timeDelta={pctDrop(numbers.manualHours * 60, numbers.pipelineMinutes)}
           tail="audited by the same model that did the work"
         />
       </div>
@@ -174,8 +179,10 @@ export const CloseScene: React.FC = () => {
             textAlign: "center",
           }}
         >
-          Eval the policy.{" "}
-          <span style={{ color: "#fff", fontWeight: 600 }}>Grade the grader.</span>
+          One prompt in.{" "}
+          <span style={{ color: "#fff", fontWeight: 600 }}>
+            A full control policy stress test out.
+          </span>
         </div>
 
         <div
@@ -189,12 +196,32 @@ export const CloseScene: React.FC = () => {
             textTransform: "uppercase",
           }}
         >
-          Anthropic · Opus 4.7 Hackathon
+          Powered by Claude Opus 4.7 and Claude Managed Agents
         </div>
       </AbsoluteFill>
     </AbsoluteFill>
   );
 };
+
+const DeltaPill: React.FC<{ label: string }> = ({ label }) => (
+  <div
+    style={{
+      marginTop: 12,
+      display: "inline-block",
+      padding: "4px 10px",
+      borderRadius: 999,
+      fontFamily: fonts.mono,
+      fontSize: 12,
+      fontWeight: 600,
+      letterSpacing: 0.4,
+      color: colors.ok,
+      background: `${colors.ok}1A`,
+      border: `1px solid ${colors.ok}55`,
+    }}
+  >
+    {label} vs manual
+  </div>
+);
 
 const Side: React.FC<{
   variant: "baseline" | "hero";
@@ -202,8 +229,10 @@ const Side: React.FC<{
   eyebrow: string;
   cost: string;
   time: string;
+  costDelta?: string;
+  timeDelta?: string;
   tail: string;
-}> = ({ variant, opacity, eyebrow, cost, time, tail }) => {
+}> = ({ variant, opacity, eyebrow, cost, time, costDelta, timeDelta, tail }) => {
   const isHero = variant === "hero";
   return (
     <div
@@ -268,6 +297,7 @@ const Side: React.FC<{
           >
             {cost}
           </div>
+          {isHero && costDelta ? <DeltaPill label={costDelta} /> : null}
         </div>
         <div>
           <div
@@ -294,6 +324,7 @@ const Side: React.FC<{
           >
             {time}
           </div>
+          {isHero && timeDelta ? <DeltaPill label={timeDelta} /> : null}
         </div>
       </div>
 

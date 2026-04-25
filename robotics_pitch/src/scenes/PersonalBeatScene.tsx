@@ -3,64 +3,116 @@ import {
   AbsoluteFill,
   useCurrentFrame,
   useVideoConfig,
-  Img,
+  OffthreadVideo,
+  Loop,
+  Sequence,
   staticFile,
-  interpolate,
-  Easing,
 } from "remotion";
-import { colors, fonts, numbers } from "../theme";
+import { colors, fonts } from "../theme";
 import { useFadeIn } from "../components/easing";
 
 // 0:18–0:33 · The pain.
 //
-// Text on the LEFT — "A robotics team watches thousands of rollout videos
-// by hand" with a cost counter that ticks up to the manual-baseline total.
-// On the RIGHT, a 5×5 wall of rollout thumbnails progressively gets a gray
-// "watched" overlay, one cell at a time, until the wall is dimmed.
+// LEFT: copy + cost / engineer-hours counter. Both ramp continuously
+// LINEARLY against scene frame so they never freeze or cap.
+//
+// RIGHT: 5-column infinite-feeling list of looping rollout videos.
+// The list scrolls upward at a constant rate. Cells flip to grey
+// INSTANTLY one-by-one in row-major order (top-left → down). The greying
+// rate is synced to scroll so the wave stays near the top of the viewport.
+// We define 5 × 20 = 100 logical cells but only render the ~30 currently
+// inside the viewport — keeps the simultaneous OffthreadVideo count low.
+// At the end of the scene the wall is STILL scrolling and STILL flipping
+// — the impression is "this is a tiny window into thousands".
 
-const ALL_FRAMES = [
-  ...Array.from({ length: 10 }, (_, i) => `cal_${String(i).padStart(2, "0")}.png`),
-  ...Array.from({ length: 15 }, (_, i) => `dep_${String(i).padStart(2, "0")}.png`),
+const VIDEO_POOL = [
+  "rollouts/cal_01.mp4",
+  "rollouts/cal_04.mp4",
+  "rollouts/cal_05.mp4",
+  "rollouts/cal_08.mp4",
+  "rollouts/cal_09.mp4",
+  "rollouts/cal_13.mp4",
+  "rollouts/cal_17.mp4",
+  "rollouts/cal_19.mp4",
+  "rollouts/dep_01.mp4",
+  "rollouts/dep_03.mp4",
+  "rollouts/dep_05.mp4",
+  "rollouts/dep_09.mp4",
+  "rollouts/dep_13.mp4",
+  "rollouts/dep_17.mp4",
+  "rollouts/dep_21.mp4",
+  "rollouts/dep_29.mp4",
 ];
+const ROLLOUT_LOOP_FRAMES = Math.round(2.7 * 30); // 81
 
 const COLS = 5;
-const ROWS = 5;
-const CELL = 200;
+const ROWS = 20; // big enough that scroll never reaches the end inside 15 s
+const CELL = 160;
 const GAP = 12;
+const ROW_PITCH = CELL + GAP; // 172
+const VISIBLE_ROWS = 5;
+const VIEWPORT_H = VISIBLE_ROWS * CELL + (VISIBLE_ROWS - 1) * GAP; // 848
+
+// Pace: greying advances 1 cell per FRAMES_PER_CELL frames; scroll advances
+// in lock-step. With matched rates the grey wave sits at a constant
+// viewport-Y = GREY_PRE_ROLL_FRAMES × PX_PER_FRAME — so we give greying a
+// head start to push the wave off the top edge (where the vignette would
+// hide it) and into the visible middle of the viewport.
+const FRAMES_PER_CELL = 6.4;
+const PX_PER_FRAME = ROW_PITCH / (FRAMES_PER_CELL * COLS); // ≈ 5.4 px/f
+// 75 × 5.375 ≈ 403 px → wave settles at the middle of the 848 px viewport.
+// Side effect: at scene start, the first ~2 rows are already grey, which
+// reads as "the wave has been running for a while" — appropriate for the beat.
+const GREY_PRE_ROLL_FRAMES = 75;
+
+// Counter rates — UNCAPPED. Climb linearly the whole scene.
+const USD_PER_FRAME = 22; // ≈ $9 900 over 15 s
+const HOURS_PER_FRAME = 0.4; // ≈ 180 h over 15 s
 
 const usd = (n: number) =>
-  "$" + n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  "$" + Math.round(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+// Deterministic per-cell hash → 0..1.
+const cellSeed = (i: number, salt = 0): number => {
+  let h = ((i + 1) * 2654435761 + salt * 374761393) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), h | 1);
+  h ^= h + Math.imul(h ^ (h >>> 7), h | 61);
+  return ((h ^ (h >>> 14)) >>> 0) / 4294967296;
+};
 
 export const PersonalBeatScene: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
 
   const wallFadeIn = useFadeIn(frame, 4, 18);
   const counterOp = useFadeIn(frame, 8, 16);
 
-  // Stagger thumbnails completing across most of the scene's runtime.
   const startFrame = 14;
-  const endFrame = durationInFrames - 24;
-  const totalCells = ALL_FRAMES.length;
+  const elapsedActive = Math.max(0, frame - startFrame);
 
-  const cellCompleteAt = (i: number) =>
-    startFrame + ((endFrame - startFrame) * i) / totalCells;
-
-  const cellsDone = Math.min(
-    totalCells,
-    Math.max(
-      0,
-      Math.floor(((frame - startFrame) / (endFrame - startFrame)) * totalCells),
-    ),
+  // Scroll + grey wave (both linear, both synchronized; grey leads scroll
+  // by GREY_PRE_ROLL_FRAMES so the wave sits in the visible middle).
+  const scrollY = elapsedActive * PX_PER_FRAME;
+  const greyedCells = Math.floor(
+    (elapsedActive + GREY_PRE_ROLL_FRAMES) / FRAMES_PER_CELL,
   );
 
-  // Counter is qualitative — each cell on the wall represents a *batch* of
-  // videos being reviewed, so we ramp into the thousands of dollars and the
-  // hundreds of engineer-hours by the end of the scene.
-  const PER_CELL_USD = 300;
-  const PER_CELL_HOURS = 6;
-  const dollarsTo = cellsDone * PER_CELL_USD;
-  const hoursTo = cellsDone * PER_CELL_HOURS;
+  // UNCAPPED counters.
+  const dollarsTo = elapsedActive * USD_PER_FRAME;
+  const hoursTo = elapsedActive * HOURS_PER_FRAME;
+
+  // Render only cells whose current viewport-Y is in or near the visible
+  // window (one cell of buffer above + below).
+  const buffer = ROW_PITCH;
+  const visibleCells: { i: number; col: number; viewportY: number; isGrey: boolean }[] =
+    [];
+  for (let i = 0; i < COLS * ROWS; i++) {
+    const row = Math.floor(i / COLS);
+    const col = i % COLS;
+    const viewportY = row * ROW_PITCH - scrollY;
+    if (viewportY > -ROW_PITCH - buffer && viewportY < VIEWPORT_H + buffer) {
+      visibleCells.push({ i, col, viewportY, isGrey: i < greyedCells });
+    }
+  }
 
   return (
     <AbsoluteFill
@@ -73,7 +125,7 @@ export const PersonalBeatScene: React.FC = () => {
         gap: 56,
       }}
     >
-      {/* LEFT: copy + cost counter */}
+      {/* LEFT: copy + uncapped cost counter */}
       <div
         style={{
           flex: 0.9,
@@ -188,95 +240,120 @@ export const PersonalBeatScene: React.FC = () => {
         </div>
       </div>
 
-      {/* RIGHT: 5×5 thumbnail wall */}
+      {/* RIGHT: scrolling list (only visible cells rendered) */}
       <div
         style={{
           flex: 1.1,
-          display: "grid",
-          gridTemplateColumns: `repeat(${COLS}, ${CELL}px)`,
-          gridTemplateRows: `repeat(${ROWS}, ${CELL}px)`,
-          gap: GAP,
-          alignContent: "center",
+          display: "flex",
+          alignItems: "center",
           justifyContent: "center",
           opacity: wallFadeIn,
         }}
       >
-        {ALL_FRAMES.map((src, i) => {
-          const t = cellCompleteAt(i);
-          const grayOp = interpolate(frame, [t - 4, t + 6], [0, 0.7], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-            easing: Easing.bezier(0.22, 1, 0.36, 1),
-          });
-          const tickOp = interpolate(frame, [t - 2, t + 8], [0, 1], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-          const ringPulse = interpolate(frame, [t - 6, t - 2, t + 4], [0, 1, 0], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-
-          return (
-            <div
-              key={src}
-              style={{
-                position: "relative",
-                width: CELL,
-                height: CELL,
-                borderRadius: 10,
-                overflow: "hidden",
-                background: colors.surface,
-                boxShadow: "0 0 0 1px rgba(31,31,31,0.06)",
-              }}
-            >
-              <Img
-                src={staticFile(`keyframes/${src}`)}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
+        <div
+          style={{
+            position: "relative",
+            width: COLS * CELL + (COLS - 1) * GAP,
+            height: VIEWPORT_H,
+            overflow: "hidden",
+          }}
+        >
+          {visibleCells.map(({ i, col, viewportY, isGrey }) => {
+            const videoIdx = Math.floor(cellSeed(i, 7) * VIDEO_POOL.length);
+            const src = VIDEO_POOL[videoIdx];
+            const startOffset = Math.floor(
+              cellSeed(i, 13) * ROLLOUT_LOOP_FRAMES,
+            );
+            return (
               <div
+                key={i}
                 style={{
                   position: "absolute",
-                  inset: 0,
-                  border: `2px solid ${colors.accent}`,
+                  left: col * (CELL + GAP),
+                  top: viewportY,
+                  width: CELL,
+                  height: CELL,
                   borderRadius: 10,
-                  opacity: ringPulse,
-                  pointerEvents: "none",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "rgba(31,31,31,0.6)",
-                  opacity: grayOp,
-                  pointerEvents: "none",
-                }}
-              />
-              {/* "Watched" check mark — confirms a cell got reviewed without
-                  pinning a per-video number that contradicts the headline. */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 8,
-                  right: 8,
-                  width: 22,
-                  height: 22,
-                  borderRadius: 999,
-                  background: "rgba(255,255,255,0.92)",
-                  display: "grid",
-                  placeItems: "center",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: colors.ink,
-                  opacity: tickOp,
+                  overflow: "hidden",
+                  background: colors.surface,
+                  boxShadow: "0 0 0 1px rgba(31,31,31,0.06)",
                 }}
               >
-                ✓
+                <Sequence from={-startOffset}>
+                  <Loop durationInFrames={ROLLOUT_LOOP_FRAMES}>
+                    <OffthreadVideo
+                      src={staticFile(src)}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                      }}
+                      muted
+                    />
+                  </Loop>
+                </Sequence>
+
+                {isGrey ? (
+                  <>
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        background: "rgba(31,31,31,0.7)",
+                        pointerEvents: "none",
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 8,
+                        right: 8,
+                        width: 20,
+                        height: 20,
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.92)",
+                        display: "grid",
+                        placeItems: "center",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: colors.ink,
+                      }}
+                    >
+                      ✓
+                    </div>
+                  </>
+                ) : null}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+
+          {/* Soft top + bottom vignettes so cells fade in/out at the edges
+              instead of clipping with hard horizontal lines. */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 36,
+              background:
+                "linear-gradient(180deg, rgba(250,250,250,1) 0%, rgba(250,250,250,0) 100%)",
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 36,
+              background:
+                "linear-gradient(0deg, rgba(250,250,250,1) 0%, rgba(250,250,250,0) 100%)",
+              pointerEvents: "none",
+            }}
+          />
+        </div>
       </div>
     </AbsoluteFill>
   );

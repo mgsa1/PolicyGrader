@@ -66,9 +66,10 @@ export const numbers = {
   manualCostUsd: 10_604,
   savedUsd: 10_350,
   pipelineHours: 17,
+  pipelineMinutes: 37,
   manualHours: 71,
   costDeltaPct: -98,
-  timeDeltaPct: -76,
+  timeDeltaPct: -99,
   // Calibration metrics — measured, don't scale.
   precisionPct: 91,
   precisionCiLow: 62,

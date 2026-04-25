@@ -97,7 +97,34 @@ VO: "Here's the part nobody else does. Half the rollouts come
 
 
 ────────────────────────────────────────────────────────────────
-1:55 – 2:20 · WHY OPUS 4.7                             (≈65 words)
+1:40 – 1:52 · CHALLENGES WITH THE JUDGE                (≈55 words)
+────────────────────────────────────────────────────────────────
+VISUAL: Standalone scene (JudgeChallengesScene), 12 s, 4 stages:
+        1) cal_04 keyframe — failed_grip with red dot baked in
+           (real coordinate, real pixel)
+        2) cycling cal_06/07/08 missed_approach keyframes whose
+           dots landed at arbitrary pixels (real pre-fix output
+           on disk — the model was forced to point)
+        3) cal_09.mp4 plays clean, green `point = null` chip
+           lands ("judge abstains")
+        4) cal_04 keyframe + ASCII sim-telemetry table from
+           cal_04.telemetry.json; the contact column flipping
+           ✓ → − between f41 and f52 is the slip moment
+
+VO: "One challenge worth flagging. Opus 4.7 returns pixel
+     coordinates — we use that to mark exactly where each
+     failure happens. But forcing it to point on every
+     rollout was wrong: when the arm misses the cube
+     entirely, there's nothing to point at and the dot
+     lands anywhere. Making `point = null` a first-class
+     answer fixed it. And where vision alone was still
+     ambiguous, we paste simulator telemetry — gripper,
+     contact flag, cube height — alongside the frames.
+     Pixels grounded by physics."
+
+
+────────────────────────────────────────────────────────────────
+2:07 – 2:31 · WHY OPUS 4.7                             (≈65 words)
 ────────────────────────────────────────────────────────────────
 VISUAL: Quick montage —
         • 2576px keyframe with point overlay
@@ -123,7 +150,7 @@ ON-SCREEN STACK (appears as you say each):
 
 
 ────────────────────────────────────────────────────────────────
-2:20 – 2:30 · CLOSE                                    (≈25 words)
+2:31 – 2:41 · CLOSE                                    (≈25 words)
 ────────────────────────────────────────────────────────────────
 VISUAL: Side-by-side counter.
         LEFT  — "Manual review: <baseline_hours> hrs · $<baseline_cost>"
