@@ -11,15 +11,15 @@
   <a href="#"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square&labelColor=1f1f1f"></a>
 </p>
 
-<!-- HERO ANIMATION — rendered by `robotics_pitch/` (Remotion, 40 s, 1920×1080).
-     Source in robotics_pitch/. Re-render with: `cd robotics_pitch && npm run render`. -->
+<!-- HERO ANIMATION — auto-playing 9 s loop (Pipeline beat) + click-through to the full 40 s mp4.
+     Rendered by `robotics_pitch/` (Remotion). Re-render with: `cd robotics_pitch && npm run render`. -->
 
 <p align="center">
   <a href="docs/media/hero.mp4">
-    <img src="docs/media/hero.png" alt="Embodied Eval Orchestrator — 40-second animated explainer" width="100%" />
+    <img src="docs/media/hero.gif" alt="Embodied Eval Orchestrator — pipeline reveal (9 s loop)" width="100%" />
   </a>
   <br/>
-  <sub>▶ <a href="docs/media/hero.mp4">Play the 40-second explainer</a> &middot; source in <a href="robotics_pitch/"><code>robotics_pitch/</code></a></sub>
+  <sub>▶ <a href="docs/media/hero.mp4">Play the full 40-second explainer</a> &middot; source in <a href="robotics_pitch/"><code>robotics_pitch/</code></a></sub>
 </p>
 
 <table>
