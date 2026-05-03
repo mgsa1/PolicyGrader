@@ -49,7 +49,7 @@ We measure the judge against human labels on a sampled subset, and attach the re
 
 | | **Pipeline** | Manual baseline | Δ |
 |---|---|---|---|
-| **Cost** | **$13.30** | $175.00 | **13× cheaper** |
+| **Cost** | **$4.90** | $175.00 | **35× cheaper** |
 | **Wall time** | **31 m 40 s** | 1 h 17 m | **2.4× faster** † |
 | **Judge findings** | 27 `missed_approach` · 3 `failed_grip` · 28 / 30 with pixel-accurate point | — | — |
 
